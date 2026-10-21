@@ -44,8 +44,27 @@ test("quick add action and theme control have accessible route states", async ({
   await page.getByRole("link", { name: "Add transaction" }).click();
   await expect(page).toHaveURL(/\/app\/transactions\/new$/);
   await expect(
-    page.getByRole("heading", { name: "Add an entry in a few clear steps." }),
+    page.getByRole("heading", { name: "A clear entry, without extra steps." }),
   ).toBeVisible();
+  await expect(
+    page.getByText("Preview only. Nothing is saved from this screen yet."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Record expense" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Account")).toBeDisabled();
+  await expect(page.getByLabel("Category")).toBeDisabled();
+
+  const amount = page.getByLabel("Amount");
+  await amount.fill("1.234");
+  await page.getByRole("heading", { name: "New transaction" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Enter PHP with up to two decimal places.",
+  );
+  await amount.fill("1,250.50");
+  await page.getByRole("heading", { name: "New transaction" }).click();
+  await expect(page.locator(".field-valid-mark")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Switch to dark theme" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -71,6 +90,13 @@ test("secondary pages are reachable from the mobile more menu", async ({
 }) => {
   test.skip(test.info().project.name !== "mobile-chromium");
   await page.goto("/app");
+  const contentBounds = await page.locator(".page-content").boundingBox();
+  const navigationBounds = await page.locator(".mobile-nav").boundingBox();
+  expect(contentBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(navigationBounds!.y).toBeGreaterThanOrEqual(
+    contentBounds!.y + contentBounds!.height - 1,
+  );
   await page.locator(".mobile-more-menu summary").click();
   await page
     .getByRole("navigation", { name: "More pages" })
@@ -78,6 +104,21 @@ test("secondary pages are reachable from the mobile more menu", async ({
     .click();
   await expect(page).toHaveURL(/\/app\/bills$/);
   await expect(page.getByRole("heading", { name: "Bills" })).toBeVisible();
+});
+
+test("privacy masking toggles without exposing a sample balance", async ({
+  page,
+}) => {
+  await page.goto("/app/settings");
+  await expect(
+    page.getByText("Text sample only. No account balance is displayed here."),
+  ).toBeVisible();
+  await expect(page.getByText("Private value", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Hide preview text" }).click();
+  await expect(page.getByText("••••••")).toBeVisible();
+  await page.getByRole("button", { name: "Reveal preview text" }).click();
+  await expect(page.getByText("Private value", { exact: true })).toBeVisible();
+  await expect(page.getByText(/₱\s?[\d,]+\.\d{2}/)).toHaveCount(0);
 });
 
 test("browser reaches the live API backed by PostgreSQL", async ({ page }) => {

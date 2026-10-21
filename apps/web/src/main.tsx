@@ -9,6 +9,7 @@ import {
   Routes,
   useLocation,
 } from "react-router";
+import { AmountEntry, PrivacyMask, ReferenceSelect } from "./components";
 import "./style.css";
 
 type Theme = "light" | "dark";
@@ -312,6 +313,80 @@ function LoginPage() {
   );
 }
 
+function QuickAddPage() {
+  const [amount, setAmount] = useState("");
+
+  return (
+    <section className="route-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Quick add · Preview</p>
+        <h1 id="page-heading">A clear entry, without extra steps.</h1>
+        <p className="page-description">
+          Amount entry uses exact PHP parsing. Account and category choices
+          activate once real records can be saved.
+        </p>
+      </div>
+      <form
+        className="quick-add-card"
+        onSubmit={(event) => event.preventDefault()}
+      >
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">EXPENSE</p>
+            <h2>New transaction</h2>
+          </div>
+          <span className="form-kind">Today</span>
+        </div>
+        <AmountEntry id="amount" value={amount} onChange={setAmount} />
+        <div className="reference-grid">
+          <ReferenceSelect
+            id="account"
+            label="Account"
+            unavailableText="No saved accounts"
+          />
+          <ReferenceSelect
+            id="category"
+            label="Category"
+            unavailableText="No saved categories"
+          />
+        </div>
+        <button className="save-button" type="submit" disabled>
+          Record expense
+        </button>
+        <p className="no-save-note" role="status">
+          Preview only. Nothing is saved from this screen yet.
+        </p>
+      </form>
+    </section>
+  );
+}
+
+function SettingsPage() {
+  return (
+    <section className="route-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Your preferences</p>
+        <h1 id="page-heading">Settings</h1>
+        <p className="page-description">
+          Choose how the interface looks and how private values appear on your
+          screen.
+        </p>
+      </div>
+      <div className="privacy-control-preview">
+        <div>
+          <p className="empty-title">Privacy mask preview</p>
+          <p className="field-hint">
+            Text sample only. No account balance is displayed here.
+          </p>
+        </div>
+        <PrivacyMask label="preview text">
+          <span className="preview-private-value">Private value</span>
+        </PrivacyMask>
+      </div>
+    </section>
+  );
+}
+
 function NotFoundPage() {
   return (
     <RoutePage
@@ -342,17 +417,7 @@ function App() {
               />
             }
           />
-          <Route
-            path="app/transactions/new"
-            element={
-              <RoutePage
-                eyebrow="Quick add"
-                title="Add an entry in a few clear steps."
-                description="Expense, income, transfer, refund, card purchase and payment forms arrive with the real ledger."
-                icon="+"
-              />
-            }
-          />
+          <Route path="app/transactions/new" element={<QuickAddPage />} />
           <Route
             path="app/transactions/:transactionId"
             element={
@@ -419,17 +484,7 @@ function App() {
               />
             }
           />
-          <Route
-            path="app/settings"
-            element={
-              <RoutePage
-                eyebrow="Your preferences"
-                title="Settings"
-                description="Manage your profile, privacy, categories and exports when secure access is ready."
-                icon="⚙"
-              />
-            }
-          />
+          <Route path="app/settings" element={<SettingsPage />} />
           <Route
             path="app/settings/categories"
             element={

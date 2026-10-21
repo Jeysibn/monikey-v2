@@ -62,6 +62,9 @@ The primary mobile navigation has Home, Activity, Add, and Accounts. Add is an a
 - Amount entry stays a single form with calculator-friendly input. Parse exact minor units at the boundary; never use floating-point multiplication.
 - Sheets close with Escape/backdrop, trap and restore focus, and warn before discarding changed values.
 - Every interactive control has visible focus, disabled, loading and error states. Feedback includes a text label and never depends on color alone.
+- The first amount field uses the shared exact PHP parser; invalid precision and non-positive entries get inline errors. Record submission stays disabled until real account/category records and a journal-backed API exist.
+- Account/category selectors show a disabled empty state when no saved records exist. They must never offer selectable fake finance fixtures.
+- `MoneyValue` formats `MoneyMinor` without floating-point conversion. `PrivacyMask` toggles presentation only and never replaces API authorization.
 
 ## Review checklist
 
@@ -79,3 +82,8 @@ These screenshots show the honest foundation preview and are not sample finance 
 - Desktop 1440px: `docs/design/screenshots/home-desktop-1440.png`
 
 They are code-reviewed browser captures, not a substitute for owner review on a physical phone.
+
+Additional Phase 1 component previews:
+
+- Quick Add on Pixel 7 emulation, with saving disabled until real accounts exist: `docs/design/screenshots/quick-add-pixel7-emulation.png`
+- Home in dark theme at 1440px: `docs/design/screenshots/home-desktop-dark-1440.png`
