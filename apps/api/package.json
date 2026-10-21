@@ -10,6 +10,8 @@
     "start": "node dist/server.js",
     "bootstrap-owner": "tsx src/bootstrap-owner.ts",
     "seed-e2e-user": "tsx src/seed-e2e-user.ts",
+    "test:unit": "tsx --test src/ledger/domain.test.ts",
+    "test:ledger": "tsx --test src/ledger/integration.test.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
   },
@@ -18,6 +20,7 @@
     "@fastify/rate-limit": "11.2.1",
     "@fastify/swagger": "9.9.2",
     "@monikey/contracts": "0.1.0",
+    "@monikey/money": "0.1.0",
     "@prisma/client": "7.10.1",
     "argon2": "0.45.1",
     "fastify": "5.12.7",
