@@ -29,7 +29,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P2-05 Account lifecycle and opening balances                 | Implemented; CI passed; merged to `main` | PR #22 and promotion PR #23 passed validation, CodeQL, PostgreSQL schema/ledger/account integration, and API Playwright E2E. Adds owner-scoped account operations, idempotency, ledger-derived balances, and equity-backed opening journals.                                                             |
 | P2-06 Default/custom categories                              | Implemented; CI passed; merged to `main` | PR #24 and promotion PR #25 passed validation, CodeQL, fresh-Postgres category integration, and Playwright E2E.                                                                                                                                                                                          |
 | P2-07 Expense and income commands                            | Implemented; CI passed; merged to `main` | PR #28 and promotion PR #29 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds balanced journals, revisions, audit events, idempotent retries, category compatibility, and negative-balance confirmation.                                                           |
-| P2-08 Transfers, refunds, and adjustments                    | Implemented; CI passed; merged to `main` | PR #32 and promotion PR #33 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds atomic transfers, optional fee expense postings, linked refunds, explicit equity-backed adjustments, deterministic locks, negative-balance confirmation, and retry-safe idempotency. |
+| P2-08 Transfers, refunds, and adjustments                    | Implemented; CI passed; merged to `main` | Transfer PR #32 and promotion PR #33 plus refund/adjustment PR #36 and promotion PR #37 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds atomic transfers, optional fee expense postings, linked refunds, explicit equity-backed adjustments, deterministic locks, negative-balance confirmation, and retry-safe idempotency. |
 
 ## Later phases
 
@@ -59,7 +59,9 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - P2-07 local validation — typecheck, build, unit tests, formatting, audit (zero vulnerabilities), E2E TypeScript check/discovery (26 tests), and diff checks pass. PostgreSQL integration and browser acceptance passed in CI.
 - P2-07 feature PR #28 and promotion PR #29 — validation, CodeQL, PostgreSQL schema/ledger/account/category/transaction integration, and Playwright E2E passed; merged to `main` at `e56ca2f`.
 - P2-08 local static validation — typecheck, production build, unit tests, formatting, E2E TypeScript check/discovery, and diff checks pass. PostgreSQL integration and browser acceptance passed in CI.
-- P2-08 feature PR #32 and promotion PR #33 — validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E passed; merged to `main` at `a002a52`. The first feature run caught and fixed a shared test-pool cleanup issue before the green rerun. Refund and adjustment coverage is included in the transaction integration suite.
+- P2-08 transfer PR #32 and promotion PR #33 — validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E passed; merged to `main` at `a002a52`. The first feature run caught and fixed a shared test-pool cleanup issue before the green rerun.
+- P2-08 refund/adjustment PR #36 and promotion PR #37 — validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E passed; merged to `main` at `16af037`.
+- CI single-run PR #38 and promotion PR #39 — removed the branch-push trigger; validation now runs once per pull request targeting protected `dev` or `main`.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
