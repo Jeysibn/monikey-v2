@@ -8,13 +8,17 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node dist/server.js",
+    "bootstrap-owner": "tsx src/bootstrap-owner.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.3",
+    "@fastify/rate-limit": "11.2.1",
     "@fastify/swagger": "9.9.2",
     "@monikey/contracts": "0.1.0",
     "@prisma/client": "7.10.1",
+    "argon2": "0.45.1",
     "fastify": "5.12.7",
     "pg": "8.16.3",
     "zod": "4.1.12"

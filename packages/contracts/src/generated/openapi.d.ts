@@ -92,6 +92,1725 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Sign in to the private owner account */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** Format: email */
+            email: string;
+            password: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Default Response */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              csrfToken: string;
+            };
+          };
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/csrf": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Recover the current session CSRF token */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Default Response */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              csrfToken: string;
+            };
+          };
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/change-password": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Change the password and rotate this session */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            currentPassword: string;
+            newPassword: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Default Response */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              csrfToken: string;
+            };
+          };
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read the signed-in owner profile */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Default Response */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              user: {
+                /** Format: uuid */
+                id: string;
+                /** Format: email */
+                emailNormalized: string;
+                /** @enum {string} */
+                timezone: "Asia/Manila";
+                /** @enum {string} */
+                currency: "PHP";
+                /** @enum {string} */
+                theme: "system" | "light" | "dark";
+                hideBalances: boolean;
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List this owner's active sessions */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Default Response */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              sessions: {
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                createdAt: string;
+                /** Format: date-time */
+                expiresAt: string;
+                /** Format: date-time */
+                lastSeenAt: string;
+                userAgent: string | null;
+                current: boolean;
+              }[];
+            };
+          };
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/sessions/{sessionId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Revoke one of this owner's sessions */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          sessionId: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Default Response */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Revoke the current session */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Default Response */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Default Response */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+        /** @description Default Response */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              error: {
+                /** @enum {string} */
+                code:
+                  | "VALIDATION_ERROR"
+                  | "REQUEST_ERROR"
+                  | "NOT_FOUND"
+                  | "CONFLICT"
+                  | "UNAUTHENTICATED"
+                  | "FORBIDDEN"
+                  | "RATE_LIMITED"
+                  | "UNAVAILABLE"
+                  | "INTERNAL_ERROR";
+                message: string;
+                requestId: string;
+                details?: {
+                  path: string;
+                  message: string;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {

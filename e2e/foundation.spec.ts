@@ -146,3 +146,128 @@ test("unknown API routes use the shared not-found error contract", async ({
     },
   });
 });
+
+test("private login, session recovery, CSRF protection, and logout work", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://127.0.0.1:5173";
+  const loginUrl = "http://127.0.0.1:3000/api/v1/auth/login";
+  const rejectedOrigin = await page.request.post(loginUrl, {
+    headers: { origin: "https://attacker.example" },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(rejectedOrigin.status()).toBe(403);
+
+  const rejectedPassword = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: { email: "owner@example.test", password: "wrong-password" },
+  });
+  expect(rejectedPassword.status()).toBe(401);
+  await expect(rejectedPassword.json()).resolves.toMatchObject({
+    error: {
+      code: "UNAUTHENTICATED",
+      message: "Email or password is incorrect.",
+    },
+  });
+
+  const login = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: {
+      email: "OWNER@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  expect(csrfToken).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+  const sessionCookie = login.headers()["set-cookie"];
+  expect(sessionCookie).toContain("__Host-mk_session=");
+  expect(sessionCookie).toContain("HttpOnly");
+  expect(sessionCookie).toContain("Secure");
+
+  const profile = await page.request.get("http://127.0.0.1:3000/api/v1/me");
+  expect(profile.status()).toBe(200);
+  expect(profile.headers()["cache-control"]).toBe("no-store");
+  await expect(profile.json()).resolves.toMatchObject({
+    user: {
+      emailNormalized: "owner@example.test",
+      timezone: "Asia/Manila",
+      currency: "PHP",
+    },
+  });
+
+  const sessions = await page.request.get(
+    "http://127.0.0.1:3000/api/v1/auth/sessions",
+  );
+  const sessionRows = (await sessions.json()).sessions;
+  expect(sessionRows).toHaveLength(1);
+  expect(sessionRows[0].current).toBe(true);
+
+  const missingCsrf = await page.request.post(
+    "http://127.0.0.1:3000/api/v1/auth/logout",
+    { headers: { origin } },
+  );
+  expect(missingCsrf.status()).toBe(403);
+
+  const changedPassword = await page.request.post(
+    "http://127.0.0.1:3000/api/v1/auth/change-password",
+    {
+      headers: { origin, "x-csrf-token": csrfToken },
+      data: {
+        currentPassword: "CI-only-password-never-used-outside-tests",
+        newPassword: "CI-only-rotated-password-never-used",
+      },
+    },
+  );
+  expect(changedPassword.status()).toBe(200);
+  const { csrfToken: rotatedCsrfToken } = await changedPassword.json();
+  expect(rotatedCsrfToken).not.toBe(csrfToken);
+
+  const oldPassword = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(oldPassword.status()).toBe(401);
+  const newPasswordLogin = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-rotated-password-never-used",
+    },
+  });
+  expect(newPasswordLogin.status()).toBe(200);
+  const { csrfToken: finalCsrfToken } = await newPasswordLogin.json();
+
+  const logout = await page.request.post(
+    "http://127.0.0.1:3000/api/v1/auth/logout",
+    { headers: { origin, "x-csrf-token": finalCsrfToken } },
+  );
+  expect(logout.status()).toBe(204);
+  expect(
+    (await page.request.get("http://127.0.0.1:3000/api/v1/me")).status(),
+  ).toBe(401);
+});
+
+test("login rate limits repeated failures", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://127.0.0.1:5173";
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await page.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/login",
+      {
+        headers: { origin },
+        data: { email: "rate-limit@example.test", password: "wrong-password" },
+      },
+    );
+    lastStatus = response.status();
+  }
+  expect(lastStatus).toBe(429);
+});
