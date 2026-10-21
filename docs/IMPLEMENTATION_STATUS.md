@@ -4,7 +4,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Current milestone
 
-**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — identity and preferences: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 identity passed real-Postgres CI and is promoted to `main`; P2-02 preferences and owner scope are in review. Financial ledger work has not started. No V1 code or data has been imported.
+**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — financial domain: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 identity and P2-02 preferences passed real-Postgres CI and are promoted to `main`; P2-03 financial schema is being implemented. No V1 code or data has been imported.
 
 | Work package                                                 | State                                    | Evidence / remaining gate                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -23,11 +23,12 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P1-05 Amount, selectors and privacy mask                     | Implemented; CI passed                   | Exact PHP amount parsing, no-save preview form, disabled empty account/category selectors and accessible mask control. Production records and mutation remain absent.                                                                                             |
 | P1-06 Device screenshots and design acceptance               | Partial                                  | 360/Pixel 7 emulation and 1440px desktop preview captures are saved. Physical phone and owner approval remain.                                                                                                                                                    |
 | P2-01 Private identity and sessions                          | Implemented; CI passed; merged to `main` | PR #13 passed validation, CodeQL, and real-Postgres/API Playwright E2E; promotion PR #14 passed the same required checks. Adds Argon2id owner bootstrap, secure opaque sessions, CSRF/origin checks, login throttling, password rotation, and session revocation. |
-| P2-02 Preferences, Manila server date, owner scope           | Implemented; CI pending                  | Theme/privacy preference API, immutable PHP/Asia-Manila policy, server-owned `serverToday`, explicit first-account onboarding state, and fail-closed owner-ID helper. E2E adds preferences, clock-skew, and cross-user checks.                                    |
+| P2-02 Preferences, Manila server date, owner scope           | Implemented; CI passed; merged to `main` | PR #16 and promotion PR #17 passed validation, CodeQL, and real-Postgres/API Playwright E2E. Adds strict owner-scoped preferences, fixed PHP/Asia-Manila policy, server-owned `serverToday`, first-account onboarding, and fail-closed owner IDs.                 |
+| P2-03 Financial schema and tenant constraints                | In progress                              | Migration and SQL contract suite for accounts, categories, ledger mappings, transactions/revisions, journals/postings, idempotency, and audit events. Fresh-Postgres CI pending.                                                                                  |
 
 ## Later phases
 
-Phase 1 remains in progress pending physical-device owner review. Phase 2 identity and preferences work are in progress; ledger schema and financial workflows have not started. Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. P2-01 and P2-02 are promoted to `main`; P2-03 schema work is in progress. Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -43,11 +44,12 @@ Phase 1 remains in progress pending physical-device owner review. Phase 2 identi
 - Identity slice local validation — TypeScript, production builds, Prettier, and `npm audit --audit-level=high` pass; no high severity vulnerabilities.
 - Identity feature PR #13 — validation, CodeQL, and real PostgreSQL/API Playwright E2E passed; merged to `dev`.
 - Identity promotion PR #14 — checks passed and merged to `main`.
-- P2-02 local validation — typecheck, API and E2E TypeScript checks, builds, five unit tests, format, and audit pass. Real-Postgres E2E is pending in CI.
+- P2-02 local validation — typecheck, API and E2E TypeScript checks, builds, five unit tests, format, and audit pass. PR #16 and promotion PR #17 passed required CI and merged to `main`.
+- P2-03 migration and PostgreSQL schema contract suite — implementation in progress; fresh database CI pending.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
 1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
-2. Complete P2-02 PostgreSQL-backed E2E and merge its reviewed PR.
-3. Continue with the financial schema only after the identity and owner-scope helpers are accepted.
+2. Complete P2-03 fresh-PostgreSQL migration and constraint checks, then merge through `dev` and promote to `main`.
+3. Continue to balanced journal services only after the schema contract is accepted.
