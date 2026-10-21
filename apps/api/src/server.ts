@@ -11,6 +11,8 @@ import {
   LoginRequestSchema,
   LoginResponseSchema,
   MeResponseSchema,
+  PreferencesPatchRequestSchema,
+  PreferencesResponseSchema,
   SessionsResponseSchema,
 } from "@monikey/contracts";
 import argon2 from "argon2";
@@ -196,6 +198,25 @@ app.get("/openapi.json", async () => app.swagger());
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function serverTodayInManila(): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function ownerUserId(request: FastifyRequest): string {
+  const ownerId = request.authContext?.userId;
+  if (!ownerId) throw new Error("Authenticated owner scope is required.");
+  return ownerId;
 }
 
 function safeHashEqual(actual: string, expected: string): boolean {
@@ -462,7 +483,7 @@ app.post(
     );
     const userResult = await pool!.query<{ password_hash: string }>(
       "SELECT password_hash FROM users WHERE id = $1 AND status = 'ACTIVE'",
-      [request.authContext!.userId],
+      [ownerUserId(request)],
     );
     const user = userResult.rows[0];
     const matches = user
@@ -488,11 +509,11 @@ app.post(
       await client.query("BEGIN");
       await client.query(
         "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2",
-        [passwordHash, request.authContext!.userId],
+        [passwordHash, ownerUserId(request)],
       );
       await client.query(
         "UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
-        [request.authContext!.userId, request.authContext!.sessionId],
+        [ownerUserId(request), request.authContext!.sessionId],
       );
       await client.query(
         `UPDATE auth_sessions
@@ -554,10 +575,72 @@ app.get(
               p.hide_balances AS "hideBalances"
          FROM users u JOIN user_preferences p ON p.user_id = u.id
         WHERE u.id = $1`,
-      [request.authContext!.userId],
+      [ownerUserId(request)],
     );
     reply.header("Cache-Control", "no-store");
-    return { user: result.rows[0] };
+    return {
+      user: result.rows[0],
+      serverToday: serverTodayInManila(),
+      // No account table exists until P2-03; keep the first-run status explicit.
+      onboardingStatus: "NEEDS_FIRST_ACCOUNT" as const,
+    };
+  },
+);
+
+app.patch(
+  "/api/v1/me/preferences",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "Update the signed-in owner's theme and privacy preferences",
+      body: z.toJSONSchema(PreferencesPatchRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(PreferencesResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+
+    const patch = PreferencesPatchRequestSchema.parse(request.body);
+    if (patch.theme === undefined && patch.hideBalances === undefined) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide at least one preference to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await pool!.query<{
+      timezone: string;
+      currency: string;
+      theme: string;
+      hideBalances: boolean;
+    }>(
+      `UPDATE user_preferences
+          SET theme = COALESCE($2, theme),
+              hide_balances = COALESCE($3, hide_balances),
+              updated_at = now()
+        WHERE user_id = $1
+        RETURNING timezone, currency, theme, hide_balances AS "hideBalances"`,
+      [ownerUserId(request), patch.theme ?? null, patch.hideBalances ?? null],
+    );
+    if (!result.rows[0]) {
+      return reply.code(404).send({
+        error: {
+          code: "NOT_FOUND",
+          message: "The requested preferences were not found.",
+          requestId: request.id,
+        },
+      });
+    }
+    return { preferences: result.rows[0] };
   },
 );
 
@@ -581,7 +664,7 @@ app.get(
          FROM auth_sessions
         WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
         ORDER BY last_seen_at DESC`,
-      [request.authContext!.userId, request.authContext!.sessionId],
+      [ownerUserId(request), request.authContext!.sessionId],
     );
     reply.header("Cache-Control", "no-store");
     return { sessions: sessions.rows };
@@ -612,7 +695,7 @@ app.delete(
       `UPDATE auth_sessions SET revoked_at = now()
         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
         RETURNING id`,
-      [params.sessionId, request.authContext!.userId],
+      [params.sessionId, ownerUserId(request)],
     );
     if (result.rowCount === 0) {
       return reply.code(404).send({
