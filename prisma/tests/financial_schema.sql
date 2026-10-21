@@ -28,6 +28,14 @@ BEGIN
   VALUES (owner_one, 'INCOME', 'Schema test income') RETURNING id INTO category_two;
 
   BEGIN
+    INSERT INTO categories (user_id, kind, name, icon)
+    VALUES (owner_one, 'EXPENSE', 'Invalid icon category', '../receipt.svg');
+    RAISE EXCEPTION 'invalid category icon token was accepted';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  BEGIN
     INSERT INTO financial_accounts (user_id, type, name, statement_day)
     VALUES (owner_one, 'BANK', 'Invalid card fields', 5);
     RAISE EXCEPTION 'non-card account accepted card-only fields';

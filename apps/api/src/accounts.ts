@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { moneyMinor } from "@monikey/money";
 import type { FinancialAccountCreateRequest } from "@monikey/contracts";
 import { postBalancedJournal } from "./ledger/service.js";
+import { ensureDefaultCategories } from "./categories.js";
 
 export type FinancialAccountRecord = {
   id: string;
@@ -220,6 +221,7 @@ export async function createFinancialAccount(
       }),
     ],
   );
+  await ensureDefaultCategories(client, userId);
   return queryAccount(client, userId, accountId);
 }
 

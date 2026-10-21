@@ -143,6 +143,49 @@ export const FinancialAccountResponseSchema = z.object({
   account: FinancialAccountSchema,
 });
 
+export const CategoryKindSchema = z.enum(["INCOME", "EXPENSE"]);
+
+export const CategoryIconSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
+
+export const CategoryCreateRequestSchema = z
+  .object({
+    kind: CategoryKindSchema,
+    name: z.string().trim().min(1).max(60),
+    sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+    icon: CategoryIconSchema.optional(),
+  })
+  .strict();
+
+export const CategoryPatchRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60).optional(),
+    sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+    icon: CategoryIconSchema.nullable().optional(),
+    archived: z.boolean().optional(),
+  })
+  .strict();
+
+export const CategorySchema = z.object({
+  id: z.string().uuid(),
+  kind: CategoryKindSchema,
+  name: z.string(),
+  sortOrder: z.number().int(),
+  icon: CategoryIconSchema.nullable(),
+  archivedAt: z.string().datetime().nullable(),
+});
+
+export const CategoriesResponseSchema = z.object({
+  categories: z.array(CategorySchema),
+});
+
+export const CategoryResponseSchema = z.object({
+  category: CategorySchema,
+});
+
+export type CategoryCreateRequest = z.infer<typeof CategoryCreateRequestSchema>;
+export type CategoryPatchRequest = z.infer<typeof CategoryPatchRequestSchema>;
+export type CategoryRecord = z.infer<typeof CategorySchema>;
+
 export const AuthSessionSchema = z.object({
   id: z.string().uuid(),
   createdAt: z.string().datetime(),
