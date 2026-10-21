@@ -919,6 +919,62 @@ test("expense and income commands are balanced and retry-safe", async ({
     transaction: { kind: "ADJUSTMENT", categoryId: null },
     account: { id: accountRow.id, balanceMinor: "99000" },
   });
+
+  const edit = await page.request.patch(
+    `${api}/transactions/${refundExpenseResult.transaction.id}`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `transaction-edit-test-${testRun}`,
+      },
+      data: {
+        kind: "EXPENSE",
+        sourceAccountId: accountRow.id,
+        categoryId: expenseCategory.id,
+        amountMinor: "4000",
+        occurredOn: "2026-10-22",
+        reason: "Corrected receipt total",
+      },
+    },
+  );
+  expect(edit.status()).toBe(200);
+  await expect(edit.json()).resolves.toMatchObject({
+    transaction: { currentRevision: 2, status: "POSTED" },
+    account: { id: accountRow.id, balanceMinor: "100000" },
+  });
+  const audit = await page.request.get(
+    `${api}/transactions/${refundExpenseResult.transaction.id}/audit`,
+  );
+  expect(audit.status()).toBe(200);
+  await expect(audit.json()).resolves.toMatchObject({
+    revisions: [
+      { version: 1 },
+      { version: 2, reason: "Corrected receipt total" },
+    ],
+  });
+  const voided = await page.request.delete(
+    `${api}/transactions/${refundExpenseResult.transaction.id}`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `transaction-delete-test-${testRun}`,
+      },
+      data: { reason: "Remove duplicate entry" },
+    },
+  );
+  expect(voided.status()).toBe(200);
+  await expect(voided.json()).resolves.toMatchObject({
+    transaction: { currentRevision: 3, status: "VOID" },
+  });
+  const reread = await page.request.get(
+    `${api}/transactions/${refundExpenseResult.transaction.id}`,
+  );
+  expect(reread.status()).toBe(200);
+  await expect(reread.json()).resolves.toMatchObject({
+    transaction: { status: "VOID", currentRevision: 3 },
+  });
 });
 
 test("login rate limits repeated failures", async ({ page }) => {

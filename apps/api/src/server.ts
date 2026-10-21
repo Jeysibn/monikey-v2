@@ -23,7 +23,11 @@ import {
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
   SessionsResponseSchema,
+  TransactionAuditResponseSchema,
   TransactionCreateResponseSchema,
+  TransactionDeleteRequestSchema,
+  TransactionEditRequestSchema,
+  TransactionResponseSchema,
   TransactionRequestSchema,
   TransferCreateResponseSchema,
 } from "@monikey/contracts";
@@ -44,6 +48,10 @@ import {
   createIncomeOrExpense,
   createRefund,
   createTransfer,
+  deleteTransaction,
+  editIncomeOrExpense,
+  readTransaction,
+  readTransactionAudit,
 } from "./transactions.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
@@ -508,6 +516,149 @@ app.post(
     });
     reply.header("Cache-Control", "no-store");
     return reply.code(200).send({ csrfToken });
+  },
+);
+
+const transactionParamsSchema = z.object({
+  transactionId: z.string().uuid(),
+});
+
+app.get(
+  "/api/v1/transactions/:transactionId",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "Read one owner-scoped transaction",
+      params: z.toJSONSchema(transactionParamsSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { transactionId } = transactionParamsSchema.parse(request.params);
+    const result = await withDatabaseConnection((client) =>
+      readTransaction(client, ownerUserId(request), transactionId),
+    );
+    return { transaction: result };
+  },
+);
+
+app.get(
+  "/api/v1/transactions/:transactionId/audit",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "Read transaction revision history",
+      params: z.toJSONSchema(transactionParamsSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionAuditResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { transactionId } = transactionParamsSchema.parse(request.params);
+    return withDatabaseConnection((client) =>
+      readTransactionAudit(client, ownerUserId(request), transactionId),
+    );
+  },
+);
+
+app.patch(
+  "/api/v1/transactions/:transactionId",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "Edit one posted owner-scoped income or expense",
+      params: z.toJSONSchema(transactionParamsSchema, { target: "draft-7" }),
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(TransactionEditRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionCreateResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { transactionId } = transactionParamsSchema.parse(request.params);
+    const body = TransactionEditRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { transactionId, body },
+        async () =>
+          editIncomeOrExpense(
+            client,
+            ownerUserId(request),
+            transactionId,
+            body,
+            serverTodayInManila(),
+          ),
+      ),
+    );
+    return reply.send(result.value);
+  },
+);
+
+app.delete(
+  "/api/v1/transactions/:transactionId",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "Logically void one posted transaction",
+      params: z.toJSONSchema(transactionParamsSchema, { target: "draft-7" }),
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(TransactionDeleteRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { transactionId } = transactionParamsSchema.parse(request.params);
+    const body = TransactionDeleteRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { transactionId, body },
+        async () => ({
+          transaction: await deleteTransaction(
+            client,
+            ownerUserId(request),
+            transactionId,
+            body,
+          ),
+        }),
+      ),
+    );
+    return reply.send(result.value);
   },
 );
 

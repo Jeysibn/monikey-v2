@@ -1,6 +1,6 @@
 # Transaction commands
 
-P2-08 adds owner-scoped transfers, linked refunds, and explicit adjustments to the P2-07 income and expense commands. Every command writes a stable transaction, revision, balanced journal, postings, and audit event in one PostgreSQL transaction.
+P2-08 adds owner-scoped transfers, linked refunds, and explicit adjustments to the P2-07 income and expense commands. P2-09 adds audited edits and logical deletion on top of the same append-only model. Every command writes a stable transaction, revision, balanced journal, postings, and audit event in one PostgreSQL transaction.
 
 ## Command contract
 
@@ -45,6 +45,14 @@ Adjustments post against a per-owner `ADJUSTMENT` equity ledger account and neve
 
 Writes require same-origin checks, an authenticated session, CSRF, and a user-scoped `Idempotency-Key`. A replay with the same payload returns the original transaction and account balance; a changed payload returns `409`.
 
+## Revisions and logical deletion
+
+`PATCH /api/v1/transactions/:id` currently edits posted income and expense commands. The request carries the complete replacement command plus a required reason. The transaction row keeps its stable ID while the service locks the row and all affected accounts in deterministic order, posts a compensating `REVERSAL` journal for the active journal, increments `current_revision`, updates the user-facing fields, and posts the replacement journal in one database transaction.
+
+`DELETE /api/v1/transactions/:id` requires a reason and marks the transaction `VOID` after posting one compensating reversal journal. A transaction can only have one active journal and one reversal for each journal; repeated deletion returns a conflict and cannot double reverse the money. Posted journals and postings are never updated or deleted directly.
+
+`GET /api/v1/transactions/:id` returns the owner-scoped stable record. `GET /api/v1/transactions/:id/audit` returns immutable revision metadata, before/after JSON, reasons, and UTC timestamps. Mutation retries include the transaction ID in the idempotency fingerprint.
+
 ## Journal mapping
 
 | Command              | Debit                                          | Credit                         |
@@ -59,4 +67,4 @@ Writes require same-origin checks, an authenticated session, CSRF, and a user-sc
 
 Transfers lock both accounts in deterministic ID order before checking the source balance. A fee is posted as an expense category debit in the same balanced transfer journal, so it appears in spending without becoming income. The ledger service validates ownership and inserts the immutable journal/postings. Account balances are read from the posted ledger after commit work completes; no independent balance counter is maintained.
 
-Credit card purchases, edits, and reversals remain later vertical slices. Archived accounts/categories and cross-owner IDs return a non-enumerating not-found response. All command retries use the same owner-scoped idempotency behavior.
+Credit card purchases remain a later vertical slice. Archived accounts/categories and cross-owner IDs return a non-enumerating not-found response. All command retries use the same owner-scoped idempotency behavior.

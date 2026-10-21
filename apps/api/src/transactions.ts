@@ -3,6 +3,8 @@ import { moneyMinor } from "@monikey/money";
 import type {
   AdjustmentCreateRequest,
   TransactionCreateRequest,
+  TransactionDeleteRequest,
+  TransactionEditRequest,
   TransactionKindSchema,
   RefundCreateRequest,
   TransferCreateRequest,
@@ -14,6 +16,18 @@ import {
 import { postBalancedJournal } from "./ledger/service.js";
 
 type TransactionKind = (typeof TransactionKindSchema)["_output"];
+
+type TransactionMutationRow = {
+  id: string;
+  kind: TransactionKind;
+  status: "POSTED" | "VOID";
+  currentRevision: number;
+  occurredOn: string;
+  categoryId: string | null;
+  refundedTransactionId: string | null;
+  note: string | null;
+  afterJson: Record<string, unknown>;
+};
 
 export type TransactionRecord = {
   id: string;
@@ -224,6 +238,140 @@ async function ensureAdjustmentLedgerAccount(
       "Unable to create adjustment account.",
     );
   return account.id;
+}
+
+async function readTransactionForMutation(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+  lock = false,
+): Promise<TransactionMutationRow> {
+  const result = await client.query<TransactionMutationRow>(
+    `SELECT t.id, t.kind, t.status,
+            t.current_revision AS "currentRevision",
+            t.occurred_on::text AS "occurredOn",
+            t.category_id AS "categoryId",
+            t.refunded_transaction_id AS "refundedTransactionId",
+            t.note,
+            r.after_json AS "afterJson"
+       FROM transactions t
+       JOIN transaction_revisions r
+         ON r.user_id = t.user_id
+        AND r.transaction_id = t.id
+        AND r.version = t.current_revision
+      WHERE t.user_id = $1 AND t.id = $2
+      ${lock ? "FOR UPDATE OF t" : ""}`,
+    [userId, transactionId],
+  );
+  const transaction = result.rows[0];
+  if (!transaction) throw new TransactionNotFoundError();
+  return transaction;
+}
+
+async function readActiveJournal(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+): Promise<{ id: string; operationKind: string }> {
+  const result = await client.query<{ id: string; operationKind: string }>(
+    `SELECT j.id, j.operation_kind AS "operationKind"
+       FROM journals j
+      WHERE j.user_id = $1
+        AND j.transaction_id = $2
+        AND j.reversal_of IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM journals r
+           WHERE r.user_id = j.user_id AND r.reversal_of = j.id
+        )
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [userId, transactionId],
+  );
+  const journal = result.rows[0];
+  if (!journal) {
+    throw new TransactionConflictError(
+      "The transaction does not have an active journal to reverse.",
+    );
+  }
+  return journal;
+}
+
+async function reverseActiveJournal(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+): Promise<{ originalJournalId: string; reversalJournalId: string }> {
+  const journal = await readActiveJournal(client, userId, transactionId);
+  const postings = await client.query<{
+    ledgerAccountId: string;
+    direction: "DEBIT" | "CREDIT";
+    amountMinor: string;
+  }>(
+    `SELECT ledger_account_id AS "ledgerAccountId", direction,
+            amount_minor::text AS "amountMinor"
+       FROM postings
+      WHERE user_id = $1 AND journal_id = $2
+      ORDER BY id`,
+    [userId, journal.id],
+  );
+  if (postings.rows.length < 2) {
+    throw new TransactionConflictError(
+      "The transaction journal cannot be reversed safely.",
+    );
+  }
+  const reversalJournalId = await postBalancedJournal(client, {
+    userId,
+    transactionId,
+    operationKind: "REVERSAL",
+    reversalOf: journal.id,
+    postings: postings.rows.map((posting) => ({
+      ledgerAccountId: posting.ledgerAccountId,
+      direction: posting.direction === "DEBIT" ? "CREDIT" : "DEBIT",
+      amountMinor: moneyMinor(posting.amountMinor),
+    })),
+  });
+  return { originalJournalId: journal.id, reversalJournalId };
+}
+
+function revisionCommandFromRow(transaction: TransactionMutationRow) {
+  return {
+    ...transaction.afterJson,
+    kind: transaction.kind,
+    occurredOn: transaction.occurredOn,
+    note: transaction.note,
+  };
+}
+
+function sourceAccountIdFromRevision(
+  transaction: TransactionMutationRow,
+): string {
+  const value = transaction.afterJson.sourceAccountId;
+  if (typeof value !== "string") {
+    throw new TransactionConflictError(
+      "This transaction cannot be edited because its source account is unavailable.",
+    );
+  }
+  return value;
+}
+
+async function lockAccountsInOrder(
+  client: PoolClient,
+  userId: string,
+  accountIds: string[],
+) {
+  const uniqueIds = [...new Set(accountIds)].sort();
+  const accounts = new Map<
+    string,
+    Awaited<ReturnType<typeof readOwnedAccountForPosting>>
+  >();
+  for (const accountId of uniqueIds) {
+    accounts.set(
+      accountId,
+      await readOwnedAccountForPosting(client, userId, accountId),
+    );
+  }
+  return accounts;
 }
 
 export async function createIncomeOrExpense(
@@ -792,5 +940,303 @@ export async function createAdjustment(
   return {
     transaction: mapTransaction(transaction),
     account: await readFinancialAccount(client, userId, request.accountId),
+  };
+}
+
+export async function editIncomeOrExpense(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+  request: TransactionEditRequest,
+  serverToday: string,
+): Promise<TransactionCreateResult> {
+  assertOccurredOnNotFuture(request.occurredOn, serverToday);
+  const transaction = await readTransactionForMutation(
+    client,
+    userId,
+    transactionId,
+    true,
+  );
+  if (transaction.status !== "POSTED") {
+    throw new TransactionConflictError("A void transaction cannot be edited.");
+  }
+  if (transaction.kind !== "INCOME" && transaction.kind !== "EXPENSE") {
+    throw new TransactionConflictError(
+      "Only income and expense transactions can be edited by this command.",
+    );
+  }
+  if (transaction.kind !== request.kind) {
+    throw new TransactionConflictError(
+      "Editing cannot change the transaction kind.",
+    );
+  }
+
+  const oldSourceAccountId = sourceAccountIdFromRevision(transaction);
+  const accounts = await lockAccountsInOrder(client, userId, [
+    oldSourceAccountId,
+    request.sourceAccountId,
+  ]);
+  const oldAccount = accounts.get(oldSourceAccountId)!;
+  const newAccount = accounts.get(request.sourceAccountId)!;
+  if (newAccount.archivedAt) throw new TransactionNotFoundError();
+  if (newAccount.type === "CREDIT_CARD") {
+    throw new TransactionConflictError(
+      "Credit card purchases are not available in this command yet.",
+    );
+  }
+  const category = await readOwnedCategoryForPosting(
+    client,
+    userId,
+    request.categoryId,
+  );
+  if (category.kind !== request.kind) {
+    throw new TransactionConflictError(
+      "The category kind does not match the transaction kind.",
+    );
+  }
+
+  const oldAmountValue = transaction.afterJson.amountMinor;
+  if (typeof oldAmountValue !== "string") {
+    throw new TransactionConflictError(
+      "This transaction cannot be edited because its amount is unavailable.",
+    );
+  }
+  const oldAmount = moneyMinor(oldAmountValue);
+  const newAmount = moneyMinor(request.amountMinor);
+  const currentNewAccount = await readFinancialAccount(
+    client,
+    userId,
+    request.sourceAccountId,
+  );
+  let projectedBalance = BigInt(currentNewAccount.balanceMinor);
+  if (request.kind === "EXPENSE") {
+    if (oldSourceAccountId === request.sourceAccountId) {
+      projectedBalance += oldAmount;
+    }
+    projectedBalance -= newAmount;
+    if (projectedBalance < 0n && request.acknowledgeNegativeBalance !== true) {
+      throw new TransactionConflictError(
+        `This expense would make ${currentNewAccount.name} negative. Confirm the negative balance to continue.`,
+      );
+    }
+  }
+
+  const reversal = await reverseActiveJournal(client, userId, transactionId);
+  const nextVersion = transaction.currentRevision + 1;
+  const beforeJson = revisionCommandFromRow(transaction);
+  const afterJson = {
+    kind: request.kind,
+    sourceAccountId: request.sourceAccountId,
+    categoryId: request.categoryId,
+    amountMinor: request.amountMinor,
+    occurredOn: request.occurredOn,
+    note: request.note ?? null,
+  };
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id, reason)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $1, $6)`,
+    [
+      userId,
+      transactionId,
+      nextVersion,
+      JSON.stringify(beforeJson),
+      JSON.stringify(afterJson),
+      request.reason,
+    ],
+  );
+  const updated = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  }>(
+    `UPDATE transactions
+        SET occurred_on = $3::date,
+            category_id = $4,
+            note = $5,
+            current_revision = $6,
+            updated_at = now()
+      WHERE user_id = $1 AND id = $2
+      RETURNING id, kind, status, current_revision AS "currentRevision",
+                occurred_on::text AS "occurredOn", category_id AS "categoryId",
+                refunded_transaction_id AS "refundedTransactionId", note`,
+    [
+      userId,
+      transactionId,
+      request.occurredOn,
+      request.categoryId,
+      request.note ?? null,
+      nextVersion,
+    ],
+  );
+  const updatedTransaction = updated.rows[0];
+  if (!updatedTransaction)
+    throw new TransactionValidationError("Unable to update transaction.");
+
+  const amountPosting = {
+    ledgerAccountId: newAccount.ledgerAccountId,
+    direction: request.kind === "EXPENSE" ? "CREDIT" : "DEBIT",
+    amountMinor: newAmount,
+  } as const;
+  const categoryPosting = {
+    ledgerAccountId: category.ledgerAccountId,
+    direction: request.kind === "EXPENSE" ? "DEBIT" : "CREDIT",
+    amountMinor: newAmount,
+  } as const;
+  const replacementJournalId = await postBalancedJournal(client, {
+    userId,
+    transactionId,
+    operationKind: request.kind,
+    postings: [amountPosting, categoryPosting],
+  });
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'UPDATED', $3::jsonb)`,
+    [
+      userId,
+      transactionId,
+      JSON.stringify({
+        kind: request.kind,
+        reason: request.reason,
+        reversalJournalId: reversal.reversalJournalId,
+        replacementJournalId,
+      }),
+    ],
+  );
+  return {
+    transaction: mapTransaction(updatedTransaction),
+    account: await readFinancialAccount(
+      client,
+      userId,
+      request.sourceAccountId,
+    ),
+  };
+}
+
+export async function deleteTransaction(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+  request: TransactionDeleteRequest,
+): Promise<TransactionRecord> {
+  const transaction = await readTransactionForMutation(
+    client,
+    userId,
+    transactionId,
+    true,
+  );
+  if (transaction.status === "VOID") {
+    throw new TransactionConflictError(
+      "The transaction has already been voided.",
+    );
+  }
+  if (transaction.kind === "OPENING_BALANCE") {
+    throw new TransactionConflictError(
+      "Opening balances cannot be voided from the transaction command.",
+    );
+  }
+  const reversal = await reverseActiveJournal(client, userId, transactionId);
+  const nextVersion = transaction.currentRevision + 1;
+  const beforeJson = revisionCommandFromRow(transaction);
+  const afterJson = { ...beforeJson, status: "VOID" };
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id, reason)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $1, $6)`,
+    [
+      userId,
+      transactionId,
+      nextVersion,
+      JSON.stringify(beforeJson),
+      JSON.stringify(afterJson),
+      request.reason,
+    ],
+  );
+  const updated = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  }>(
+    `UPDATE transactions
+        SET status = 'VOID', current_revision = $3, updated_at = now()
+      WHERE user_id = $1 AND id = $2
+      RETURNING id, kind, status, current_revision AS "currentRevision",
+                occurred_on::text AS "occurredOn", category_id AS "categoryId",
+                refunded_transaction_id AS "refundedTransactionId", note`,
+    [userId, transactionId, nextVersion],
+  );
+  const updatedTransaction = updated.rows[0];
+  if (!updatedTransaction)
+    throw new TransactionValidationError("Unable to void transaction.");
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'VOIDED', $3::jsonb)`,
+    [
+      userId,
+      transactionId,
+      JSON.stringify({
+        reason: request.reason,
+        reversalJournalId: reversal.reversalJournalId,
+      }),
+    ],
+  );
+  return mapTransaction(updatedTransaction);
+}
+
+export async function readTransaction(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+) {
+  const transaction = await readTransactionForMutation(
+    client,
+    userId,
+    transactionId,
+  );
+  return mapTransaction(transaction);
+}
+
+export async function readTransactionAudit(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+) {
+  const transaction = await readTransactionForMutation(
+    client,
+    userId,
+    transactionId,
+  );
+  const revisions = await client.query<{
+    version: number;
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown>;
+    reason: string | null;
+    createdAt: Date;
+  }>(
+    `SELECT version, before_json AS before, after_json AS after, reason,
+            created_at AS "createdAt"
+       FROM transaction_revisions
+      WHERE user_id = $1 AND transaction_id = $2
+      ORDER BY version`,
+    [userId, transactionId],
+  );
+  return {
+    transaction: mapTransaction(transaction),
+    revisions: revisions.rows.map((revision) => ({
+      ...revision,
+      createdAt: revision.createdAt.toISOString(),
+    })),
   };
 }
