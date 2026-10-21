@@ -30,10 +30,3 @@ export const ApiErrorResponseSchema = z.object({
 });
 
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
-
-export const EchoRequestSchema = z
-  .object({ message: z.string().min(1).max(160) })
-  .strict();
-export const EchoResponseSchema = z.object({ message: z.string() });
-export type EchoRequest = z.infer<typeof EchoRequestSchema>;
-export type EchoResponse = z.infer<typeof EchoResponseSchema>;

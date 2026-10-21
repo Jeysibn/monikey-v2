@@ -24,38 +24,6 @@ test("browser reaches the live API backed by PostgreSQL", async ({ page }) => {
   });
 });
 
-test("invalid requests use the shared API error contract", async ({ page }) => {
-  await page.goto("/");
-  const response = await page.request.post("/api/v1/diagnostics/echo", {
-    data: { message: "" },
-  });
-  expect(response.status()).toBe(400);
-  await expect(response.json()).resolves.toMatchObject({
-    error: {
-      code: "VALIDATION_ERROR",
-      message: "Request validation failed.",
-      requestId: expect.any(String),
-      details: expect.arrayContaining([
-        expect.objectContaining({
-          path: "/message",
-          message: expect.any(String),
-        }),
-      ]),
-    },
-  });
-});
-
-test("valid diagnostic request returns its typed response", async ({
-  page,
-}) => {
-  await page.goto("/");
-  const response = await page.request.post("/api/v1/diagnostics/echo", {
-    data: { message: "contract probe" },
-  });
-  expect(response.status()).toBe(200);
-  await expect(response.json()).resolves.toEqual({ message: "contract probe" });
-});
-
 test("unknown API routes use the shared not-found error contract", async ({
   page,
 }) => {

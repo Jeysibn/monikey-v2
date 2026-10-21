@@ -1,12 +1,7 @@
 import Fastify from "fastify";
 import type { FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
-import {
-  ApiErrorResponseSchema,
-  EchoRequestSchema,
-  EchoResponseSchema,
-  HealthResponseSchema,
-} from "@monikey/contracts";
+import { HealthResponseSchema } from "@monikey/contracts";
 import { Pool } from "pg";
 import { z } from "zod";
 
@@ -79,24 +74,6 @@ app.setNotFoundHandler((request, reply) =>
 app.get("/healthz", { schema: { hide: true } }, async () => ({
   status: "ok",
 }));
-
-if (process.env.NODE_ENV !== "production") {
-  app.post(
-    "/api/v1/diagnostics/echo",
-    {
-      schema: {
-        tags: ["system"],
-        summary: "Development-only request contract probe",
-        body: z.toJSONSchema(EchoRequestSchema, { target: "draft-7" }),
-        response: {
-          200: z.toJSONSchema(EchoResponseSchema, { target: "draft-7" }),
-          400: z.toJSONSchema(ApiErrorResponseSchema, { target: "draft-7" }),
-        },
-      },
-    },
-    async (request) => request.body,
-  );
-}
 
 app.get(
   "/api/v1/health",
