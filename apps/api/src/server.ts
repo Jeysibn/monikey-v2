@@ -6,6 +6,10 @@ import swagger from "@fastify/swagger";
 import {
   ApiErrorResponseSchema,
   ChangePasswordRequestSchema,
+  CategoriesResponseSchema,
+  CategoryCreateRequestSchema,
+  CategoryPatchRequestSchema,
+  CategoryResponseSchema,
   CsrfResponseSchema,
   FinancialAccountCreateRequestBaseSchema,
   FinancialAccountCreateRequestSchema,
@@ -27,6 +31,11 @@ import {
   readFinancialAccount,
   updateFinancialAccount,
 } from "./accounts.js";
+import {
+  createCategory,
+  listCategories,
+  updateCategory,
+} from "./categories.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -928,6 +937,133 @@ app.post(
             client,
             ownerUserId(request),
             accountId,
+          ),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+const CategoryParamsSchema = z.object({ categoryId: z.string().uuid() });
+const CategoryListQuerySchema = z
+  .object({
+    kind: z.enum(["INCOME", "EXPENSE"]).optional(),
+    includeArchived: z.enum(["true", "false"]).optional(),
+  })
+  .strict();
+
+app.get(
+  "/api/v1/categories",
+  {
+    schema: {
+      tags: ["categories"],
+      summary: "List the signed-in owner's categories",
+      querystring: z.toJSONSchema(CategoryListQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CategoriesResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = CategoryListQuerySchema.parse(request.query);
+    const categories = await withDatabaseConnection((client) =>
+      listCategories(client, ownerUserId(request), {
+        ...(query.kind ? { kind: query.kind } : {}),
+        includeArchived: query.includeArchived === "true",
+      }),
+    );
+    return { categories };
+  },
+);
+
+app.post(
+  "/api/v1/categories",
+  {
+    schema: {
+      tags: ["categories"],
+      summary: "Create an owner-scoped income or expense category",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(CategoryCreateRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(CategoryResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const body = CategoryCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        category: await createCategory(client, ownerUserId(request), body),
+      })),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.patch(
+  "/api/v1/categories/:categoryId",
+  {
+    schema: {
+      tags: ["categories"],
+      summary: "Rename, reorder, change icon, or archive a category",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(CategoryParamsSchema, { target: "draft-7" }),
+      body: z.toJSONSchema(CategoryPatchRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CategoryResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { categoryId } = CategoryParamsSchema.parse(request.params);
+    const body = CategoryPatchRequestSchema.parse(request.body);
+    if (Object.values(body).every((value) => value === undefined)) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a category field to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { categoryId, ...body },
+        async () => ({
+          category: await updateCategory(
+            client,
+            ownerUserId(request),
+            categoryId,
+            {
+              ...(body.name !== undefined ? { name: body.name } : {}),
+              ...(body.sortOrder !== undefined
+                ? { sortOrder: body.sortOrder }
+                : {}),
+              ...(body.icon !== undefined ? { icon: body.icon } : {}),
+              ...(body.archived !== undefined
+                ? { archived: body.archived }
+                : {}),
+            },
           ),
         }),
       ),
