@@ -966,7 +966,6 @@ export interface paths {
             occurredOn: string;
             note?: string;
             acknowledgeNegativeBalance?: boolean;
-          } & {
             reason: string;
           };
         };

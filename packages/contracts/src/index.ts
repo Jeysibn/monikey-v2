@@ -346,10 +346,10 @@ export const TransactionRequestSchema = z.union([
   AdjustmentCreateRequestSchema,
 ]);
 
-export const TransactionEditRequestSchema = z.intersection(
-  TransactionCreateRequestSchema,
-  z.object({ reason: z.string().trim().min(1).max(300) }).strict(),
-);
+export const TransactionEditRequestSchema =
+  TransactionCreateRequestSchema.safeExtend({
+    reason: z.string().trim().min(1).max(300),
+  });
 
 export const TransactionDeleteRequestSchema = z
   .object({ reason: z.string().trim().min(1).max(300) })
