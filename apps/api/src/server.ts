@@ -23,6 +23,8 @@ import {
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
   SessionsResponseSchema,
+  TransactionCreateRequestSchema,
+  TransactionCreateResponseSchema,
 } from "@monikey/contracts";
 import {
   archiveFinancialAccount,
@@ -36,6 +38,7 @@ import {
   listCategories,
   updateCategory,
 } from "./categories.js";
+import { createIncomeOrExpense } from "./transactions.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -121,7 +124,8 @@ app.addHook("onSend", (request, reply, _payload, done) => {
   if (
     request.url.startsWith("/api/v1/auth/") ||
     request.url.startsWith("/api/v1/me") ||
-    request.url.startsWith("/api/v1/accounts")
+    request.url.startsWith("/api/v1/accounts") ||
+    request.url.startsWith("/api/v1/transactions")
   ) {
     reply.header("Cache-Control", "no-store");
   }
@@ -1069,6 +1073,45 @@ app.patch(
       ),
     );
     return result.value;
+  },
+);
+
+app.post(
+  "/api/v1/transactions",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "Post one owner-scoped income or expense",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(TransactionCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(TransactionCreateResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const body = TransactionCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        ...(await createIncomeOrExpense(
+          client,
+          ownerUserId(request),
+          body,
+          serverTodayInManila(),
+        )),
+      })),
+    );
+    return reply.code(201).send(result.value);
   },
 );
 
