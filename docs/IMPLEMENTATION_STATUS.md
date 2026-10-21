@@ -4,7 +4,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Current milestone
 
-**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — financial domain: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 through P2-05 passed required checks and are promoted to `main`; P2-06 category lifecycle is in progress. No V1 code or data has been imported.
+**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — financial domain: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 through P2-06 passed required checks and are promoted to `main`. No V1 code or data has been imported.
 
 | Work package                                                 | State                                    | Evidence / remaining gate                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,11 +27,11 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P2-03 Financial schema and tenant constraints                | Implemented; CI passed; merged to `main` | PR #18 and promotion PR #19 passed validation, CodeQL, fresh-Postgres migration/schema constraints, and API Playwright E2E.                                                                                                                                       |
 | P2-04 Exact balanced journal service                         | Implemented; CI passed; merged to `main` | PR #20 and promotion PR #21 passed validation, CodeQL, real-Postgres ledger integration, and API Playwright E2E.                                                                                                                                                  |
 | P2-05 Account lifecycle and opening balances                 | Implemented; CI passed; merged to `main` | PR #22 and promotion PR #23 passed validation, CodeQL, PostgreSQL schema/ledger/account integration, and API Playwright E2E. Adds owner-scoped account operations, idempotency, ledger-derived balances, and equity-backed opening journals.                      |
-| P2-06 Default/custom categories                              | In progress                              | Owner-scoped category list/create/update/archive, onboarding defaults, stable historical IDs, and optional validated icon tokens. PostgreSQL/API acceptance pending.                                                                                              |
+| P2-06 Default/custom categories                              | Implemented; CI passed; merged to `main` | PR #24 and promotion PR #25 passed validation, CodeQL, fresh-Postgres category integration, and Playwright E2E.                                                                                                                                                   |
 
 ## Later phases
 
-Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-05 are promoted to `main`; P2-06 category lifecycle is in progress. P2-07 onward and Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-06 are promoted to `main`; P2-07 onward and Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -52,11 +52,11 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - P2-04 feature PR #20 and promotion PR #21 — required checks, real-Postgres service integration, and API E2E passed; merged to `main`.
 - P2-05 local validation — typecheck, production build, five money and three ledger unit tests, format, `npm audit --audit-level=high` (zero vulnerabilities), E2E TypeScript check/discovery (22 tests), and `git diff --check` passed. Docker is unavailable locally; PostgreSQL integration and browser execution run in CI.
 - P2-05 PR #22 and promotion PR #23 — `validate`, CodeQL, PostgreSQL schema/ledger/account integration, and API Playwright E2E passed; merged to `main`.
-- P2-06 local static validation — pending; Docker/PostgreSQL integration and browser execution run in CI.
+- P2-06 local static validation — typecheck, production build, unit tests, formatting, audit (zero vulnerabilities), E2E TypeScript check/discovery (24 tests), and `git diff --check` passed. Docker/PostgreSQL integration and browser execution passed in CI.
+- P2-06 feature PR #24 and promotion PR #25 — validation, CodeQL, PostgreSQL schema/ledger/account/category integration, and Playwright E2E passed; merged to `main` at `f275ccf`.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
 1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
-2. Complete P2-06 category validation against real PostgreSQL in CI, then merge through `dev` and promote to `main`.
-3. Continue with expense and income commands (P2-07).
+2. Continue with expense and income commands (P2-07).
