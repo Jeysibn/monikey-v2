@@ -157,7 +157,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   const rejectedOrigin = await page.request.post(loginUrl, {
     headers: { origin: "https://attacker.example" },
     data: {
-      email: "owner@example.test",
+      email: "origin-check@example.test",
       password: "CI-only-password-never-used-outside-tests",
     },
   });
