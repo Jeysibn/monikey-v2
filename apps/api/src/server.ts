@@ -23,8 +23,9 @@ import {
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
   SessionsResponseSchema,
-  TransactionCreateRequestSchema,
   TransactionCreateResponseSchema,
+  TransactionRequestSchema,
+  TransferCreateResponseSchema,
 } from "@monikey/contracts";
 import {
   archiveFinancialAccount,
@@ -38,7 +39,7 @@ import {
   listCategories,
   updateCategory,
 } from "./categories.js";
-import { createIncomeOrExpense } from "./transactions.js";
+import { createIncomeOrExpense, createTransfer } from "./transactions.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -1081,16 +1082,20 @@ app.post(
   {
     schema: {
       tags: ["transactions"],
-      summary: "Post one owner-scoped income or expense",
+      summary: "Post one owner-scoped income, expense, or transfer",
       headers: idempotencyHeaderSchema,
-      body: z.toJSONSchema(TransactionCreateRequestSchema, {
+      body: z.toJSONSchema(TransactionRequestSchema, {
         target: "draft-7",
       }),
       response: {
         ...authErrorResponses(),
-        201: z.toJSONSchema(TransactionCreateResponseSchema, {
-          target: "draft-7",
-        }),
+        201: z.toJSONSchema(
+          z.union([
+            TransactionCreateResponseSchema,
+            TransferCreateResponseSchema,
+          ]),
+          { target: "draft-7" },
+        ),
       },
     },
   },
@@ -1100,15 +1105,22 @@ app.post(
     if (!requireCsrf(request, reply)) return;
     const key = requiredIdempotencyKey(request, reply);
     if (!key) return;
-    const body = TransactionCreateRequestSchema.parse(request.body);
+    const body = TransactionRequestSchema.parse(request.body);
     const result = await withDatabaseTransaction((client) =>
       runIdempotently(client, ownerUserId(request), key, body, async () => ({
-        ...(await createIncomeOrExpense(
-          client,
-          ownerUserId(request),
-          body,
-          serverTodayInManila(),
-        )),
+        ...(body.kind === "TRANSFER"
+          ? await createTransfer(
+              client,
+              ownerUserId(request),
+              body,
+              serverTodayInManila(),
+            )
+          : await createIncomeOrExpense(
+              client,
+              ownerUserId(request),
+              body,
+              serverTodayInManila(),
+            )),
       })),
     );
     return reply.code(201).send(result.value);

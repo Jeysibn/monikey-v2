@@ -803,6 +803,62 @@ test("expense and income commands are balanced and retry-safe", async ({
     transaction: { kind: "INCOME", categoryId: incomeCategory.id },
     account: { id: accountRow.id, balanceMinor: "115000" },
   });
+
+  const destination = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `transaction-destination-test-${testRun}`,
+    },
+    data: {
+      type: "EWALLET",
+      name: `Transaction Destination ${testRun}`,
+      openingBalanceMinor: "0",
+    },
+  });
+  expect(destination.status()).toBe(201);
+  const destinationRow = (await destination.json()).account;
+  const transferBody = {
+    kind: "TRANSFER",
+    fromAccountId: accountRow.id,
+    toAccountId: destinationRow.id,
+    amountMinor: "10000",
+    feeMinor: "1500",
+    feeCategoryId: expenseCategory.id,
+    occurredOn: "2026-10-22",
+  };
+  const transferHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": `transaction-transfer-test-${testRun}`,
+  };
+  const transfer = await page.request.post(`${api}/transactions`, {
+    headers: transferHeaders,
+    data: transferBody,
+  });
+  expect(transfer.status()).toBe(201);
+  const transferResult = await transfer.json();
+  expect(transferResult).toMatchObject({
+    transaction: {
+      kind: "TRANSFER",
+      categoryId: null,
+    },
+    sourceAccount: { id: accountRow.id, balanceMinor: "103500" },
+    destinationAccount: { id: destinationRow.id, balanceMinor: "10000" },
+  });
+  const transferReplay = await page.request.post(`${api}/transactions`, {
+    headers: transferHeaders,
+    data: transferBody,
+  });
+  expect(transferReplay.status()).toBe(201);
+  expect((await transferReplay.json()).transaction.id).toBe(
+    transferResult.transaction.id,
+  );
+  const transferConflict = await page.request.post(`${api}/transactions`, {
+    headers: transferHeaders,
+    data: { ...transferBody, amountMinor: "11000" },
+  });
+  expect(transferConflict.status()).toBe(409);
 });
 
 test("login rate limits repeated failures", async ({ page }) => {

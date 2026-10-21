@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
 import {
   createIncomeOrExpense,
+  createTransfer,
   TransactionConflictError,
   TransactionNotFoundError,
 } from "./transactions.js";
@@ -12,6 +13,7 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl)
   throw new Error("DATABASE_URL is required for transaction tests.");
 const pool = new Pool({ connectionString: databaseUrl });
+after(async () => pool.end());
 
 test("income and expense commands post balanced journals and derive balances", async () => {
   const client = await pool.connect();
@@ -224,6 +226,131 @@ test("income and expense commands post balanced journals and derive balances", a
   } finally {
     await client.query("ROLLBACK");
     client.release();
-    await pool.end();
+  }
+});
+
+test("transfer commands move balances and post optional fees as spending", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const source = await createFinancialAccount(
+      client,
+      userId,
+      { type: "BANK", name: "Transfer source", openingBalanceMinor: "100000" },
+      "2026-10-22",
+    );
+    const destination = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "EWALLET",
+        name: "Transfer destination",
+        openingBalanceMinor: "0",
+      },
+      "2026-10-22",
+    );
+    const categories = await client.query<{ id: string; kind: string }>(
+      `SELECT id, kind FROM categories
+        WHERE user_id = $1 AND name = 'Food'`,
+      [userId],
+    );
+    const feeCategory = categories.rows.find((row) => row.kind === "EXPENSE");
+    assert.ok(feeCategory?.id);
+
+    const moved = await createTransfer(
+      client,
+      userId,
+      {
+        kind: "TRANSFER",
+        fromAccountId: source.id,
+        toAccountId: destination.id,
+        amountMinor: "20000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(moved.sourceAccount.balanceMinor, "80000");
+    assert.equal(moved.destinationAccount.balanceMinor, "20000");
+
+    const withFee = await createTransfer(
+      client,
+      userId,
+      {
+        kind: "TRANSFER",
+        fromAccountId: source.id,
+        toAccountId: destination.id,
+        amountMinor: "10000",
+        feeMinor: "1500",
+        feeCategoryId: feeCategory.id,
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(withFee.sourceAccount.balanceMinor, "68500");
+    assert.equal(withFee.destinationAccount.balanceMinor, "30000");
+
+    const journal = await client.query<{
+      operation_kind: string;
+      posting_count: string;
+      debit_total: string;
+      credit_total: string;
+    }>(
+      `SELECT j.operation_kind,
+              count(p.id)::text AS posting_count,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'DEBIT')::text AS debit_total,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'CREDIT')::text AS credit_total
+         FROM journals j
+         JOIN postings p ON p.user_id = j.user_id AND p.journal_id = j.id
+        WHERE j.user_id = $1 AND j.transaction_id = $2
+        GROUP BY j.id, j.operation_kind`,
+      [userId, withFee.transaction.id],
+    );
+    assert.deepEqual(journal.rows, [
+      {
+        operation_kind: "TRANSFER",
+        posting_count: "3",
+        debit_total: "11500",
+        credit_total: "11500",
+      },
+    ]);
+
+    await assert.rejects(
+      createTransfer(
+        client,
+        userId,
+        {
+          kind: "TRANSFER",
+          fromAccountId: source.id,
+          toAccountId: source.id,
+          amountMinor: "1",
+          occurredOn: "2026-10-22",
+        },
+        "2026-10-22",
+      ),
+      TransactionConflictError,
+    );
+    await assert.rejects(
+      createTransfer(
+        client,
+        userId,
+        {
+          kind: "TRANSFER",
+          fromAccountId: source.id,
+          toAccountId: destination.id,
+          amountMinor: "999999",
+          occurredOn: "2026-10-22",
+        },
+        "2026-10-22",
+      ),
+      /negative/,
+    );
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
   }
 });
