@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 through P2-10 are implemented; P2-10 adds owner-scoped activity and account activity reads with keyset pagination and filters. P2-11 financial domain property-based and fail-closed repository tests is next. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 through P2-11 are implemented; P2-11 adds generated financial invariant sequences, exact bigint boundary checks, transfer identities, and fail-closed PostgreSQL integration guards. Phase 3 private-alpha vertical slices are next. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
@@ -29,6 +29,7 @@ When the API is running, regenerate the typed client with `npm run api:types`.
 ```sh
 npm run typecheck
 npm run test:unit
+npm run test:invariants
 npm run build
 npm run format:check
 npm audit

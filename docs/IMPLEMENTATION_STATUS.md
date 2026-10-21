@@ -32,10 +32,11 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P2-08 Transfers, refunds, and adjustments                                             | Implemented; CI passed; merged to `main` | Transfer PR #32 and promotion PR #33 plus refund/adjustment PR #36 and promotion PR #37 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds atomic transfers, optional fee expense postings, linked refunds, explicit equity-backed adjustments, deterministic locks, negative-balance confirmation, and retry-safe idempotency. |
 | P2-09 Edit, reversal, logical delete, audit revisions and concurrency locks           | Implemented; CI passed; merged to `main` | PR #42 and promotion PR #43 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds owner-scoped transaction detail/audit reads, income/expense edits, compensating reversal journals, logical voids, immutable revision reasons, and deterministic account locks.                                                                   |
 | P2-10 Unified activity list/read, cursor pagination, account scoped query and filters | Implemented; CI passed; merged to `main` | PR #46 and promotion PR #47 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds owner-scoped activity and account activity reads with keyset cursors, deterministic ordering, search, date, kind, status, category, and account filters.                                                                                         |
+| P2-11 Financial domain property-based tests and fail-closed repository tests          | Implemented; CI pending                  | Adds generated ledger operation sequences, exact bigint boundary checks, transfer fee identities, and a shared `DATABASE_URL` guard for every PostgreSQL integration suite.                                                                                                                                                                                          |
 
 ## Later phases
 
-Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-10 are implemented; P2-11 and later work remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-11 are implemented; Phase 3 and later work remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -68,9 +69,10 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - P2-09 feature PR #42 and promotion PR #43 — validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E passed; merged to `main` at `d7080fa`. E2E completed with 20 passed and 6 skipped.
 - P2-10 local static validation — typecheck, formatting, OpenAPI regeneration, and diff checks pass. PostgreSQL integration and browser acceptance run in CI.
 - P2-10 feature PR #46 and promotion PR #47 — validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E passed; merged to `main` at `029740b`.
+- P2-11 local validation — typecheck, unit and invariant tests (13 total), formatting, and diff checks pass. PostgreSQL integration and real-stack browser acceptance remain CI gates.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
 1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
-2. Implement P2-11 financial domain property-based tests and fail-closed repository tests.
+2. Complete Phase 1 physical-device owner review, then begin Phase 3 private-alpha vertical slices.
