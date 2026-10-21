@@ -8,5 +8,6 @@ COPY packages/money/package.json packages/money/package.json
 ARG DATABASE_URL=postgresql://monikey:local-only-change-me@127.0.0.1:5432/monikey?schema=public
 RUN npm ci
 COPY . .
+RUN npm run build --workspace @monikey/money
 EXPOSE 5173
 CMD ["npm", "run", "dev", "--workspace", "@monikey/web"]
