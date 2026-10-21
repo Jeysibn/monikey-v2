@@ -10,13 +10,14 @@
   },
   "dependencies": {
     "@monikey/contracts": "0.1.0",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^8.5.0",
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "5.0.4",
     "vite": "7.3.7"
   }

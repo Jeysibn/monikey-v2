@@ -4,7 +4,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Current milestone
 
-**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass.** Phase 1 design-system and route work is next. No identity or financial product flow is implemented, and no V1 code or data has been imported.
+**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress.** Initial design tokens, route behavior, responsive navigation, themes, and truthful route skeletons are implemented. Owner review on real devices remains a Phase 1 exit gate. No identity or financial product flow is implemented, and no V1 code or data has been imported.
 
 | Work package                                                 | State                             | Evidence / remaining gate                                                                                                                                                                                                   |
 | ------------------------------------------------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,13 +19,15 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Later phases
 
-Phases 1–6 have not started. They cover UX direction/component system, private identity and ledger, private alpha, card statements and bills, reports/export, and production GitOps cutover. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 is in progress; phases 2–6 have not started. They cover the design system and routes, private identity and ledger, private alpha, card statements and bills, reports/export, and production GitOps cutover. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
 - `npm run typecheck` — passed locally.
 - `npm run test:unit` — 5 exact-money cases passed locally.
 - `npm run format:check` — passed locally.
+- Route, deep-link, back-navigation, no-sample-data, mobile secondary navigation, theme, and browser 404 Playwright checks — 11 passed locally across desktop and Pixel 7 emulation; the live PostgreSQL health test remains in the required CI suite.
+- Pixel 7 and desktop screenshots were reviewed locally. Real-device checks remain outstanding.
 - GitHub Actions `validate`, `CodeQL`, and `e2e` — passed on the foundation feature PR before merge to `dev` and promotion to `main`.
 - Real-stack CI — PostgreSQL migration, API readiness, web health, and Playwright smoke suite passed.
 - Branch protection — `validate`, `CodeQL`, and `e2e` required on `main` and `dev`; PR-only owner workflow uses zero required approvals.
@@ -33,7 +35,7 @@ Phases 1–6 have not started. They cover UX direction/component system, private
 
 ## Next work
 
-1. Produce the visual token and interaction specification required before backend-connected finance UI.
-2. Implement responsive route skeletons, navigation, dialogs/sheets, accessibility states, and theme controls without fake financial behavior.
+1. Finish accessible component states, amount-entry/selector primitives, and screenshot breakpoints.
+2. Review the navigation and visual direction on actual phone and desktop before closing Phase 1.
 3. Review identity, ownership, session security, idempotency, and ledger contracts before the first persistent financial schema.
 4. Continue in the approved dependency order and update this status after each completed acceptance gate.
