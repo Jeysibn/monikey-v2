@@ -35,6 +35,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: docker compose up --build -d --wait --wait-timeout 180 api web
+      - name: Create isolated E2E owner account
+        run: >-
+          docker compose exec -T -e MONIKEY_BOOTSTRAP_EMAIL=owner@example.test
+          -e MONIKEY_BOOTSTRAP_PASSWORD=CI-only-password-never-used-outside-tests
+          api npm run bootstrap-owner --workspace @monikey/api
       - run: npm run test:e2e
       - if: always()
         run: docker compose logs --no-color

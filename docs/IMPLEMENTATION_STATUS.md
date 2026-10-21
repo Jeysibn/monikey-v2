@@ -4,7 +4,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Current milestone
 
-**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. No identity or financial product flow is implemented, and no V1 code or data has been imported.
+**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — identity: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. Private identity is implemented on a feature branch pending real-Postgres CI; financial ledger work has not started. No V1 code or data has been imported.
 
 | Work package                                                 | State                             | Evidence / remaining gate                                                                                                                                                                                                   |
 | ------------------------------------------------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -20,12 +20,13 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P1-02 Route and interaction draft                            | Implemented; review pending       | Design doc covers route, navigation, form and overlay behavior. Real-device/owner review remains.                                                                                                                           |
 | P1-03 Responsive shell and theme control                     | Implemented; CI passed            | Desktop rail, four-action mobile navigation, More menu, theme preference, reduced motion and honest preview status.                                                                                                         |
 | P1-04 Route skeleton and deep links                          | Implemented; CI passed            | React Router skeletons, deep-link refresh, history navigation, route boundaries and in-shell 404s pass real-stack CI. Authentication awaits Phase 2.                                                                        |
-| P1-05 Amount, selectors and privacy mask                     | In progress                       | Exact PHP amount parsing, no-save preview form, disabled empty account/category selectors and accessible mask control. Production records and mutation remain absent.                                                       |
+| P1-05 Amount, selectors and privacy mask                     | Implemented; CI passed            | Exact PHP amount parsing, no-save preview form, disabled empty account/category selectors and accessible mask control. Production records and mutation remain absent.                                                       |
 | P1-06 Device screenshots and design acceptance               | Partial                           | 360/Pixel 7 emulation and 1440px desktop preview captures are saved. Physical phone and owner approval remain.                                                                                                              |
+| P2-01 Private identity and sessions                          | Implemented; CI pending           | Argon2id one-time owner bootstrap, secure opaque DB sessions, CSRF/origin checks, login throttling, password rotation, owner-scoped session revocation; real-Postgres E2E is required before merge.                         |
 
 ## Later phases
 
-Phase 1 is in progress; phases 2–6 have not started. They cover the design system and routes, private identity and ledger, private alpha, card statements and bills, reports/export, and production GitOps cutover. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. Phase 2 identity is in progress; ledger schema and financial workflows have not started. Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -37,11 +38,13 @@ Phase 1 is in progress; phases 2–6 have not started. They cover the design sys
 - GitHub Actions `validate`, `CodeQL`, and `e2e` — passed on the foundation feature PR before merge to `dev` and promotion to `main`.
 - Real-stack CI — PostgreSQL migration, API readiness, web health, and Playwright smoke suite passed.
 - Branch protection — `validate`, `CodeQL`, and `e2e` required on `main` and `dev`; PR-only owner workflow uses zero required approvals.
+- Phase 1 promotion PR #12 — all checks passed and merged to `main`.
+- Identity slice local validation — TypeScript, production builds, Prettier, and `npm audit --audit-level=high` pass; no high severity vulnerabilities.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
-1. Finish accessible component states, amount-entry/selector primitives, and screenshot breakpoints.
-2. Review the navigation and visual direction on actual phone and desktop before closing Phase 1.
-3. Review identity, ownership, session security, idempotency, and ledger contracts before the first persistent financial schema.
+1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
+2. Complete P2-01 PostgreSQL-backed E2E and merge its reviewed PR.
+3. Implement P2-02 owner preferences, Manila server date, and ownership helpers before adding finance tables.
 4. Continue in the approved dependency order and update this status after each completed acceptance gate.
