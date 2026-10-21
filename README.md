@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 private identity passed validation, CodeQL, and real-PostgreSQL E2E and is promoted to `main`. P2-02 adds server-owned preferences, Asia/Manila `serverToday`, and owner-scoped queries; its PostgreSQL E2E is pending. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 identity and P2-02 owner preferences/server-owned Manila date are promoted to `main`; both passed validation, CodeQL, and real-PostgreSQL E2E. P2-03 financial schema is in progress. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
