@@ -15,7 +15,7 @@ npm run test:e2e
 docker compose down --volumes --remove-orphans
 ```
 
-Compose starts PostgreSQL, runs the migration container to completion, waits for the API readiness endpoint, then serves the web client. The suite covers desktop and Pixel 7 mobile emulation, honest empty-state content, DB readiness through the browser proxy, invalid request error serialization, and the development-only valid request probe. CI installs Chromium system dependencies and runs the same Compose-backed suite.
+Compose starts PostgreSQL, runs all migrations to completion, waits for the API readiness endpoint, then serves the web client. CI creates an isolated test owner through the one-time bootstrap CLI before running Playwright. The suite covers desktop and Pixel 7 mobile emulation, honest empty-state content, database readiness, private login, secure cookie attributes, CSRF and origin rejection, profile/session recovery, cross-session revocation, password rotation, logout, invalid credentials, and rate limiting. CI installs Chromium system dependencies and runs this Compose-backed suite against real PostgreSQL.
 
 The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for focused integration suites. Add integration suites when the first persistent domain schema lands.
 
