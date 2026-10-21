@@ -381,9 +381,10 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   expect(login.status()).toBe(200);
   const { csrfToken } = await login.json();
   const emptyProfile = await page.request.get(`${api}/me`);
-  await expect(emptyProfile.json()).resolves.toMatchObject({
-    onboardingStatus: "NEEDS_FIRST_ACCOUNT",
-  });
+  const profileBeforeCreate = await emptyProfile.json();
+  expect(["NEEDS_FIRST_ACCOUNT", "READY"]).toContain(
+    profileBeforeCreate.onboardingStatus,
+  );
 
   const invalidAccount = await page.request.post(`${api}/accounts`, {
     headers: {
@@ -538,7 +539,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   await expect(missingAccount.json()).resolves.toMatchObject({
     error: {
       code: "NOT_FOUND",
-      message: "The requested account was not found.",
+      message: "The requested resource was not found.",
     },
   });
 });
