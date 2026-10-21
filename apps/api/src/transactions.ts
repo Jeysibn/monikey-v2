@@ -3,6 +3,7 @@ import { moneyMinor } from "@monikey/money";
 import type {
   TransactionCreateRequest,
   TransactionKindSchema,
+  TransferCreateRequest,
 } from "@monikey/contracts";
 import {
   readFinancialAccount,
@@ -18,13 +19,19 @@ export type TransactionRecord = {
   status: "POSTED" | "VOID";
   currentRevision: number;
   occurredOn: string;
-  categoryId: string;
+  categoryId: string | null;
   note: string | null;
 };
 
 export type TransactionCreateResult = {
   transaction: TransactionRecord;
   account: FinancialAccountRecord;
+};
+
+export type TransferCreateResult = {
+  transaction: TransactionRecord;
+  sourceAccount: FinancialAccountRecord;
+  destinationAccount: FinancialAccountRecord;
 };
 
 export class TransactionNotFoundError extends Error {
@@ -60,7 +67,7 @@ function mapTransaction(row: {
   status: "POSTED" | "VOID";
   currentRevision: number;
   occurredOn: string;
-  categoryId: string;
+  categoryId: string | null;
   note: string | null;
 }): TransactionRecord {
   return row;
@@ -262,6 +269,187 @@ export async function createIncomeOrExpense(
       client,
       userId,
       request.sourceAccountId,
+    ),
+  };
+}
+
+export async function createTransfer(
+  client: PoolClient,
+  userId: string,
+  request: TransferCreateRequest,
+  serverToday: string,
+): Promise<TransferCreateResult> {
+  assertOccurredOnNotFuture(request.occurredOn, serverToday);
+  if (request.fromAccountId === request.toAccountId) {
+    throw new TransactionConflictError(
+      "A transfer must use two different accounts.",
+    );
+  }
+
+  const amount = moneyMinor(request.amountMinor);
+  const fee = moneyMinor(request.feeMinor ?? "0");
+  if (fee > 0n && !request.feeCategoryId) {
+    throw new TransactionValidationError(
+      "A fee category is required when a transfer fee is positive.",
+    );
+  }
+  if (fee === 0n && request.feeCategoryId) {
+    throw new TransactionValidationError(
+      "A fee category requires a positive transfer fee.",
+    );
+  }
+  const accountIds = [request.fromAccountId, request.toAccountId].sort();
+  const lockedAccounts = new Map<
+    string,
+    Awaited<ReturnType<typeof readOwnedAccountForPosting>>
+  >();
+  for (const accountId of accountIds) {
+    lockedAccounts.set(
+      accountId,
+      await readOwnedAccountForPosting(client, userId, accountId),
+    );
+  }
+  const source = lockedAccounts.get(request.fromAccountId)!;
+  const destination = lockedAccounts.get(request.toAccountId)!;
+  if (source.archivedAt || destination.archivedAt) {
+    throw new TransactionNotFoundError();
+  }
+  if (source.type === "CREDIT_CARD" || destination.type === "CREDIT_CARD") {
+    throw new TransactionConflictError(
+      "Transfers are only available between cash, bank, and e-wallet accounts.",
+    );
+  }
+
+  let feeCategory:
+    | Awaited<ReturnType<typeof readOwnedCategoryForPosting>>
+    | undefined;
+  if (fee > 0n) {
+    feeCategory = await readOwnedCategoryForPosting(
+      client,
+      userId,
+      request.feeCategoryId!,
+    );
+    if (feeCategory.archivedAt) throw new TransactionNotFoundError();
+    if (feeCategory.kind !== "EXPENSE") {
+      throw new TransactionConflictError(
+        "A transfer fee must use an expense category.",
+      );
+    }
+  }
+
+  const currentSource = await readFinancialAccount(
+    client,
+    userId,
+    request.fromAccountId,
+  );
+  const projectedSourceBalance =
+    BigInt(currentSource.balanceMinor) - amount - fee;
+  if (
+    projectedSourceBalance < 0n &&
+    request.acknowledgeNegativeBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This transfer would make ${currentSource.name} negative. Confirm the negative balance to continue.`,
+    );
+  }
+
+  const transactionResult = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    note: string | null;
+  }>(
+    `INSERT INTO transactions
+       (user_id, kind, occurred_on, category_id, note)
+     VALUES ($1, 'TRANSFER', $2::date, NULL, $3)
+     RETURNING id, kind, status, current_revision AS "currentRevision",
+               occurred_on::text AS "occurredOn", category_id AS "categoryId", note`,
+    [userId, request.occurredOn, request.note ?? null],
+  );
+  const transaction = transactionResult.rows[0];
+  if (!transaction)
+    throw new TransactionValidationError("Unable to create transfer.");
+
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id)
+     VALUES ($1, $2, 1, NULL, $3::jsonb, $1)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "TRANSFER",
+        fromAccountId: request.fromAccountId,
+        toAccountId: request.toAccountId,
+        amountMinor: request.amountMinor,
+        feeMinor: request.feeMinor ?? "0",
+        feeCategoryId: request.feeCategoryId ?? null,
+        occurredOn: request.occurredOn,
+        note: request.note ?? null,
+      }),
+    ],
+  );
+
+  const postings = [
+    {
+      ledgerAccountId: source.ledgerAccountId,
+      direction: "CREDIT" as const,
+      amountMinor: moneyMinor((amount + fee).toString()),
+    },
+    {
+      ledgerAccountId: destination.ledgerAccountId,
+      direction: "DEBIT" as const,
+      amountMinor: amount,
+    },
+    ...(fee > 0n && feeCategory
+      ? [
+          {
+            ledgerAccountId: feeCategory.ledgerAccountId,
+            direction: "DEBIT" as const,
+            amountMinor: fee,
+          },
+        ]
+      : []),
+  ] as const;
+  await postBalancedJournal(client, {
+    userId,
+    transactionId: transaction.id,
+    operationKind: "TRANSFER",
+    postings,
+  });
+
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'POSTED', $3::jsonb)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "TRANSFER",
+        fromAccountId: request.fromAccountId,
+        toAccountId: request.toAccountId,
+        amountMinor: request.amountMinor,
+        feeMinor: request.feeMinor ?? "0",
+        feeCategoryId: request.feeCategoryId ?? null,
+      }),
+    ],
+  );
+
+  return {
+    transaction: mapTransaction(transaction),
+    sourceAccount: await readFinancialAccount(
+      client,
+      userId,
+      request.fromAccountId,
+    ),
+    destinationAccount: await readFinancialAccount(
+      client,
+      userId,
+      request.toAccountId,
     ),
   };
 }

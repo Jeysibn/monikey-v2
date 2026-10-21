@@ -3773,7 +3773,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Post one owner-scoped income or expense */
+    /** Post one owner-scoped income, expense, or transfer */
     post: {
       parameters: {
         query?: never;
@@ -3785,18 +3785,34 @@ export interface paths {
       };
       requestBody: {
         content: {
-          "application/json": {
-            /** @enum {string} */
-            kind: "INCOME" | "EXPENSE";
-            /** Format: uuid */
-            sourceAccountId: string;
-            /** Format: uuid */
-            categoryId: string;
-            amountMinor: string;
-            occurredOn: string;
-            note?: string;
-            acknowledgeNegativeBalance?: boolean;
-          };
+          "application/json":
+            | {
+                /** @enum {string} */
+                kind: "INCOME" | "EXPENSE";
+                /** Format: uuid */
+                sourceAccountId: string;
+                /** Format: uuid */
+                categoryId: string;
+                amountMinor: string;
+                occurredOn: string;
+                note?: string;
+                acknowledgeNegativeBalance?: boolean;
+              }
+            | {
+                /** @enum {string} */
+                kind: "TRANSFER";
+                /** Format: uuid */
+                fromAccountId: string;
+                /** Format: uuid */
+                toAccountId: string;
+                amountMinor: string;
+                feeMinor?: string;
+                /** Format: uuid */
+                feeCategoryId?: string;
+                occurredOn: string;
+                note?: string;
+                acknowledgeNegativeBalance?: boolean;
+              };
         };
       };
       responses: {
@@ -3806,37 +3822,83 @@ export interface paths {
             [name: string]: unknown;
           };
           content: {
-            "application/json": {
-              transaction: {
-                /** Format: uuid */
-                id: string;
-                /** @enum {string} */
-                kind: "INCOME" | "EXPENSE";
-                /** @enum {string} */
-                status: "POSTED" | "VOID";
-                currentRevision: number;
-                occurredOn: string;
-                /** Format: uuid */
-                categoryId: string;
-                note: string | null;
-              };
-              account: {
-                /** Format: uuid */
-                id: string;
-                /** @enum {string} */
-                type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
-                name: string;
-                institution: string | null;
-                /** @enum {string} */
-                currency: "PHP";
-                balanceMinor: string;
-                sortOrder: number;
-                creditLimitMinor: string | null;
-                statementDay: number | null;
-                dueDay: number | null;
-                archivedAt: string | null;
-              };
-            };
+            "application/json":
+              | {
+                  transaction: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "INCOME" | "EXPENSE" | "TRANSFER";
+                    /** @enum {string} */
+                    status: "POSTED" | "VOID";
+                    currentRevision: number;
+                    occurredOn: string;
+                    categoryId: string | null;
+                    note: string | null;
+                  };
+                  account: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+                    name: string;
+                    institution: string | null;
+                    /** @enum {string} */
+                    currency: "PHP";
+                    balanceMinor: string;
+                    sortOrder: number;
+                    creditLimitMinor: string | null;
+                    statementDay: number | null;
+                    dueDay: number | null;
+                    archivedAt: string | null;
+                  };
+                }
+              | {
+                  transaction: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "INCOME" | "EXPENSE" | "TRANSFER";
+                    /** @enum {string} */
+                    status: "POSTED" | "VOID";
+                    currentRevision: number;
+                    occurredOn: string;
+                    categoryId: string | null;
+                    note: string | null;
+                  };
+                  sourceAccount: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+                    name: string;
+                    institution: string | null;
+                    /** @enum {string} */
+                    currency: "PHP";
+                    balanceMinor: string;
+                    sortOrder: number;
+                    creditLimitMinor: string | null;
+                    statementDay: number | null;
+                    dueDay: number | null;
+                    archivedAt: string | null;
+                  };
+                  destinationAccount: {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+                    name: string;
+                    institution: string | null;
+                    /** @enum {string} */
+                    currency: "PHP";
+                    balanceMinor: string;
+                    sortOrder: number;
+                    creditLimitMinor: string | null;
+                    statementDay: number | null;
+                    dueDay: number | null;
+                    archivedAt: string | null;
+                  };
+                };
           };
         };
         /** @description Default Response */
