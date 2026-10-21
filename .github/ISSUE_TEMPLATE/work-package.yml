@@ -1,0 +1,26 @@
+name: MoniKey V2 work package
+description: Track one dependency-scoped item from the approved master plan.
+title: "[P?-??] "
+labels: ["docs"]
+body:
+  - type: input
+    id: package-id
+    attributes:
+      label: Plan work package ID
+      placeholder: P2-04
+    validations:
+      required: true
+  - type: textarea
+    id: user-story
+    attributes:
+      label: User story and scope
+      description: Include explicit non-scope and the dependency IDs.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Schema/API impact, test cases, screenshots, QA, docs, and release impact.
+    validations:
+      required: true

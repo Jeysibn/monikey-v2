@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+apps/api/src/generated/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+playwright-report/
+test-results/
+.taste-skill/
+apps/web/src/*.js
+.taste-skill/review/

@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-monikey}
+      POSTGRES_USER: ${POSTGRES_USER:-monikey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "db:migrate", "--workspace", "@monikey/api"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-monikey}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-monikey}?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "dev", "--workspace", "@monikey/api"]
+    environment:
+      API_PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-monikey}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-monikey}?schema=public
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    command: ["npm", "run", "dev", "--workspace", "@monikey/web"]
+    environment:
+      API_ORIGIN: http://api:3000
+    ports:
+      - "5173:5173"
+    depends_on: [api]
+
+  db-test:
+    image: postgres:17.6-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: monikey_test
+      POSTGRES_USER: monikey
+      POSTGRES_PASSWORD: test-only
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

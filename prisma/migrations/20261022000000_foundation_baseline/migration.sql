@@ -1,0 +1,1 @@
+-- MoniKey V2 schema baseline. Domain tables are introduced by subsequent migrations.

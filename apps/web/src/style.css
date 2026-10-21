@@ -1,0 +1,161 @@
+:root {
+  font-family:
+    Manrope,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #10213d;
+  background: #f7f9fc;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+  font-size: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+.shell {
+  width: min(100% - 48px, 1120px);
+  min-height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  height: 88px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+}
+.mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: #1d4ed8;
+  font-size: 16px;
+  font-weight: 700;
+}
+.version {
+  margin-left: 7px;
+  color: #53657e;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+.status {
+  width: min(100%, 690px);
+  margin: auto 0;
+  padding: 58px 0 92px;
+}
+.eyebrow {
+  margin: 0 0 20px;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+h1 {
+  max-width: 14ch;
+  margin: 0;
+  color: #122343;
+  font-size: clamp(2.7rem, 6.8vw, 5.4rem);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 0.99;
+}
+.lede {
+  max-width: 61ch;
+  margin: 28px 0 0;
+  color: #334661;
+  font-size: 17px;
+  line-height: 1.65;
+}
+.boundary {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 42px;
+  padding: 19px 20px;
+  background: #fff;
+  border: 1px solid #dce5f2;
+  border-radius: 13px;
+}
+.signal {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #53657e;
+}
+.boundary strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+.boundary p {
+  margin: 5px 0 0;
+  color: #53657e;
+  font-size: 13px;
+  line-height: 1.55;
+}
+footer {
+  padding: 22px 0 27px;
+  color: #53657e;
+  font-size: 12px;
+}
+footer span {
+  padding: 0 6px;
+  color: #8a9ab0;
+}
+:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 3px;
+}
+@media (max-width: 560px) {
+  .shell {
+    width: min(100% - 36px, 1120px);
+  }
+  .brand {
+    height: 70px;
+  }
+  .status {
+    padding: 62px 0 72px;
+  }
+  h1 {
+    font-size: clamp(2.65rem, 13vw, 4rem);
+  }
+  .lede {
+    margin-top: 21px;
+    font-size: 16px;
+  }
+  .boundary {
+    margin-top: 30px;
+    padding: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run format:check
+
+  codeql:
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: github/codeql-action/.github/workflows/codeql.yml@v3
+    with:
+      languages: javascript-typescript
