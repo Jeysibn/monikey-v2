@@ -186,6 +186,56 @@ export type CategoryCreateRequest = z.infer<typeof CategoryCreateRequestSchema>;
 export type CategoryPatchRequest = z.infer<typeof CategoryPatchRequestSchema>;
 export type CategoryRecord = z.infer<typeof CategorySchema>;
 
+export const TransactionKindSchema = z.enum(["INCOME", "EXPENSE"]);
+
+export const TransactionCreateRequestSchema = z
+  .object({
+    kind: TransactionKindSchema,
+    sourceAccountId: z.string().uuid(),
+    categoryId: z.string().uuid(),
+    amountMinor: MinorUnitsStringSchema,
+    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    const maxBigInt = 9_223_372_036_854_775_807n;
+    if (BigInt(request.amountMinor) === 0n) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount must be positive.",
+        path: ["amountMinor"],
+      });
+    } else if (BigInt(request.amountMinor) > maxBigInt) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount exceeds PostgreSQL BIGINT range.",
+        path: ["amountMinor"],
+      });
+    }
+  });
+
+export const TransactionSchema = z.object({
+  id: z.string().uuid(),
+  kind: TransactionKindSchema,
+  status: z.enum(["POSTED", "VOID"]),
+  currentRevision: z.number().int().positive(),
+  occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  categoryId: z.string().uuid(),
+  note: z.string().nullable(),
+});
+
+export const TransactionCreateResponseSchema = z.object({
+  transaction: TransactionSchema,
+  account: FinancialAccountSchema,
+});
+
+export type TransactionCreateRequest = z.infer<
+  typeof TransactionCreateRequestSchema
+>;
+export type TransactionRecord = z.infer<typeof TransactionSchema>;
+
 export const AuthSessionSchema = z.object({
   id: z.string().uuid(),
   createdAt: z.string().datetime(),

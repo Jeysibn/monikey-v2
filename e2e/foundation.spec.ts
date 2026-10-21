@@ -692,6 +692,119 @@ test("categories seed defaults and retain archived history", async ({
   expect(foreignPatch.status()).toBe(404);
 });
 
+test("expense and income commands are balanced and retry-safe", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const api = "http://127.0.0.1:3000/api/v1";
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "second@example.test",
+      password: "CI-only-second-user-password-never-used",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const testRun = test.info().retry;
+  const accountKey = `transaction-account-test-${testRun}`;
+  const account = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": accountKey,
+    },
+    data: {
+      type: "BANK",
+      name: `Transaction Bank ${testRun}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(account.status()).toBe(201);
+  const accountRow = (await account.json()).account;
+  const categories = await page.request.get(`${api}/categories`);
+  expect(categories.status()).toBe(200);
+  const categoryRows = (await categories.json()).categories as Array<{
+    id: string;
+    kind: string;
+    name: string;
+  }>;
+  const expenseCategory = categoryRows.find(
+    (category) => category.kind === "EXPENSE" && category.name === "Food",
+  );
+  const incomeCategory = categoryRows.find(
+    (category) => category.kind === "INCOME" && category.name === "Salary",
+  );
+  expect(expenseCategory).toBeDefined();
+  expect(incomeCategory).toBeDefined();
+  if (!expenseCategory || !incomeCategory)
+    throw new Error("Seed categories missing.");
+
+  const expenseBody = {
+    kind: "EXPENSE",
+    sourceAccountId: accountRow.id,
+    categoryId: expenseCategory.id,
+    amountMinor: "25000",
+    occurredOn: "2026-10-22",
+    note: "Lunch",
+  };
+  const transactionHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": `transaction-expense-test-${testRun}`,
+  };
+  const expense = await page.request.post(`${api}/transactions`, {
+    headers: transactionHeaders,
+    data: expenseBody,
+  });
+  expect(expense.status()).toBe(201);
+  const expenseResult = await expense.json();
+  expect(expenseResult).toMatchObject({
+    transaction: {
+      kind: "EXPENSE",
+      categoryId: expenseCategory.id,
+      note: "Lunch",
+    },
+    account: { id: accountRow.id, balanceMinor: "75000" },
+  });
+
+  const replay = await page.request.post(`${api}/transactions`, {
+    headers: transactionHeaders,
+    data: expenseBody,
+  });
+  expect(replay.status()).toBe(201);
+  expect((await replay.json()).transaction.id).toBe(
+    expenseResult.transaction.id,
+  );
+
+  const conflict = await page.request.post(`${api}/transactions`, {
+    headers: transactionHeaders,
+    data: { ...expenseBody, amountMinor: "26000" },
+  });
+  expect(conflict.status()).toBe(409);
+
+  const income = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `transaction-income-test-${testRun}`,
+    },
+    data: {
+      kind: "INCOME",
+      sourceAccountId: accountRow.id,
+      categoryId: incomeCategory.id,
+      amountMinor: "40000",
+      occurredOn: "2026-10-22",
+    },
+  });
+  expect(income.status()).toBe(201);
+  await expect(income.json()).resolves.toMatchObject({
+    transaction: { kind: "INCOME", categoryId: incomeCategory.id },
+    account: { id: accountRow.id, balanceMinor: "115000" },
+  });
+});
+
 test("login rate limits repeated failures", async ({ page }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
