@@ -4,7 +4,7 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 
 ## Current milestone
 
-**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — financial domain: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 identity, P2-02 preferences, and P2-03 financial schema passed real-Postgres CI and are promoted to `main`; P2-04 ledger services are in progress. No V1 code or data has been imported.
+**Phase 0 — Foundation and engineering guardrails: implemented; required acceptance checks pass. Phase 1 — UX direction and component system: in progress. Phase 2 — financial domain: in progress.** Design tokens, route behavior, responsive navigation, themes, exact amount-entry validation, disabled record selectors, and a non-financial privacy-mask preview are implemented. Owner review on real devices remains a Phase 1 exit gate. P2-01 identity through P2-04 ledger services passed required checks and are promoted to `main`; P2-05 account lifecycle is implemented on `feature/p2-accounts`, with real PostgreSQL/API acceptance pending CI. No V1 code or data has been imported.
 
 | Work package                                                 | State                                    | Evidence / remaining gate                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -25,11 +25,12 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P2-01 Private identity and sessions                          | Implemented; CI passed; merged to `main` | PR #13 passed validation, CodeQL, and real-Postgres/API Playwright E2E; promotion PR #14 passed the same required checks. Adds Argon2id owner bootstrap, secure opaque sessions, CSRF/origin checks, login throttling, password rotation, and session revocation. |
 | P2-02 Preferences, Manila server date, owner scope           | Implemented; CI passed; merged to `main` | PR #16 and promotion PR #17 passed validation, CodeQL, and real-Postgres/API Playwright E2E. Adds strict owner-scoped preferences, fixed PHP/Asia-Manila policy, server-owned `serverToday`, first-account onboarding, and fail-closed owner IDs.                 |
 | P2-03 Financial schema and tenant constraints                | Implemented; CI passed; merged to `main` | PR #18 and promotion PR #19 passed validation, CodeQL, fresh-Postgres migration/schema constraints, and API Playwright E2E.                                                                                                                                       |
-| P2-04 Exact balanced journal service                         | In progress                              | BigInt validation, owner-scoped journal writer, append-only DB protection, and same-transaction audit event. Real-Postgres service acceptance pending.                                                                                                            |
+| P2-04 Exact balanced journal service                         | Implemented; CI passed; merged to `main` | PR #20 and promotion PR #21 passed validation, CodeQL, real-Postgres ledger integration, and API Playwright E2E.                                                                                                                                                  |
+| P2-05 Account lifecycle and opening balances                 | In progress                              | Owner-scoped account list/detail/create/rename/order/archive, idempotent writes, ledger-derived balances, and equity-backed asset/card opening journals. Local static/unit checks pass; PostgreSQL/API acceptance runs in CI.                                     |
 
 ## Later phases
 
-Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-03 are promoted to `main`; P2-04 is in progress. P2-05 onward and Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-04 are promoted to `main`; P2-05 account lifecycle is in progress. P2-06 onward and Phases 3–6 remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -47,11 +48,12 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - Identity promotion PR #14 — checks passed and merged to `main`.
 - P2-02 local validation — typecheck, API and E2E TypeScript checks, builds, five unit tests, format, and audit pass. PR #16 and promotion PR #17 passed required CI and merged to `main`.
 - P2-03 feature PR #18 and promotion PR #19 — required validation, CodeQL, fresh-Postgres migration/schema contract, and API E2E passed; merged to `main`.
-- P2-04 local validation — pending.
+- P2-04 feature PR #20 and promotion PR #21 — required checks, real-Postgres service integration, and API E2E passed; merged to `main`.
+- P2-05 local validation — typecheck, production build, five money and three ledger unit tests, format, `npm audit --audit-level=high` (zero vulnerabilities), E2E TypeScript check/discovery (22 tests), and `git diff --check` passed. Docker is unavailable locally; PostgreSQL integration and browser execution run in CI.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
 1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
-2. Complete P2-04 balanced journal service validation against real PostgreSQL, then merge through `dev` and promote to `main`.
-3. Build account lifecycle on the accepted ledger service.
+2. Complete P2-05 account lifecycle validation against real PostgreSQL in CI, then merge through `dev` and promote to `main`.
+3. Continue with the default/custom category lifecycle (P2-06).
