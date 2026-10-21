@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 private identity is in review on `feature/p2-identity`; it adds a one-time owner bootstrap, Argon2id credentials, database sessions, CSRF/origin protection, login throttling, session revocation, and password rotation. Its real-PostgreSQL CI run is the merge gate. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 private identity passed validation, CodeQL, and real-PostgreSQL E2E and is merged to `dev`; promotion to `main` is pending. It adds a one-time owner bootstrap, Argon2id credentials, database sessions, CSRF/origin protection, login throttling, session revocation, and password rotation. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
