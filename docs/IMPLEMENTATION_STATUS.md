@@ -28,11 +28,12 @@ Updated: 2026-10-22. The phase sequence and acceptance gates below come from `MO
 | P2-04 Exact balanced journal service                         | Implemented; CI passed; merged to `main` | PR #20 and promotion PR #21 passed validation, CodeQL, real-Postgres ledger integration, and API Playwright E2E.                                                                                                                                                  |
 | P2-05 Account lifecycle and opening balances                 | Implemented; CI passed; merged to `main` | PR #22 and promotion PR #23 passed validation, CodeQL, PostgreSQL schema/ledger/account integration, and API Playwright E2E. Adds owner-scoped account operations, idempotency, ledger-derived balances, and equity-backed opening journals.                      |
 | P2-06 Default/custom categories                              | Implemented; CI passed; merged to `main` | PR #24 and promotion PR #25 passed validation, CodeQL, fresh-Postgres category integration, and Playwright E2E.                                                                                                                                                   |
-| P2-07 Expense and income commands                            | In progress                              | Owner-scoped income/expense posting, balanced journals, category compatibility, negative-balance confirmation, idempotent retries, and server-authoritative balances are implemented locally; CI acceptance pending.                                              |
+| P2-07 Expense and income commands                            | Implemented; CI passed; merged to `main` | PR #28 and promotion PR #29 passed validation, CodeQL, PostgreSQL transaction integration, and Playwright E2E. Adds balanced journals, revisions, audit events, idempotent retries, category compatibility, and negative-balance confirmation.                    |
+| P2-08 Transfers and transfer fees                            | Next                                     | Implement atomic account-to-account transfers, optional fee expense, deterministic account locks, and no double-counted income/spending.                                                                                                                          |
 
 ## Later phases
 
-Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-06 are promoted to `main`; P2-07 is in progress and later work remains unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
+Phase 1 remains in progress pending physical-device owner review. P2-01 through P2-07 are promoted to `main`; P2-08 and later work remain unstarted. No launch feature is complete until its full vertical slice and independent QA meet the master plan Definition of Done.
 
 ## Environment and validation record
 
@@ -55,10 +56,11 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - P2-05 PR #22 and promotion PR #23 — `validate`, CodeQL, PostgreSQL schema/ledger/account integration, and API Playwright E2E passed; merged to `main`.
 - P2-06 local static validation — typecheck, production build, unit tests, formatting, audit (zero vulnerabilities), E2E TypeScript check/discovery (24 tests), and `git diff --check` passed. Docker/PostgreSQL integration and browser execution passed in CI.
 - P2-06 feature PR #24 and promotion PR #25 — validation, CodeQL, PostgreSQL schema/ledger/account/category integration, and Playwright E2E passed; merged to `main` at `f275ccf`.
-- P2-07 local validation — typecheck, formatting, and diff checks pass; PostgreSQL integration and browser acceptance are pending CI.
+- P2-07 local validation — typecheck, build, unit tests, formatting, audit (zero vulnerabilities), E2E TypeScript check/discovery (26 tests), and diff checks pass. PostgreSQL integration and browser acceptance passed in CI.
+- P2-07 feature PR #28 and promotion PR #29 — validation, CodeQL, PostgreSQL schema/ledger/account/category/transaction integration, and Playwright E2E passed; merged to `main` at `e56ca2f`.
 - Docker/PostgreSQL Compose — not run locally; no Docker executable or other container runtime is installed.
 
 ## Next work
 
 1. Review the navigation and visual direction on an actual phone and desktop before closing Phase 1.
-2. Finish P2-07 expense and income command acceptance, then promote it through `dev` and `main`.
+2. Implement P2-08 transfers and transfer fees.
