@@ -350,9 +350,22 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     expect(newPasswordLogin.status()).toBe(200);
     const { csrfToken: finalCsrfToken } = await newPasswordLogin.json();
 
+    const restoredPassword = await secondContext.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/change-password",
+      {
+        headers: { origin, "x-csrf-token": finalCsrfToken },
+        data: {
+          currentPassword: "CI-only-rotated-password-never-used",
+          newPassword: "CI-only-password-never-used-outside-tests",
+        },
+      },
+    );
+    expect(restoredPassword.status()).toBe(200);
+    const { csrfToken: restoredCsrfToken } = await restoredPassword.json();
+
     const logout = await secondContext.request.post(
       "http://127.0.0.1:3000/api/v1/auth/logout",
-      { headers: { origin, "x-csrf-token": finalCsrfToken } },
+      { headers: { origin, "x-csrf-token": restoredCsrfToken } },
     );
     expect(logout.status()).toBe(204);
     expect(
