@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node dist/server.js",
     "bootstrap-owner": "tsx src/bootstrap-owner.ts",
+    "seed-e2e-user": "tsx src/seed-e2e-user.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
   },
