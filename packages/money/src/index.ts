@@ -12,10 +12,9 @@ export function moneyMinor(value: bigint | string): MoneyMinor {
 
 export function parsePhpMinor(input: string): MoneyMinor {
   const normalized = input.trim();
-  const match =
-    /^(-?)((?:0|[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+))(?:\.(\d{1,2}))?$/.exec(
-      normalized,
-    );
+  const match = /^(-?)(\d+|[1-9]\d{0,2}(?:,\d{3})+)(?:\.(\d{1,2}))?$/.exec(
+    normalized,
+  );
   if (!match)
     throw new TypeError(
       "Enter a valid PHP amount with no more than two decimal places",

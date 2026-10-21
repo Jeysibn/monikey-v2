@@ -22,6 +22,29 @@ API readiness: `http://localhost:3000/api/v1/health`
 
 OpenAPI: `http://localhost:3000/openapi.json`
 
+When the API is running, regenerate the typed client with `npm run api:types`.
+
+## Validation
+
+```sh
+npm run typecheck
+npm run test:unit
+npm run build
+npm run format:check
+npm audit
+```
+
+The browser acceptance suite uses a live PostgreSQL-backed Compose stack:
+
+```sh
+npx playwright install chromium
+docker compose up --build -d --wait --wait-timeout 180 api web
+npm run test:e2e
+docker compose down --volumes --remove-orphans
+```
+
+The e2e suite is also run in GitHub Actions. It cannot be run in an environment without Docker.
+
 The checked-in Compose credentials are for local development only. Production secrets must be managed through the approved GitOps secret path.
 
 ## Source of truth
