@@ -29,6 +29,8 @@ The checked-in Compose credentials are for local development only. Production se
 - [`MONIKEY_V2_MASTER_PLAN.md`](MONIKEY_V2_MASTER_PLAN.md): approved product and implementation specification.
 - [`docs/architecture/CONTEXT.md`](docs/architecture/CONTEXT.md): architectural boundaries and repository map.
 - [`docs/adr/`](docs/adr): material technical decisions.
+- [`docs/RELEASE_FLOW.md`](docs/RELEASE_FLOW.md): protected feature → dev → main workflow.
+- [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md): milestone state and evidence.
 - [`AGENTS.md`](AGENTS.md): implementation constraints for contributors and coding agents.
 
 V1 is reference-only; no V1 code or financial data is used by this repository.
