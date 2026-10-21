@@ -601,7 +601,7 @@ test("categories seed defaults and retain archived history", async ({
     headers: createHeaders,
     data: {
       kind: "EXPENSE",
-      name: "Coffee",
+      name: customName,
       sortOrder: 50,
       icon: "coffee",
     },
