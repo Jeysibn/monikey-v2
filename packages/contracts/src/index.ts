@@ -186,8 +186,35 @@ export type CategoryCreateRequest = z.infer<typeof CategoryCreateRequestSchema>;
 export type CategoryPatchRequest = z.infer<typeof CategoryPatchRequestSchema>;
 export type CategoryRecord = z.infer<typeof CategorySchema>;
 
-export const TransactionKindSchema = z.enum(["INCOME", "EXPENSE", "TRANSFER"]);
+export const TransactionKindSchema = z.enum([
+  "INCOME",
+  "EXPENSE",
+  "TRANSFER",
+  "REFUND",
+  "ADJUSTMENT",
+]);
 const IncomeExpenseKindSchema = z.enum(["INCOME", "EXPENSE"]);
+const maxPostgresBigInt = 9_223_372_036_854_775_807n;
+
+function addPositiveMinorUnitIssues(
+  value: string,
+  path: (string | number)[],
+  context: z.RefinementCtx,
+) {
+  if (BigInt(value) === 0n) {
+    context.addIssue({
+      code: "custom",
+      message: "Amount must be positive.",
+      path,
+    });
+  } else if (BigInt(value) > maxPostgresBigInt) {
+    context.addIssue({
+      code: "custom",
+      message: "Amount exceeds PostgreSQL BIGINT range.",
+      path,
+    });
+  }
+}
 
 export const TransferCreateRequestSchema = z
   .object({
@@ -203,23 +230,10 @@ export const TransferCreateRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
-    const maxBigInt = 9_223_372_036_854_775_807n;
-    if (BigInt(request.amountMinor) === 0n) {
-      context.addIssue({
-        code: "custom",
-        message: "Amount must be positive.",
-        path: ["amountMinor"],
-      });
-    } else if (BigInt(request.amountMinor) > maxBigInt) {
-      context.addIssue({
-        code: "custom",
-        message: "Amount exceeds PostgreSQL BIGINT range.",
-        path: ["amountMinor"],
-      });
-    }
+    addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
     if (
       request.feeMinor !== undefined &&
-      BigInt(request.feeMinor) > maxBigInt
+      BigInt(request.feeMinor) > maxPostgresBigInt
     ) {
       context.addIssue({
         code: "custom",
@@ -242,6 +256,35 @@ export const TransferCreateRequestSchema = z
         path: ["feeMinor"],
       });
     }
+  });
+
+export const RefundCreateRequestSchema = z
+  .object({
+    kind: z.literal("REFUND"),
+    sourceAccountId: z.string().uuid(),
+    refundedTransactionId: z.string().uuid(),
+    amountMinor: MinorUnitsStringSchema,
+    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
+  });
+
+export const AdjustmentCreateRequestSchema = z
+  .object({
+    kind: z.literal("ADJUSTMENT"),
+    accountId: z.string().uuid(),
+    direction: z.enum(["INCREASE", "DECREASE"]),
+    amountMinor: MinorUnitsStringSchema,
+    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
   });
 
 export const TransactionCreateRequestSchema = z
@@ -279,6 +322,7 @@ export const TransactionSchema = z.object({
   currentRevision: z.number().int().positive(),
   occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   categoryId: z.string().uuid().nullable(),
+  refundedTransactionId: z.string().uuid().nullable(),
   note: z.string().nullable(),
 });
 
@@ -296,12 +340,18 @@ export const TransferCreateResponseSchema = z.object({
 export const TransactionRequestSchema = z.union([
   TransactionCreateRequestSchema,
   TransferCreateRequestSchema,
+  RefundCreateRequestSchema,
+  AdjustmentCreateRequestSchema,
 ]);
 
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
 export type TransferCreateRequest = z.infer<typeof TransferCreateRequestSchema>;
+export type RefundCreateRequest = z.infer<typeof RefundCreateRequestSchema>;
+export type AdjustmentCreateRequest = z.infer<
+  typeof AdjustmentCreateRequestSchema
+>;
 export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;
 

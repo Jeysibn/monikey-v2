@@ -39,7 +39,12 @@ import {
   listCategories,
   updateCategory,
 } from "./categories.js";
-import { createIncomeOrExpense, createTransfer } from "./transactions.js";
+import {
+  createAdjustment,
+  createIncomeOrExpense,
+  createRefund,
+  createTransfer,
+} from "./transactions.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -1082,7 +1087,8 @@ app.post(
   {
     schema: {
       tags: ["transactions"],
-      summary: "Post one owner-scoped income, expense, or transfer",
+      summary:
+        "Post one owner-scoped income, expense, transfer, refund, or adjustment",
       headers: idempotencyHeaderSchema,
       body: z.toJSONSchema(TransactionRequestSchema, {
         target: "draft-7",
@@ -1115,12 +1121,26 @@ app.post(
               body,
               serverTodayInManila(),
             )
-          : await createIncomeOrExpense(
-              client,
-              ownerUserId(request),
-              body,
-              serverTodayInManila(),
-            )),
+          : body.kind === "REFUND"
+            ? await createRefund(
+                client,
+                ownerUserId(request),
+                body,
+                serverTodayInManila(),
+              )
+            : body.kind === "ADJUSTMENT"
+              ? await createAdjustment(
+                  client,
+                  ownerUserId(request),
+                  body,
+                  serverTodayInManila(),
+                )
+              : await createIncomeOrExpense(
+                  client,
+                  ownerUserId(request),
+                  body,
+                  serverTodayInManila(),
+                )),
       })),
     );
     return reply.code(201).send(result.value);
