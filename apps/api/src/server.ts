@@ -24,6 +24,8 @@ import {
   PreferencesResponseSchema,
   SessionsResponseSchema,
   TransactionAuditResponseSchema,
+  TransactionActivityQuerySchema,
+  TransactionActivityResponseSchema,
   TransactionCreateResponseSchema,
   TransactionDeleteRequestSchema,
   TransactionEditRequestSchema,
@@ -50,6 +52,7 @@ import {
   createTransfer,
   deleteTransaction,
   editIncomeOrExpense,
+  listTransactions,
   readTransaction,
   readTransactionAudit,
 } from "./transactions.js";
@@ -522,6 +525,71 @@ app.post(
 const transactionParamsSchema = z.object({
   transactionId: z.string().uuid(),
 });
+const accountActivityParamsSchema = z.object({
+  accountId: z.string().uuid(),
+});
+
+async function readTransactionActivity(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  accountIdOverride?: string,
+) {
+  if (!(await requireSession(request, reply))) return;
+  const query = TransactionActivityQuerySchema.parse(request.query);
+  const result = await withDatabaseConnection((client) =>
+    listTransactions(client, ownerUserId(request), query, accountIdOverride),
+  );
+  return {
+    ...result,
+    serverToday: serverTodayInManila(),
+  };
+}
+
+app.get(
+  "/api/v1/transactions",
+  {
+    schema: {
+      tags: ["transactions"],
+      summary: "List owner-scoped activity with filters and cursor pagination",
+      querystring: z.toJSONSchema(TransactionActivityQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionActivityResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  readTransactionActivity,
+);
+
+app.get(
+  "/api/v1/accounts/:accountId/activity",
+  {
+    schema: {
+      tags: ["transactions", "accounts"],
+      summary: "List activity scoped to one owned account",
+      params: z.toJSONSchema(accountActivityParamsSchema, {
+        target: "draft-7",
+      }),
+      querystring: z.toJSONSchema(TransactionActivityQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(TransactionActivityResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    const { accountId } = accountActivityParamsSchema.parse(request.params);
+    return readTransactionActivity(request, reply, accountId);
+  },
+);
 
 app.get(
   "/api/v1/transactions/:transactionId",
