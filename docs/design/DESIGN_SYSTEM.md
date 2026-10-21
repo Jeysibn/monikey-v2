@@ -70,3 +70,12 @@ The primary mobile navigation has Home, Activity, Add, and Accounts. Add is an a
 - [ ] Walk through keyboard navigation and visible focus.
 - [ ] Verify reduced-motion behavior.
 - [ ] Owner reviews the navigation and visual direction on actual phone and desktop before Phase 1 exit.
+
+## Current preview captures
+
+These screenshots show the honest foundation preview and are not sample finance data:
+
+- Mobile Pixel 7 emulation: `docs/design/screenshots/home-pixel7-emulation.png`
+- Desktop 1440px: `docs/design/screenshots/home-desktop-1440.png`
+
+They are code-reviewed browser captures, not a substitute for owner review on a physical phone.
