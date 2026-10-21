@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIResponse } from "@playwright/test";
 
 test("renders the honest home preview without sample finances", async ({
   page,
@@ -144,5 +144,177 @@ test("unknown API routes use the shared not-found error contract", async ({
       message: "The requested resource was not found.",
       requestId: expect.any(String),
     },
+  });
+});
+
+test("private login, session recovery, CSRF protection, and logout work", async ({
+  browser,
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const loginUrl = "http://127.0.0.1:3000/api/v1/auth/login";
+  const rejectedOrigin = await page.request.post(loginUrl, {
+    headers: { origin: "https://attacker.example" },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(rejectedOrigin.status()).toBe(403);
+
+  const rejectedPassword = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: { email: "unknown-owner@example.test", password: "wrong-password" },
+  });
+  expect(rejectedPassword.status()).toBe(401);
+  expect(rejectedPassword.headers()["cache-control"]).toBe("no-store");
+  await expect(rejectedPassword.json()).resolves.toMatchObject({
+    error: {
+      code: "UNAUTHENTICATED",
+      message: "Email or password is incorrect.",
+    },
+  });
+
+  const login = await page.request.post(loginUrl, {
+    headers: { origin },
+    data: {
+      email: "OWNER@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  expect(csrfToken).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+  const sessionCookie = login.headers()["set-cookie"];
+  expect(sessionCookie).toContain("__Host-mk_session=");
+  expect(sessionCookie).toContain("HttpOnly");
+  expect(sessionCookie).toContain("Secure");
+
+  const csrfRecovery = await page.request.get(
+    "http://127.0.0.1:3000/api/v1/auth/csrf",
+  );
+  expect(csrfRecovery.status()).toBe(200);
+  await expect(csrfRecovery.json()).resolves.toEqual({ csrfToken });
+
+  const profile = await page.request.get("http://127.0.0.1:3000/api/v1/me");
+  expect(profile.status()).toBe(200);
+  expect(profile.headers()["cache-control"]).toBe("no-store");
+  await expect(profile.json()).resolves.toMatchObject({
+    user: {
+      emailNormalized: "owner@example.test",
+      timezone: "Asia/Manila",
+      currency: "PHP",
+    },
+  });
+
+  const sessions = await page.request.get(
+    "http://127.0.0.1:3000/api/v1/auth/sessions",
+  );
+  const sessionRows = (await sessions.json()).sessions;
+  expect(sessionRows).toHaveLength(1);
+  expect(sessionRows[0].current).toBe(true);
+
+  const secondContext = await browser.newContext();
+  try {
+    const secondLogin = await secondContext.request.post(loginUrl, {
+      headers: { origin },
+      data: {
+        email: "owner@example.test",
+        password: "CI-only-password-never-used-outside-tests",
+      },
+    });
+    expect(secondLogin.status()).toBe(200);
+    const { csrfToken: secondCsrfToken } = await secondLogin.json();
+    const bothSessions = await secondContext.request.get(
+      "http://127.0.0.1:3000/api/v1/auth/sessions",
+    );
+    const activeSessions = (await bothSessions.json()).sessions;
+    expect(activeSessions).toHaveLength(2);
+    const oldSession = activeSessions.find(
+      (session: { current: boolean }) => !session.current,
+    );
+    expect(oldSession).toBeDefined();
+    if (!oldSession) throw new Error("The original session was not listed.");
+
+    const revoke = await secondContext.request.delete(
+      `http://127.0.0.1:3000/api/v1/auth/sessions/${oldSession.id}`,
+      { headers: { origin, "x-csrf-token": secondCsrfToken } },
+    );
+    expect(revoke.status()).toBe(204);
+    expect(
+      (await page.request.get("http://127.0.0.1:3000/api/v1/me")).status(),
+    ).toBe(401);
+
+    const missingCsrf = await secondContext.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/logout",
+      { headers: { origin } },
+    );
+    expect(missingCsrf.status()).toBe(403);
+
+    const changedPassword = await secondContext.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/change-password",
+      {
+        headers: { origin, "x-csrf-token": secondCsrfToken },
+        data: {
+          currentPassword: "CI-only-password-never-used-outside-tests",
+          newPassword: "CI-only-rotated-password-never-used",
+        },
+      },
+    );
+    expect(changedPassword.status()).toBe(200);
+    const { csrfToken: rotatedCsrfToken } = await changedPassword.json();
+    expect(rotatedCsrfToken).not.toBe(secondCsrfToken);
+
+    const oldPassword = await secondContext.request.post(loginUrl, {
+      headers: { origin },
+      data: {
+        email: "owner@example.test",
+        password: "CI-only-password-never-used-outside-tests",
+      },
+    });
+    expect(oldPassword.status()).toBe(401);
+    const newPasswordLogin = await secondContext.request.post(loginUrl, {
+      headers: { origin },
+      data: {
+        email: "owner@example.test",
+        password: "CI-only-rotated-password-never-used",
+      },
+    });
+    expect(newPasswordLogin.status()).toBe(200);
+    const { csrfToken: finalCsrfToken } = await newPasswordLogin.json();
+
+    const logout = await secondContext.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/logout",
+      { headers: { origin, "x-csrf-token": finalCsrfToken } },
+    );
+    expect(logout.status()).toBe(204);
+    expect(
+      (
+        await secondContext.request.get("http://127.0.0.1:3000/api/v1/me")
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await secondContext.close();
+  }
+});
+
+test("login rate limits repeated failures", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  let lastResponse: APIResponse | undefined;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    lastResponse = await page.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/login",
+      {
+        headers: { origin },
+        data: { email: "rate-limit@example.test", password: "wrong-password" },
+      },
+    );
+  }
+  if (!lastResponse) throw new Error("The rate limit request did not run.");
+  expect(lastResponse.status()).toBe(429);
+  await expect(lastResponse.json()).resolves.toMatchObject({
+    error: { code: "RATE_LIMITED" },
   });
 });

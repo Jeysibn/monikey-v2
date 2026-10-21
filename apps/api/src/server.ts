@@ -1,7 +1,21 @@
 import Fastify from "fastify";
-import type { FastifyError } from "fastify";
+import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
+import cookie from "@fastify/cookie";
+import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
-import { HealthResponseSchema } from "@monikey/contracts";
+import {
+  ApiErrorResponseSchema,
+  ChangePasswordRequestSchema,
+  CsrfResponseSchema,
+  HealthResponseSchema,
+  LoginRequestSchema,
+  LoginResponseSchema,
+  MeResponseSchema,
+  SessionsResponseSchema,
+} from "@monikey/contracts";
+import argon2 from "argon2";
+import type { HashOptions } from "argon2";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
 import { z } from "zod";
 
@@ -11,6 +25,49 @@ const pool = databaseUrl
   ? new Pool({ connectionString: databaseUrl })
   : undefined;
 const app = Fastify({ logger: true, trustProxy: false });
+const sessionCookie = "__Host-mk_session";
+const csrfCookie = "__Host-mk_csrf";
+const sessionMaxAgeSeconds = 60 * 60 * 24 * 14;
+const configuredOrigin = process.env.APP_ORIGIN ?? "http://localhost:5173";
+const expectedOrigin = new URL(configuredOrigin).origin;
+if (expectedOrigin !== configuredOrigin) {
+  throw new Error(
+    "APP_ORIGIN must be an exact origin without a path or trailing slash.",
+  );
+}
+const argon2Options: HashOptions = {
+  type: argon2.argon2id,
+  memoryCost: 19_456,
+  timeCost: 2,
+  parallelism: 1,
+};
+const dummyPasswordHash = await argon2.hash(randomBytes(32), argon2Options);
+const apiErrorJsonSchema = z.toJSONSchema(ApiErrorResponseSchema, {
+  target: "draft-7",
+});
+const authErrorResponses = () => ({
+  400: apiErrorJsonSchema,
+  401: apiErrorJsonSchema,
+  403: apiErrorJsonSchema,
+  404: apiErrorJsonSchema,
+  429: apiErrorJsonSchema,
+  500: apiErrorJsonSchema,
+  503: apiErrorJsonSchema,
+});
+
+type AuthContext = {
+  sessionId: string;
+  userId: string;
+  csrfTokenHash: string;
+};
+
+declare module "fastify" {
+  interface FastifyRequest {
+    authContext: AuthContext | null;
+  }
+}
+
+app.decorateRequest("authContext", null);
 
 await app.register(swagger, {
   openapi: {
@@ -18,6 +75,30 @@ await app.register(swagger, {
     info: { title: "MoniKey V2 API", version: "0.1.0" },
     servers: [{ url: "/api/v1" }],
   },
+});
+
+await app.register(cookie);
+await app.register(rateLimit, {
+  global: false,
+  errorResponseBuilder: (request) => ({
+    statusCode: 429,
+    message: "Too many sign-in attempts. Try again later.",
+    error: {
+      code: "RATE_LIMITED",
+      message: "Too many sign-in attempts. Try again later.",
+      requestId: request.id,
+    },
+  }),
+});
+
+app.addHook("onSend", (request, reply, _payload, done) => {
+  if (
+    request.url.startsWith("/api/v1/auth/") ||
+    request.url.startsWith("/api/v1/me")
+  ) {
+    reply.header("Cache-Control", "no-store");
+  }
+  done();
 });
 
 app.setErrorHandler((error: FastifyError, request, reply) => {
@@ -48,9 +129,15 @@ app.setErrorHandler((error: FastifyError, request, reply) => {
           ? "NOT_FOUND"
           : statusCode === 409
             ? "CONFLICT"
-            : statusCode < 500
-              ? "REQUEST_ERROR"
-              : "INTERNAL_ERROR",
+            : statusCode === 401
+              ? "UNAUTHENTICATED"
+              : statusCode === 403
+                ? "FORBIDDEN"
+                : statusCode === 429
+                  ? "RATE_LIMITED"
+                  : statusCode < 500
+                    ? "REQUEST_ERROR"
+                    : "INTERNAL_ERROR",
       message:
         statusCode === 404
           ? "The requested resource was not found."
@@ -106,6 +193,483 @@ app.get(
 );
 
 app.get("/openapi.json", async () => app.swagger());
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function safeHashEqual(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual, "hex");
+  const expectedBytes = Buffer.from(expected, "hex");
+  return (
+    actualBytes.length === expectedBytes.length &&
+    timingSafeEqual(actualBytes, expectedBytes)
+  );
+}
+
+function mutationOriginIsValid(request: {
+  headers: Record<string, string | string[] | undefined>;
+}): boolean {
+  const origin = request.headers.origin;
+  const fetchSite = request.headers["sec-fetch-site"];
+  return (
+    origin === expectedOrigin &&
+    (fetchSite === undefined || fetchSite === "same-origin")
+  );
+}
+
+async function requireSession(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const token = request.cookies[sessionCookie];
+  if (!pool || !token) {
+    reply.code(401).send({
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Sign in is required.",
+        requestId: request.id,
+      },
+    });
+    return false;
+  }
+
+  const result = await pool.query<AuthContext>(
+    `SELECT s.id AS "sessionId", s.user_id AS "userId", s.csrf_token_hash AS "csrfTokenHash"
+       FROM auth_sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status = 'ACTIVE'`,
+    [sha256(token)],
+  );
+  const session = result.rows[0];
+  if (!session) {
+    reply.code(401).send({
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Sign in is required.",
+        requestId: request.id,
+      },
+    });
+    return false;
+  }
+  request.authContext = session;
+  await pool.query(
+    "UPDATE auth_sessions SET last_seen_at = now() WHERE id = $1",
+    [session.sessionId],
+  );
+  return true;
+}
+
+function requireMutationOrigin(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): boolean {
+  if (mutationOriginIsValid(request)) return true;
+  reply.code(403).send({
+    error: {
+      code: "FORBIDDEN",
+      message: "The request origin is not allowed.",
+      requestId: request.id,
+    },
+  });
+  return false;
+}
+
+function requireCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
+  const token = request.headers["x-csrf-token"];
+  const expected = request.authContext?.csrfTokenHash;
+  if (
+    typeof token === "string" &&
+    expected &&
+    safeHashEqual(sha256(token), expected)
+  ) {
+    return true;
+  }
+  reply.code(403).send({
+    error: {
+      code: "FORBIDDEN",
+      message: "A valid CSRF token is required.",
+      requestId: request.id,
+    },
+  });
+  return false;
+}
+
+app.post(
+  "/api/v1/auth/login",
+  {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: "15 minutes",
+        hook: "preValidation",
+        keyGenerator: (request) => {
+          const body = request.body as { email?: unknown } | undefined;
+          const email =
+            typeof body?.email === "string"
+              ? body.email.trim().toLowerCase()
+              : "";
+          return `${request.ip}:${sha256(email)}`;
+        },
+      },
+    },
+    schema: {
+      tags: ["identity"],
+      summary: "Sign in to the private owner account",
+      body: z.toJSONSchema(LoginRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(LoginResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!pool)
+      return reply.code(503).send({
+        error: {
+          code: "UNAVAILABLE",
+          message: "Authentication storage is unavailable.",
+          requestId: request.id,
+        },
+      });
+
+    const { email, password } = LoginRequestSchema.parse(request.body);
+    const result = await pool.query<{ id: string; password_hash: string }>(
+      "SELECT id, password_hash FROM users WHERE email_normalized = $1 AND status = 'ACTIVE'",
+      [email.toLowerCase()],
+    );
+    const user = result.rows[0];
+    // Always perform an Argon2 verification to reduce account-enumeration timing differences.
+    const passwordMatches = await argon2
+      .verify(user?.password_hash ?? dummyPasswordHash, password)
+      .catch(() => false);
+    if (!user || !passwordMatches) {
+      return reply.code(401).send({
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Email or password is incorrect.",
+          requestId: request.id,
+        },
+      });
+    }
+
+    const token = randomBytes(32).toString("base64url");
+    const csrfToken = randomBytes(32).toString("base64url");
+    const previousToken = request.cookies[sessionCookie];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (previousToken) {
+        await client.query(
+          "UPDATE auth_sessions SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL",
+          [sha256(previousToken)],
+        );
+      }
+      await client.query(
+        `INSERT INTO auth_sessions (user_id, token_hash, csrf_token_hash, user_agent, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
+        [
+          user.id,
+          sha256(token),
+          sha256(csrfToken),
+          request.headers["user-agent"] ?? null,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    reply.setCookie(sessionCookie, token, {
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: sessionMaxAgeSeconds,
+    });
+    reply.setCookie(csrfCookie, csrfToken, {
+      path: "/",
+      httpOnly: false,
+      secure: true,
+      sameSite: "lax",
+      maxAge: sessionMaxAgeSeconds,
+    });
+    reply.header("Cache-Control", "no-store");
+    return reply.code(200).send({ csrfToken });
+  },
+);
+
+app.get(
+  "/api/v1/auth/csrf",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "Recover the current session CSRF token",
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CsrfResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    let csrfToken = request.cookies[csrfCookie];
+    if (
+      !csrfToken ||
+      !safeHashEqual(sha256(csrfToken), request.authContext!.csrfTokenHash)
+    ) {
+      csrfToken = randomBytes(32).toString("base64url");
+      await pool!.query(
+        "UPDATE auth_sessions SET csrf_token_hash = $1 WHERE id = $2",
+        [sha256(csrfToken), request.authContext!.sessionId],
+      );
+      reply.setCookie(csrfCookie, csrfToken, {
+        path: "/",
+        httpOnly: false,
+        secure: true,
+        sameSite: "lax",
+        maxAge: sessionMaxAgeSeconds,
+      });
+    }
+    reply.header("Cache-Control", "no-store");
+    return { csrfToken };
+  },
+);
+
+app.post(
+  "/api/v1/auth/change-password",
+  {
+    config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
+    schema: {
+      tags: ["identity"],
+      summary: "Change the password and rotate this session",
+      body: z.toJSONSchema(ChangePasswordRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CsrfResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+
+    const { currentPassword, newPassword } = ChangePasswordRequestSchema.parse(
+      request.body,
+    );
+    const userResult = await pool!.query<{ password_hash: string }>(
+      "SELECT password_hash FROM users WHERE id = $1 AND status = 'ACTIVE'",
+      [request.authContext!.userId],
+    );
+    const user = userResult.rows[0];
+    const matches = user
+      ? await argon2
+          .verify(user.password_hash, currentPassword)
+          .catch(() => false)
+      : false;
+    if (!user || !matches) {
+      return reply.code(401).send({
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "The current password is incorrect.",
+          requestId: request.id,
+        },
+      });
+    }
+
+    const passwordHash = await argon2.hash(newPassword, argon2Options);
+    const token = randomBytes(32).toString("base64url");
+    const csrfToken = randomBytes(32).toString("base64url");
+    const client = await pool!.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2",
+        [passwordHash, request.authContext!.userId],
+      );
+      await client.query(
+        "UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
+        [request.authContext!.userId, request.authContext!.sessionId],
+      );
+      await client.query(
+        `UPDATE auth_sessions
+            SET token_hash = $1, csrf_token_hash = $2, created_at = now(),
+                expires_at = now() + interval '14 days', last_seen_at = now()
+          WHERE id = $3`,
+        [sha256(token), sha256(csrfToken), request.authContext!.sessionId],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    reply.setCookie(sessionCookie, token, {
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: sessionMaxAgeSeconds,
+    });
+    reply.setCookie(csrfCookie, csrfToken, {
+      path: "/",
+      httpOnly: false,
+      secure: true,
+      sameSite: "lax",
+      maxAge: sessionMaxAgeSeconds,
+    });
+    reply.header("Cache-Control", "no-store");
+    return { csrfToken };
+  },
+);
+
+app.get(
+  "/api/v1/me",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "Read the signed-in owner profile",
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(MeResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const result = await pool!.query<{
+      id: string;
+      emailNormalized: string;
+      timezone: string;
+      currency: string;
+      theme: string;
+      hideBalances: boolean;
+    }>(
+      `SELECT u.id, u.email_normalized AS "emailNormalized", p.timezone, p.currency, p.theme,
+              p.hide_balances AS "hideBalances"
+         FROM users u JOIN user_preferences p ON p.user_id = u.id
+        WHERE u.id = $1`,
+      [request.authContext!.userId],
+    );
+    reply.header("Cache-Control", "no-store");
+    return { user: result.rows[0] };
+  },
+);
+
+app.get(
+  "/api/v1/auth/sessions",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "List this owner's active sessions",
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(SessionsResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const sessions = await pool!.query(
+      `SELECT id, created_at AS "createdAt", expires_at AS "expiresAt", last_seen_at AS "lastSeenAt", user_agent AS "userAgent",
+              (id = $2) AS "current"
+         FROM auth_sessions
+        WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+        ORDER BY last_seen_at DESC`,
+      [request.authContext!.userId, request.authContext!.sessionId],
+    );
+    reply.header("Cache-Control", "no-store");
+    return { sessions: sessions.rows };
+  },
+);
+
+app.delete(
+  "/api/v1/auth/sessions/:sessionId",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "Revoke one of this owner's sessions",
+      params: z.toJSONSchema(z.object({ sessionId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        204: { type: "null" },
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const params = request.params as { sessionId: string };
+    const result = await pool!.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [params.sessionId, request.authContext!.userId],
+    );
+    if (result.rowCount === 0) {
+      return reply.code(404).send({
+        error: {
+          code: "NOT_FOUND",
+          message: "The requested session was not found.",
+          requestId: request.id,
+        },
+      });
+    }
+    if (params.sessionId === request.authContext!.sessionId) {
+      reply.clearCookie(sessionCookie, {
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+      });
+      reply.clearCookie(csrfCookie, {
+        path: "/",
+        secure: true,
+        sameSite: "lax",
+      });
+    }
+    return reply.code(204).send();
+  },
+);
+
+app.post(
+  "/api/v1/auth/logout",
+  {
+    schema: {
+      tags: ["identity"],
+      summary: "Revoke the current session",
+      response: {
+        ...authErrorResponses(),
+        204: { type: "null" },
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    await pool!.query(
+      "UPDATE auth_sessions SET revoked_at = now() WHERE id = $1",
+      [request.authContext!.sessionId],
+    );
+    reply.clearCookie(sessionCookie, {
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+    });
+    reply.clearCookie(csrfCookie, { path: "/", secure: true, sameSite: "lax" });
+    return reply.code(204).send();
+  },
+);
 
 app.addHook("onClose", async () => {
   await pool?.end();
