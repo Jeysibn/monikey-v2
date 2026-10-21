@@ -186,11 +186,67 @@ export type CategoryCreateRequest = z.infer<typeof CategoryCreateRequestSchema>;
 export type CategoryPatchRequest = z.infer<typeof CategoryPatchRequestSchema>;
 export type CategoryRecord = z.infer<typeof CategorySchema>;
 
-export const TransactionKindSchema = z.enum(["INCOME", "EXPENSE"]);
+export const TransactionKindSchema = z.enum(["INCOME", "EXPENSE", "TRANSFER"]);
+const IncomeExpenseKindSchema = z.enum(["INCOME", "EXPENSE"]);
+
+export const TransferCreateRequestSchema = z
+  .object({
+    kind: z.literal("TRANSFER"),
+    fromAccountId: z.string().uuid(),
+    toAccountId: z.string().uuid(),
+    amountMinor: MinorUnitsStringSchema,
+    feeMinor: MinorUnitsStringSchema.optional(),
+    feeCategoryId: z.string().uuid().optional(),
+    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    const maxBigInt = 9_223_372_036_854_775_807n;
+    if (BigInt(request.amountMinor) === 0n) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount must be positive.",
+        path: ["amountMinor"],
+      });
+    } else if (BigInt(request.amountMinor) > maxBigInt) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount exceeds PostgreSQL BIGINT range.",
+        path: ["amountMinor"],
+      });
+    }
+    if (
+      request.feeMinor !== undefined &&
+      BigInt(request.feeMinor) > maxBigInt
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Fee exceeds PostgreSQL BIGINT range.",
+        path: ["feeMinor"],
+      });
+    }
+    const fee = request.feeMinor === undefined ? 0n : BigInt(request.feeMinor);
+    if (fee > 0n && request.feeCategoryId === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "A fee category is required when a transfer fee is positive.",
+        path: ["feeCategoryId"],
+      });
+    }
+    if (fee === 0n && request.feeCategoryId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "A fee category requires a positive transfer fee.",
+        path: ["feeMinor"],
+      });
+    }
+  });
 
 export const TransactionCreateRequestSchema = z
   .object({
-    kind: TransactionKindSchema,
+    kind: IncomeExpenseKindSchema,
     sourceAccountId: z.string().uuid(),
     categoryId: z.string().uuid(),
     amountMinor: MinorUnitsStringSchema,
@@ -222,7 +278,7 @@ export const TransactionSchema = z.object({
   status: z.enum(["POSTED", "VOID"]),
   currentRevision: z.number().int().positive(),
   occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  categoryId: z.string().uuid(),
+  categoryId: z.string().uuid().nullable(),
   note: z.string().nullable(),
 });
 
@@ -231,9 +287,22 @@ export const TransactionCreateResponseSchema = z.object({
   account: FinancialAccountSchema,
 });
 
+export const TransferCreateResponseSchema = z.object({
+  transaction: TransactionSchema,
+  sourceAccount: FinancialAccountSchema,
+  destinationAccount: FinancialAccountSchema,
+});
+
+export const TransactionRequestSchema = z.union([
+  TransactionCreateRequestSchema,
+  TransferCreateRequestSchema,
+]);
+
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
+export type TransferCreateRequest = z.infer<typeof TransferCreateRequestSchema>;
+export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;
 
 export const AuthSessionSchema = z.object({
