@@ -90,6 +90,13 @@ test("secondary pages are reachable from the mobile more menu", async ({
 }) => {
   test.skip(test.info().project.name !== "mobile-chromium");
   await page.goto("/app");
+  const contentBounds = await page.locator(".page-content").boundingBox();
+  const navigationBounds = await page.locator(".mobile-nav").boundingBox();
+  expect(contentBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(navigationBounds!.y).toBeGreaterThanOrEqual(
+    contentBounds!.y + contentBounds!.height - 1,
+  );
   await page.locator(".mobile-more-menu summary").click();
   await page
     .getByRole("navigation", { name: "More pages" })
