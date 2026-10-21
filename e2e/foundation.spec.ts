@@ -200,13 +200,50 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   const profile = await page.request.get("http://127.0.0.1:3000/api/v1/me");
   expect(profile.status()).toBe(200);
   expect(profile.headers()["cache-control"]).toBe("no-store");
-  await expect(profile.json()).resolves.toMatchObject({
+  const profileData = await profile.json();
+  expect(profileData.serverToday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(profileData.onboardingStatus).toBe("NEEDS_FIRST_ACCOUNT");
+  expect(profileData).toMatchObject({
     user: {
       emailNormalized: "owner@example.test",
       timezone: "Asia/Manila",
       currency: "PHP",
     },
   });
+
+  const unsupportedCurrency = await page.request.patch(
+    "http://127.0.0.1:3000/api/v1/me/preferences",
+    {
+      headers: { origin, "x-csrf-token": csrfToken },
+      data: { currency: "USD" },
+    },
+  );
+  expect(unsupportedCurrency.status()).toBe(400);
+  const updatePreferences = await page.request.patch(
+    "http://127.0.0.1:3000/api/v1/me/preferences",
+    {
+      headers: { origin, "x-csrf-token": csrfToken },
+      data: { theme: "dark", hideBalances: true },
+    },
+  );
+  expect(updatePreferences.status()).toBe(200);
+  expect(updatePreferences.headers()["cache-control"]).toBe("no-store");
+  await expect(updatePreferences.json()).resolves.toMatchObject({
+    preferences: {
+      timezone: "Asia/Manila",
+      currency: "PHP",
+      theme: "dark",
+      hideBalances: true,
+    },
+  });
+
+  await page.clock.install({ time: new Date("2001-01-01T12:00:00.000Z") });
+  await page.goto("/");
+  const skewedDeviceProfile = await page.evaluate(async () =>
+    fetch("/api/v1/me").then((response) => response.json()),
+  );
+  expect(skewedDeviceProfile.serverToday).toBe(profileData.serverToday);
+  await page.clock.install();
 
   const sessions = await page.request.get(
     "http://127.0.0.1:3000/api/v1/auth/sessions",
@@ -236,6 +273,35 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     );
     expect(oldSession).toBeDefined();
     if (!oldSession) throw new Error("The original session was not listed.");
+
+    const thirdContext = await browser.newContext();
+    try {
+      const secondUserLogin = await thirdContext.request.post(loginUrl, {
+        headers: { origin },
+        data: {
+          email: "second@example.test",
+          password: "CI-only-second-user-password-never-used",
+        },
+      });
+      expect(secondUserLogin.status()).toBe(200);
+      const { csrfToken: secondUserCsrfToken } = await secondUserLogin.json();
+      const secondUserProfile = await thirdContext.request.get(
+        "http://127.0.0.1:3000/api/v1/me",
+      );
+      await expect(secondUserProfile.json()).resolves.toMatchObject({
+        user: { theme: "system", hideBalances: false },
+      });
+      const crossUserRevoke = await thirdContext.request.delete(
+        `http://127.0.0.1:3000/api/v1/auth/sessions/${oldSession.id}`,
+        { headers: { origin, "x-csrf-token": secondUserCsrfToken } },
+      );
+      expect(crossUserRevoke.status()).toBe(404);
+      expect(
+        (await page.request.get("http://127.0.0.1:3000/api/v1/me")).status(),
+      ).toBe(200);
+    } finally {
+      await thirdContext.close();
+    }
 
     const revoke = await secondContext.request.delete(
       `http://127.0.0.1:3000/api/v1/auth/sessions/${oldSession.id}`,

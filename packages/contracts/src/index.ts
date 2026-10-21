@@ -34,6 +34,24 @@ export const MeResponseSchema = z.object({
     theme: z.enum(["system", "light", "dark"]),
     hideBalances: z.boolean(),
   }),
+  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  onboardingStatus: z.enum(["NEEDS_FIRST_ACCOUNT", "READY"]),
+});
+
+export const PreferencesPatchRequestSchema = z
+  .object({
+    theme: z.enum(["system", "light", "dark"]).optional(),
+    hideBalances: z.boolean().optional(),
+  })
+  .strict();
+
+export const PreferencesResponseSchema = z.object({
+  preferences: z.object({
+    timezone: z.literal("Asia/Manila"),
+    currency: z.literal("PHP"),
+    theme: z.enum(["system", "light", "dark"]),
+    hideBalances: z.boolean(),
+  }),
 });
 
 export const AuthSessionSchema = z.object({
