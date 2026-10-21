@@ -34,7 +34,7 @@ services:
     environment:
       API_PORT: 3000
       NODE_ENV: development
-      APP_ORIGIN: http://127.0.0.1:5173
+      APP_ORIGIN: http://localhost:5173
       DATABASE_URL: postgresql://${POSTGRES_USER:-monikey}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-monikey}?schema=public
     ports:
       - "3000:3000"

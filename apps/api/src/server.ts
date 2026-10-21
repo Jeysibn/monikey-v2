@@ -89,6 +89,16 @@ await app.register(rateLimit, {
   }),
 });
 
+app.addHook("onSend", (request, reply, _payload, done) => {
+  if (
+    request.url.startsWith("/api/v1/auth/") ||
+    request.url.startsWith("/api/v1/me")
+  ) {
+    reply.header("Cache-Control", "no-store");
+  }
+  done();
+});
+
 app.setErrorHandler((error: FastifyError, request, reply) => {
   if (error.validation) {
     return reply.code(400).send({
