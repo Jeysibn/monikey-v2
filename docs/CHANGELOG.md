@@ -6,4 +6,5 @@
 - Added shared runtime contracts, a PHP minor-unit package, a Fastify readiness endpoint, and a responsive non-financial empty state.
 - Added Prisma configuration and Docker Compose services for PostgreSQL, API, web, and explicit migrations.
 - Added contributor instructions, issue/PR templates, CI build/typecheck gates, and architecture context.
+- Created the public `Jeysibn/monikey-v2` repository with protected `dev` and `main`, required CI/CodeQL checks, and feature → dev → main pull request flow.
 - Acceptance remains open: no Docker/container runtime is installed in the implementation environment, and real PostgreSQL / API-backed Playwright gates are not yet configured or exercised.
