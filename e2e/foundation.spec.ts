@@ -365,6 +365,184 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   }
 });
 
+test("financial accounts preserve opening balances, history, and owner scope", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const api = "http://127.0.0.1:3000/api/v1";
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "second@example.test",
+      password: "CI-only-second-user-password-never-used",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const emptyProfile = await page.request.get(`${api}/me`);
+  await expect(emptyProfile.json()).resolves.toMatchObject({
+    onboardingStatus: "NEEDS_FIRST_ACCOUNT",
+  });
+
+  const invalidAccount = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": "account-invalid-fields-test-0001",
+    },
+    data: {
+      type: "BANK",
+      name: "Invalid bank",
+      openingBalanceMinor: "100",
+      creditLimitMinor: "5000",
+    },
+  });
+  expect(invalidAccount.status()).toBe(400);
+
+  const createHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": "account-create-bank-test-0001",
+  };
+  const bankInput = {
+    type: "BANK",
+    name: "Daily Bank",
+    openingBalanceMinor: "1000000",
+  };
+  const createBank = await page.request.post(`${api}/accounts`, {
+    headers: createHeaders,
+    data: bankInput,
+  });
+  expect(createBank.status()).toBe(201);
+  const bank = (await createBank.json()).account;
+  expect(bank).toMatchObject({
+    type: "BANK",
+    name: "Daily Bank",
+    balanceMinor: "1000000",
+    currency: "PHP",
+    archivedAt: null,
+  });
+
+  const replayBank = await page.request.post(`${api}/accounts`, {
+    headers: createHeaders,
+    data: bankInput,
+  });
+  expect(replayBank.status()).toBe(201);
+  expect((await replayBank.json()).account.id).toBe(bank.id);
+
+  const conflictingReplay = await page.request.post(`${api}/accounts`, {
+    headers: createHeaders,
+    data: { ...bankInput, name: "Different payload" },
+  });
+  expect(conflictingReplay.status()).toBe(409);
+
+  const card = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": "account-create-card-test-0001",
+    },
+    data: {
+      type: "CREDIT_CARD",
+      name: "Travel Card",
+      openingBalanceMinor: "125000",
+      creditLimitMinor: "1000000",
+      statementDay: 15,
+      dueDay: 2,
+    },
+  });
+  expect(card.status()).toBe(201);
+  const cardAccount = (await card.json()).account;
+  expect(cardAccount).toMatchObject({
+    type: "CREDIT_CARD",
+    balanceMinor: "125000",
+    creditLimitMinor: "1000000",
+    statementDay: 15,
+    dueDay: 2,
+    sortOrder: 0,
+  });
+
+  const profile = await page.request.get(`${api}/me`);
+  await expect(profile.json()).resolves.toMatchObject({
+    onboardingStatus: "READY",
+  });
+
+  const rename = await page.request.patch(`${api}/accounts/${bank.id}`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": "account-rename-bank-test-0001",
+    },
+    data: { name: "Daily Bank Renamed", sortOrder: 20 },
+  });
+  expect(rename.status()).toBe(200);
+  await expect(rename.json()).resolves.toMatchObject({
+    account: {
+      id: bank.id,
+      name: "Daily Bank Renamed",
+      balanceMinor: "1000000",
+      sortOrder: 20,
+    },
+  });
+
+  const orderedAccounts = await page.request.get(`${api}/accounts`);
+  const orderedRows = (await orderedAccounts.json()).accounts;
+  expect(orderedRows.map((account: { id: string }) => account.id)).toEqual([
+    cardAccount.id,
+    bank.id,
+  ]);
+
+  const archiveHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": "account-archive-bank-test-0001",
+  };
+  const archive = await page.request.post(
+    `${api}/accounts/${bank.id}/archive`,
+    { headers: archiveHeaders },
+  );
+  expect(archive.status()).toBe(200);
+  const archived = (await archive.json()).account;
+  expect(archived.archivedAt).toBeTruthy();
+  expect(archived.balanceMinor).toBe("1000000");
+
+  const archiveReplay = await page.request.post(
+    `${api}/accounts/${bank.id}/archive`,
+    { headers: archiveHeaders },
+  );
+  expect((await archiveReplay.json()).account.archivedAt).toBe(
+    archived.archivedAt,
+  );
+
+  const activeAccounts = await page.request.get(`${api}/accounts`);
+  await expect(activeAccounts.json()).resolves.toMatchObject({
+    accounts: [{ id: cardAccount.id }],
+  });
+  const history = await page.request.get(
+    `${api}/accounts?includeArchived=true`,
+  );
+  expect(history.status()).toBe(200);
+  const historicalAccounts = (await history.json()).accounts;
+  expect(historicalAccounts).toHaveLength(2);
+  expect(
+    historicalAccounts.find(
+      (account: { id: string }) => account.id === bank.id,
+    ),
+  ).toMatchObject({ archivedAt: archived.archivedAt, balanceMinor: "1000000" });
+
+  const missingAccount = await page.request.get(
+    `${api}/accounts/941e4567-e89b-42d3-a456-426614174099`,
+  );
+  expect(missingAccount.status()).toBe(404);
+  await expect(missingAccount.json()).resolves.toMatchObject({
+    error: {
+      code: "NOT_FOUND",
+      message: "The requested account was not found.",
+    },
+  });
+});
+
 test("login rate limits repeated failures", async ({ page }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
