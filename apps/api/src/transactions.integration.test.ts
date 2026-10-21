@@ -3,7 +3,9 @@ import test, { after } from "node:test";
 import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
 import {
+  createAdjustment,
   createIncomeOrExpense,
+  createRefund,
   createTransfer,
   TransactionConflictError,
   TransactionNotFoundError,
@@ -318,6 +320,82 @@ test("transfer commands move balances and post optional fees as spending", async
         credit_total: "11500",
       },
     ]);
+
+    const originalExpense = await createIncomeOrExpense(
+      client,
+      userId,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: source.id,
+        categoryId: feeCategory.id,
+        amountMinor: "5000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(originalExpense.account.balanceMinor, "63500");
+    const refund = await createRefund(
+      client,
+      userId,
+      {
+        kind: "REFUND",
+        sourceAccountId: destination.id,
+        refundedTransactionId: originalExpense.transaction.id,
+        amountMinor: "1000",
+        occurredOn: "2026-10-22",
+        note: "Merchant refund",
+      },
+      "2026-10-22",
+    );
+    assert.equal(refund.transaction.categoryId, feeCategory.id);
+    assert.equal(
+      refund.transaction.refundedTransactionId,
+      originalExpense.transaction.id,
+    );
+    assert.equal(refund.account.balanceMinor, "31000");
+
+    const increased = await createAdjustment(
+      client,
+      userId,
+      {
+        kind: "ADJUSTMENT",
+        accountId: source.id,
+        direction: "INCREASE",
+        amountMinor: "500",
+        occurredOn: "2026-10-22",
+        note: "Cash count correction",
+      },
+      "2026-10-22",
+    );
+    assert.equal(increased.account.balanceMinor, "64000");
+    const decreased = await createAdjustment(
+      client,
+      userId,
+      {
+        kind: "ADJUSTMENT",
+        accountId: source.id,
+        direction: "DECREASE",
+        amountMinor: "1000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(decreased.account.balanceMinor, "63000");
+    await assert.rejects(
+      createAdjustment(
+        client,
+        userId,
+        {
+          kind: "ADJUSTMENT",
+          accountId: source.id,
+          direction: "DECREASE",
+          amountMinor: "999999",
+          occurredOn: "2026-10-22",
+        },
+        "2026-10-22",
+      ),
+      /negative/,
+    );
 
     await assert.rejects(
       createTransfer(
