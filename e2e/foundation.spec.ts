@@ -157,7 +157,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   const rejectedOrigin = await page.request.post(loginUrl, {
     headers: { origin: "https://attacker.example" },
     data: {
-      email: "owner@example.test",
+      email: "origin-check@example.test",
       password: "CI-only-password-never-used-outside-tests",
     },
   });
@@ -350,9 +350,22 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     expect(newPasswordLogin.status()).toBe(200);
     const { csrfToken: finalCsrfToken } = await newPasswordLogin.json();
 
+    const restoredPassword = await secondContext.request.post(
+      "http://127.0.0.1:3000/api/v1/auth/change-password",
+      {
+        headers: { origin, "x-csrf-token": finalCsrfToken },
+        data: {
+          currentPassword: "CI-only-rotated-password-never-used",
+          newPassword: "CI-only-password-never-used-outside-tests",
+        },
+      },
+    );
+    expect(restoredPassword.status()).toBe(200);
+    const { csrfToken: restoredCsrfToken } = await restoredPassword.json();
+
     const logout = await secondContext.request.post(
       "http://127.0.0.1:3000/api/v1/auth/logout",
-      { headers: { origin, "x-csrf-token": finalCsrfToken } },
+      { headers: { origin, "x-csrf-token": restoredCsrfToken } },
     );
     expect(logout.status()).toBe(204);
     expect(
@@ -542,6 +555,141 @@ test("financial accounts preserve opening balances, history, and owner scope", a
       message: "The requested resource was not found.",
     },
   });
+});
+
+test("categories seed defaults and retain archived history", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const api = "http://127.0.0.1:3000/api/v1";
+  const secondLogin = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "second@example.test",
+      password: "CI-only-second-user-password-never-used",
+    },
+  });
+  expect(secondLogin.status()).toBe(200);
+  const { csrfToken } = await secondLogin.json();
+
+  const defaultsResponse = await page.request.get(`${api}/categories`);
+  const defaults = (await defaultsResponse.json()).categories;
+  expect(defaultsResponse.status()).toBe(200);
+  expect(defaults.length).toBeGreaterThanOrEqual(13);
+  expect(defaults.map((category: { name: string }) => category.name)).toContain(
+    "Food",
+  );
+  expect(defaults.map((category: { name: string }) => category.name)).toContain(
+    "Salary",
+  );
+
+  const testRun = test.info().retry;
+  const customName = `Coffee ${testRun}`;
+  const createHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": `category-create-coffee-test-${testRun}`,
+  };
+  const create = await page.request.post(`${api}/categories`, {
+    headers: createHeaders,
+    data: {
+      kind: "EXPENSE",
+      name: customName,
+      sortOrder: 50,
+      icon: "coffee",
+    },
+  });
+  expect(create.status()).toBe(201);
+  const category = (await create.json()).category;
+  expect(category).toMatchObject({
+    kind: "EXPENSE",
+    name: customName,
+    sortOrder: 50,
+    icon: "coffee",
+    archivedAt: null,
+  });
+
+  const createReplay = await page.request.post(`${api}/categories`, {
+    headers: createHeaders,
+    data: {
+      kind: "EXPENSE",
+      name: customName,
+      sortOrder: 50,
+      icon: "coffee",
+    },
+  });
+  expect((await createReplay.json()).category.id).toBe(category.id);
+
+  const duplicate = await page.request.post(`${api}/categories`, {
+    headers: {
+      ...createHeaders,
+      "idempotency-key": `category-duplicate-coffee-test-${testRun}`,
+    },
+    data: { kind: "EXPENSE", name: customName },
+  });
+  expect(duplicate.status()).toBe(409);
+
+  const archiveHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": `category-archive-coffee-test-${testRun}`,
+  };
+  const archive = await page.request.patch(`${api}/categories/${category.id}`, {
+    headers: archiveHeaders,
+    data: {
+      name: "Coffee & Snacks",
+      sortOrder: 60,
+      icon: "cup-soda",
+      archived: true,
+    },
+  });
+  expect(archive.status()).toBe(200);
+  const archived = (await archive.json()).category;
+  expect(archived).toMatchObject({
+    id: category.id,
+    name: "Coffee & Snacks",
+    sortOrder: 60,
+    icon: "cup-soda",
+  });
+  expect(archived.archivedAt).toBeTruthy();
+
+  const activeCategories = await page.request.get(`${api}/categories`);
+  expect(
+    (await activeCategories.json()).categories.some(
+      (row: { id: string }) => row.id === category.id,
+    ),
+  ).toBe(false);
+  const historicalCategories = await page.request.get(
+    `${api}/categories?includeArchived=true`,
+  );
+  expect(
+    (await historicalCategories.json()).categories.some(
+      (row: { id: string }) => row.id === category.id,
+    ),
+  ).toBe(true);
+
+  const ownerLogin = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(ownerLogin.status()).toBe(200);
+  const ownerCsrf = (await ownerLogin.json()).csrfToken as string;
+  const foreignPatch = await page.request.patch(
+    `${api}/categories/${category.id}`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": ownerCsrf,
+        "idempotency-key": "category-foreign-patch-test-0001",
+      },
+      data: { name: "Foreign category" },
+    },
+  );
+  expect(foreignPatch.status()).toBe(404);
 });
 
 test("login rate limits repeated failures", async ({ page }) => {

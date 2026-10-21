@@ -13,6 +13,7 @@
     "test:unit": "tsx --test src/ledger/domain.test.ts",
     "test:ledger": "tsx --test src/ledger/integration.test.ts",
     "test:accounts": "tsx --test src/accounts.integration.test.ts",
+    "test:categories": "tsx --test src/categories.integration.test.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
   },

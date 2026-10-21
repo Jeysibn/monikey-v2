@@ -52,6 +52,8 @@ jobs:
         run: docker compose exec -T api npm run test:ledger --workspace @monikey/api
       - name: Verify account lifecycle against PostgreSQL
         run: docker compose exec -T api npm run test:accounts --workspace @monikey/api
+      - name: Verify category lifecycle against PostgreSQL
+        run: docker compose exec -T api npm run test:categories --workspace @monikey/api
       - run: npm run test:e2e
       - if: always()
         run: docker compose logs --no-color
