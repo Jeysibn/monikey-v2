@@ -7,6 +7,11 @@ import {
   ApiErrorResponseSchema,
   ChangePasswordRequestSchema,
   CsrfResponseSchema,
+  FinancialAccountCreateRequestBaseSchema,
+  FinancialAccountCreateRequestSchema,
+  FinancialAccountPatchRequestSchema,
+  FinancialAccountResponseSchema,
+  FinancialAccountsResponseSchema,
   HealthResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
@@ -15,10 +20,19 @@ import {
   PreferencesResponseSchema,
   SessionsResponseSchema,
 } from "@monikey/contracts";
+import {
+  archiveFinancialAccount,
+  createFinancialAccount,
+  listFinancialAccounts,
+  readFinancialAccount,
+  updateFinancialAccount,
+} from "./accounts.js";
+import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
+import type { PoolClient } from "pg";
 import { z } from "zod";
 
 const port = Number(process.env.API_PORT ?? 3000);
@@ -52,6 +66,7 @@ const authErrorResponses = () => ({
   401: apiErrorJsonSchema,
   403: apiErrorJsonSchema,
   404: apiErrorJsonSchema,
+  409: apiErrorJsonSchema,
   429: apiErrorJsonSchema,
   500: apiErrorJsonSchema,
   503: apiErrorJsonSchema,
@@ -96,7 +111,8 @@ await app.register(rateLimit, {
 app.addHook("onSend", (request, reply, _payload, done) => {
   if (
     request.url.startsWith("/api/v1/auth/") ||
-    request.url.startsWith("/api/v1/me")
+    request.url.startsWith("/api/v1/me") ||
+    request.url.startsWith("/api/v1/accounts")
   ) {
     reply.header("Cache-Control", "no-store");
   }
@@ -219,6 +235,36 @@ function ownerUserId(request: FastifyRequest): string {
   return ownerId;
 }
 
+async function withDatabaseTransaction<T>(
+  action: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  if (!pool) throw new Error("Database is not configured.");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await action(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function withDatabaseConnection<T>(
+  action: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  if (!pool) throw new Error("Database is not configured.");
+  const client = await pool.connect();
+  try {
+    return await action(client);
+  } finally {
+    client.release();
+  }
+}
+
 function safeHashEqual(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual, "hex");
   const expectedBytes = Buffer.from(expected, "hex");
@@ -314,6 +360,30 @@ function requireCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
   });
   return false;
 }
+
+function requiredIdempotencyKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): string | undefined {
+  const key = request.headers["idempotency-key"];
+  if (typeof key === "string" && /^[\w.:~-]{16,200}$/.test(key)) return key;
+  reply.code(400).send({
+    error: {
+      code: "VALIDATION_ERROR",
+      message: "A valid Idempotency-Key header is required.",
+      requestId: request.id,
+    },
+  });
+  return undefined;
+}
+
+const idempotencyHeaderSchema = {
+  type: "object",
+  required: ["idempotency-key"],
+  properties: {
+    "idempotency-key": { type: "string", minLength: 16, maxLength: 200 },
+  },
+};
 
 app.post(
   "/api/v1/auth/login",
@@ -570,9 +640,11 @@ app.get(
       currency: string;
       theme: string;
       hideBalances: boolean;
+      hasAccounts: boolean;
     }>(
       `SELECT u.id, u.email_normalized AS "emailNormalized", p.timezone, p.currency, p.theme,
-              p.hide_balances AS "hideBalances"
+              p.hide_balances AS "hideBalances",
+              EXISTS (SELECT 1 FROM financial_accounts a WHERE a.user_id = u.id) AS "hasAccounts"
          FROM users u JOIN user_preferences p ON p.user_id = u.id
         WHERE u.id = $1`,
       [ownerUserId(request)],
@@ -581,8 +653,9 @@ app.get(
     return {
       user: result.rows[0],
       serverToday: serverTodayInManila(),
-      // No account table exists until P2-03; keep the first-run status explicit.
-      onboardingStatus: "NEEDS_FIRST_ACCOUNT" as const,
+      onboardingStatus: result.rows[0]!.hasAccounts
+        ? ("READY" as const)
+        : ("NEEDS_FIRST_ACCOUNT" as const),
     };
   },
 );
@@ -641,6 +714,225 @@ app.patch(
       });
     }
     return { preferences: result.rows[0] };
+  },
+);
+
+const AccountParamsSchema = z.object({ accountId: z.string().uuid() });
+const AccountListQuerySchema = z
+  .object({ includeArchived: z.enum(["true", "false"]).optional() })
+  .strict();
+
+app.get(
+  "/api/v1/accounts",
+  {
+    schema: {
+      tags: ["accounts"],
+      summary: "List the signed-in owner's financial accounts and balances",
+      querystring: z.toJSONSchema(AccountListQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(FinancialAccountsResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = AccountListQuerySchema.parse(request.query);
+    const accounts = await withDatabaseConnection((client) =>
+      listFinancialAccounts(
+        client,
+        ownerUserId(request),
+        query.includeArchived === "true",
+      ),
+    );
+    return { accounts };
+  },
+);
+
+app.post(
+  "/api/v1/accounts",
+  {
+    schema: {
+      tags: ["accounts"],
+      summary: "Create a financial account with its opening balance",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(FinancialAccountCreateRequestBaseSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(FinancialAccountResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const parsedBody = FinancialAccountCreateRequestSchema.safeParse(
+      request.body,
+    );
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Request validation failed.",
+          requestId: request.id,
+          details: parsedBody.error.issues.map((issue) => ({
+            path: `/${issue.path.join("/")}`,
+            message: issue.message,
+          })),
+        },
+      });
+    }
+    const body = parsedBody.data;
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        account: await createFinancialAccount(
+          client,
+          ownerUserId(request),
+          body,
+          serverTodayInManila(),
+        ),
+      })),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.get(
+  "/api/v1/accounts/:accountId",
+  {
+    schema: {
+      tags: ["accounts"],
+      summary: "Read an account and its ledger-derived balance",
+      params: z.toJSONSchema(AccountParamsSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(FinancialAccountResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { accountId } = AccountParamsSchema.parse(request.params);
+    const account = await withDatabaseConnection((client) =>
+      readFinancialAccount(client, ownerUserId(request), accountId),
+    );
+    return { account };
+  },
+);
+
+app.patch(
+  "/api/v1/accounts/:accountId",
+  {
+    schema: {
+      tags: ["accounts"],
+      summary: "Rename or reorder an active financial account",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(AccountParamsSchema, { target: "draft-7" }),
+      body: z.toJSONSchema(FinancialAccountPatchRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(FinancialAccountResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { accountId } = AccountParamsSchema.parse(request.params);
+    const body = FinancialAccountPatchRequestSchema.parse(request.body);
+    if (body.name === undefined && body.sortOrder === undefined) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a name or sort order to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { accountId, ...body },
+        async () => ({
+          account: await updateFinancialAccount(
+            client,
+            ownerUserId(request),
+            accountId,
+            {
+              ...(body.name !== undefined ? { name: body.name } : {}),
+              ...(body.sortOrder !== undefined
+                ? { sortOrder: body.sortOrder }
+                : {}),
+            },
+          ),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+app.post(
+  "/api/v1/accounts/:accountId/archive",
+  {
+    schema: {
+      tags: ["accounts"],
+      summary: "Archive an account without deleting its history",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(AccountParamsSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(FinancialAccountResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { accountId } = AccountParamsSchema.parse(request.params);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { accountId, action: "archive" },
+        async () => ({
+          account: await archiveFinancialAccount(
+            client,
+            ownerUserId(request),
+            accountId,
+          ),
+        }),
+      ),
+    );
+    return result.value;
   },
 );
 
