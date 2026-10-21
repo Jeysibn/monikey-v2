@@ -3773,7 +3773,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Post one owner-scoped income, expense, or transfer */
+    /** Post one owner-scoped income, expense, transfer, refund, or adjustment */
     post: {
       parameters: {
         query?: never;
@@ -3812,6 +3812,29 @@ export interface paths {
                 occurredOn: string;
                 note?: string;
                 acknowledgeNegativeBalance?: boolean;
+              }
+            | {
+                /** @enum {string} */
+                kind: "REFUND";
+                /** Format: uuid */
+                sourceAccountId: string;
+                /** Format: uuid */
+                refundedTransactionId: string;
+                amountMinor: string;
+                occurredOn: string;
+                note?: string;
+              }
+            | {
+                /** @enum {string} */
+                kind: "ADJUSTMENT";
+                /** Format: uuid */
+                accountId: string;
+                /** @enum {string} */
+                direction: "INCREASE" | "DECREASE";
+                amountMinor: string;
+                occurredOn: string;
+                note?: string;
+                acknowledgeNegativeBalance?: boolean;
               };
         };
       };
@@ -3828,12 +3851,18 @@ export interface paths {
                     /** Format: uuid */
                     id: string;
                     /** @enum {string} */
-                    kind: "INCOME" | "EXPENSE" | "TRANSFER";
+                    kind:
+                      | "INCOME"
+                      | "EXPENSE"
+                      | "TRANSFER"
+                      | "REFUND"
+                      | "ADJUSTMENT";
                     /** @enum {string} */
                     status: "POSTED" | "VOID";
                     currentRevision: number;
                     occurredOn: string;
                     categoryId: string | null;
+                    refundedTransactionId: string | null;
                     note: string | null;
                   };
                   account: {
@@ -3858,12 +3887,18 @@ export interface paths {
                     /** Format: uuid */
                     id: string;
                     /** @enum {string} */
-                    kind: "INCOME" | "EXPENSE" | "TRANSFER";
+                    kind:
+                      | "INCOME"
+                      | "EXPENSE"
+                      | "TRANSFER"
+                      | "REFUND"
+                      | "ADJUSTMENT";
                     /** @enum {string} */
                     status: "POSTED" | "VOID";
                     currentRevision: number;
                     occurredOn: string;
                     categoryId: string | null;
+                    refundedTransactionId: string | null;
                     note: string | null;
                   };
                   sourceAccount: {

@@ -1,8 +1,10 @@
 import type { PoolClient } from "pg";
 import { moneyMinor } from "@monikey/money";
 import type {
+  AdjustmentCreateRequest,
   TransactionCreateRequest,
   TransactionKindSchema,
+  RefundCreateRequest,
   TransferCreateRequest,
 } from "@monikey/contracts";
 import {
@@ -20,6 +22,7 @@ export type TransactionRecord = {
   currentRevision: number;
   occurredOn: string;
   categoryId: string | null;
+  refundedTransactionId: string | null;
   note: string | null;
 };
 
@@ -68,6 +71,7 @@ function mapTransaction(row: {
   currentRevision: number;
   occurredOn: string;
   categoryId: string | null;
+  refundedTransactionId: string | null;
   note: string | null;
 }): TransactionRecord {
   return row;
@@ -115,6 +119,7 @@ async function readOwnedCategoryForPosting(
   client: PoolClient,
   userId: string,
   categoryId: string,
+  allowArchived = false,
 ): Promise<{
   kind: TransactionKind;
   archivedAt: Date | null;
@@ -135,7 +140,90 @@ async function readOwnedCategoryForPosting(
   );
   const category = result.rows[0];
   if (!category) throw new TransactionNotFoundError();
+  if (!allowArchived && category.archivedAt) {
+    throw new TransactionNotFoundError();
+  }
   return category;
+}
+
+async function readOwnedRefundTarget(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+): Promise<{ id: string; categoryId: string; amountMinor: string }> {
+  const result = await client.query<{
+    id: string;
+    categoryId: string;
+    amountMinor: string;
+  }>(
+    `SELECT t.id, t.category_id AS "categoryId", p.amount_minor::text AS "amountMinor"
+       FROM transactions t
+       JOIN journals j
+         ON j.user_id = t.user_id AND j.transaction_id = t.id
+       JOIN postings p
+         ON p.user_id = j.user_id AND p.journal_id = j.id
+      WHERE t.user_id = $1
+        AND t.id = $2
+        AND t.kind = 'EXPENSE'
+        AND t.status = 'POSTED'
+        AND p.direction = 'DEBIT'
+        AND t.category_id IS NOT NULL
+      ORDER BY j.created_at DESC
+      LIMIT 1
+      FOR UPDATE OF t`,
+    [userId, transactionId],
+  );
+  const target = result.rows[0];
+  if (!target) throw new TransactionNotFoundError();
+  return target;
+}
+
+async function readRefundedAmount(
+  client: PoolClient,
+  userId: string,
+  transactionId: string,
+): Promise<bigint> {
+  const result = await client.query<{ amount: string }>(
+    `SELECT COALESCE(sum(p.amount_minor), 0)::text AS amount
+       FROM transactions t
+       JOIN journals j
+         ON j.user_id = t.user_id AND j.transaction_id = t.id
+       JOIN postings p
+         ON p.user_id = j.user_id AND p.journal_id = j.id
+       JOIN ledger_accounts la
+         ON la.user_id = p.user_id AND la.id = p.ledger_account_id
+      WHERE t.user_id = $1
+        AND t.refunded_transaction_id = $2
+        AND t.kind = 'REFUND'
+        AND t.status = 'POSTED'
+        AND la.financial_account_id IS NOT NULL`,
+    [userId, transactionId],
+  );
+  return BigInt(result.rows[0]?.amount ?? "0");
+}
+
+async function ensureAdjustmentLedgerAccount(
+  client: PoolClient,
+  userId: string,
+): Promise<string> {
+  await client.query(
+    `INSERT INTO ledger_accounts (user_id, type, internal_code)
+     VALUES ($1, 'EQUITY', 'ADJUSTMENT')
+     ON CONFLICT (user_id, internal_code) WHERE internal_code IS NOT NULL
+     DO NOTHING`,
+    [userId],
+  );
+  const result = await client.query<{ id: string }>(
+    `SELECT id FROM ledger_accounts
+      WHERE user_id = $1 AND type = 'EQUITY' AND internal_code = 'ADJUSTMENT'`,
+    [userId],
+  );
+  const account = result.rows[0];
+  if (!account)
+    throw new TransactionValidationError(
+      "Unable to create adjustment account.",
+    );
+  return account.id;
 }
 
 export async function createIncomeOrExpense(
@@ -163,7 +251,6 @@ export async function createIncomeOrExpense(
     userId,
     request.categoryId,
   );
-  if (category.archivedAt) throw new TransactionNotFoundError();
   if (category.kind !== request.kind) {
     throw new TransactionConflictError(
       "The category kind does not match the transaction kind.",
@@ -193,13 +280,15 @@ export async function createIncomeOrExpense(
     currentRevision: number;
     occurredOn: string;
     categoryId: string;
+    refundedTransactionId: string | null;
     note: string | null;
   }>(
     `INSERT INTO transactions
        (user_id, kind, occurred_on, category_id, note)
      VALUES ($1, $2, $3::date, $4, $5)
      RETURNING id, kind, status, current_revision AS "currentRevision",
-               occurred_on::text AS "occurredOn", category_id AS "categoryId", note`,
+               occurred_on::text AS "occurredOn", category_id AS "categoryId",
+               refunded_transaction_id AS "refundedTransactionId", note`,
     [
       userId,
       request.kind,
@@ -360,13 +449,15 @@ export async function createTransfer(
     currentRevision: number;
     occurredOn: string;
     categoryId: string | null;
+    refundedTransactionId: string | null;
     note: string | null;
   }>(
     `INSERT INTO transactions
-       (user_id, kind, occurred_on, category_id, note)
-     VALUES ($1, 'TRANSFER', $2::date, NULL, $3)
+       (user_id, kind, occurred_on, category_id, note, refunded_transaction_id)
+     VALUES ($1, 'TRANSFER', $2::date, NULL, $3, NULL)
      RETURNING id, kind, status, current_revision AS "currentRevision",
-               occurred_on::text AS "occurredOn", category_id AS "categoryId", note`,
+               occurred_on::text AS "occurredOn", category_id AS "categoryId",
+               refunded_transaction_id AS "refundedTransactionId", note`,
     [userId, request.occurredOn, request.note ?? null],
   );
   const transaction = transactionResult.rows[0];
@@ -451,5 +542,255 @@ export async function createTransfer(
       userId,
       request.toAccountId,
     ),
+  };
+}
+
+export async function createRefund(
+  client: PoolClient,
+  userId: string,
+  request: RefundCreateRequest,
+  serverToday: string,
+): Promise<TransactionCreateResult> {
+  assertOccurredOnNotFuture(request.occurredOn, serverToday);
+  const amount = moneyMinor(request.amountMinor);
+  const source = await readOwnedAccountForPosting(
+    client,
+    userId,
+    request.sourceAccountId,
+  );
+  if (source.archivedAt) throw new TransactionNotFoundError();
+
+  const original = await readOwnedRefundTarget(
+    client,
+    userId,
+    request.refundedTransactionId,
+  );
+  const alreadyRefunded = await readRefundedAmount(
+    client,
+    userId,
+    request.refundedTransactionId,
+  );
+  const remaining = BigInt(original.amountMinor) - alreadyRefunded;
+  if (amount > remaining) {
+    throw new TransactionConflictError(
+      "The refund exceeds the remaining amount of the original expense.",
+    );
+  }
+
+  const transactionResult = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  }>(
+    `INSERT INTO transactions
+       (user_id, kind, occurred_on, category_id, note, refunded_transaction_id)
+     VALUES ($1, 'REFUND', $2::date, $3, $4, $5)
+     RETURNING id, kind, status, current_revision AS "currentRevision",
+               occurred_on::text AS "occurredOn", category_id AS "categoryId",
+               refunded_transaction_id AS "refundedTransactionId", note`,
+    [
+      userId,
+      request.occurredOn,
+      original.categoryId,
+      request.note ?? null,
+      request.refundedTransactionId,
+    ],
+  );
+  const transaction = transactionResult.rows[0];
+  if (!transaction)
+    throw new TransactionValidationError("Unable to create refund.");
+
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id)
+     VALUES ($1, $2, 1, NULL, $3::jsonb, $1)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "REFUND",
+        sourceAccountId: request.sourceAccountId,
+        refundedTransactionId: request.refundedTransactionId,
+        categoryId: original.categoryId,
+        amountMinor: request.amountMinor,
+        occurredOn: request.occurredOn,
+        note: request.note ?? null,
+      }),
+    ],
+  );
+
+  const isCard = source.type === "CREDIT_CARD";
+  await postBalancedJournal(client, {
+    userId,
+    transactionId: transaction.id,
+    operationKind: "REFUND",
+    postings: [
+      {
+        ledgerAccountId: source.ledgerAccountId,
+        direction: isCard ? "CREDIT" : "DEBIT",
+        amountMinor: amount,
+      },
+      {
+        ledgerAccountId: (
+          await readOwnedCategoryForPosting(
+            client,
+            userId,
+            original.categoryId,
+            true,
+          )
+        ).ledgerAccountId,
+        direction: "CREDIT",
+        amountMinor: amount,
+      },
+    ],
+  });
+
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'POSTED', $3::jsonb)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "REFUND",
+        sourceAccountId: request.sourceAccountId,
+        refundedTransactionId: request.refundedTransactionId,
+        amountMinor: request.amountMinor,
+      }),
+    ],
+  );
+
+  return {
+    transaction: mapTransaction(transaction),
+    account: await readFinancialAccount(
+      client,
+      userId,
+      request.sourceAccountId,
+    ),
+  };
+}
+
+export async function createAdjustment(
+  client: PoolClient,
+  userId: string,
+  request: AdjustmentCreateRequest,
+  serverToday: string,
+): Promise<TransactionCreateResult> {
+  assertOccurredOnNotFuture(request.occurredOn, serverToday);
+  const amount = moneyMinor(request.amountMinor);
+  const account = await readOwnedAccountForPosting(
+    client,
+    userId,
+    request.accountId,
+  );
+  if (account.archivedAt) throw new TransactionNotFoundError();
+  const current = await readFinancialAccount(client, userId, request.accountId);
+  if (
+    request.direction === "DECREASE" &&
+    BigInt(current.balanceMinor) < amount &&
+    request.acknowledgeNegativeBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This adjustment would make ${current.name} negative. Confirm the negative balance to continue.`,
+    );
+  }
+
+  const transactionResult = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  }>(
+    `INSERT INTO transactions
+       (user_id, kind, occurred_on, category_id, note, refunded_transaction_id)
+     VALUES ($1, 'ADJUSTMENT', $2::date, NULL, $3, NULL)
+     RETURNING id, kind, status, current_revision AS "currentRevision",
+               occurred_on::text AS "occurredOn", category_id AS "categoryId",
+               refunded_transaction_id AS "refundedTransactionId", note`,
+    [userId, request.occurredOn, request.note ?? null],
+  );
+  const transaction = transactionResult.rows[0];
+  if (!transaction)
+    throw new TransactionValidationError("Unable to create adjustment.");
+
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id)
+     VALUES ($1, $2, 1, NULL, $3::jsonb, $1)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "ADJUSTMENT",
+        accountId: request.accountId,
+        direction: request.direction,
+        amountMinor: request.amountMinor,
+        occurredOn: request.occurredOn,
+        note: request.note ?? null,
+      }),
+    ],
+  );
+
+  const adjustmentLedgerAccountId = await ensureAdjustmentLedgerAccount(
+    client,
+    userId,
+  );
+  const accountIncreasesWithDebit = account.type !== "CREDIT_CARD";
+  const accountDirection =
+    request.direction === "INCREASE"
+      ? accountIncreasesWithDebit
+        ? "DEBIT"
+        : "CREDIT"
+      : accountIncreasesWithDebit
+        ? "CREDIT"
+        : "DEBIT";
+  const adjustmentDirection = accountDirection === "DEBIT" ? "CREDIT" : "DEBIT";
+  await postBalancedJournal(client, {
+    userId,
+    transactionId: transaction.id,
+    operationKind: "ADJUSTMENT",
+    postings: [
+      {
+        ledgerAccountId: account.ledgerAccountId,
+        direction: accountDirection,
+        amountMinor: amount,
+      },
+      {
+        ledgerAccountId: adjustmentLedgerAccountId,
+        direction: adjustmentDirection,
+        amountMinor: amount,
+      },
+    ],
+  });
+
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'POSTED', $3::jsonb)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "ADJUSTMENT",
+        accountId: request.accountId,
+        direction: request.direction,
+        amountMinor: request.amountMinor,
+      }),
+    ],
+  );
+
+  return {
+    transaction: mapTransaction(transaction),
+    account: await readFinancialAccount(client, userId, request.accountId),
   };
 }

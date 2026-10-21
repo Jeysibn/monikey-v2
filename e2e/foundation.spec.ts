@@ -859,6 +859,66 @@ test("expense and income commands are balanced and retry-safe", async ({
     data: { ...transferBody, amountMinor: "11000" },
   });
   expect(transferConflict.status()).toBe(409);
+
+  const refundExpense = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `transaction-refund-expense-${testRun}`,
+    },
+    data: {
+      kind: "EXPENSE",
+      sourceAccountId: accountRow.id,
+      categoryId: expenseCategory.id,
+      amountMinor: "5000",
+      occurredOn: "2026-10-22",
+    },
+  });
+  expect(refundExpense.status()).toBe(201);
+  const refundExpenseResult = await refundExpense.json();
+  const refund = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `transaction-refund-test-${testRun}`,
+    },
+    data: {
+      kind: "REFUND",
+      sourceAccountId: destinationRow.id,
+      refundedTransactionId: refundExpenseResult.transaction.id,
+      amountMinor: "1000",
+      occurredOn: "2026-10-22",
+    },
+  });
+  expect(refund.status()).toBe(201);
+  await expect(refund.json()).resolves.toMatchObject({
+    transaction: {
+      kind: "REFUND",
+      categoryId: expenseCategory.id,
+      refundedTransactionId: refundExpenseResult.transaction.id,
+    },
+    account: { id: destinationRow.id, balanceMinor: "11000" },
+  });
+
+  const adjustment = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `transaction-adjustment-test-${testRun}`,
+    },
+    data: {
+      kind: "ADJUSTMENT",
+      accountId: accountRow.id,
+      direction: "INCREASE",
+      amountMinor: "500",
+      occurredOn: "2026-10-22",
+    },
+  });
+  expect(adjustment.status()).toBe(201);
+  await expect(adjustment.json()).resolves.toMatchObject({
+    transaction: { kind: "ADJUSTMENT", categoryId: null },
+    account: { id: accountRow.id, balanceMinor: "99000" },
+  });
 });
 
 test("login rate limits repeated failures", async ({ page }) => {
