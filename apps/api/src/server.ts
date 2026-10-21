@@ -81,6 +81,8 @@ await app.register(cookie);
 await app.register(rateLimit, {
   global: false,
   errorResponseBuilder: (request) => ({
+    statusCode: 429,
+    message: "Too many sign-in attempts. Try again later.",
     error: {
       code: "RATE_LIMITED",
       message: "Too many sign-in attempts. Try again later.",

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIResponse } from "@playwright/test";
 
 test("renders the honest home preview without sample finances", async ({
   page,
@@ -302,16 +302,19 @@ test("private login, session recovery, CSRF protection, and logout work", async 
 test("login rate limits repeated failures", async ({ page }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
-  let lastStatus = 0;
+  let lastResponse: APIResponse | undefined;
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const response = await page.request.post(
+    lastResponse = await page.request.post(
       "http://127.0.0.1:3000/api/v1/auth/login",
       {
         headers: { origin },
         data: { email: "rate-limit@example.test", password: "wrong-password" },
       },
     );
-    lastStatus = response.status();
   }
-  expect(lastStatus).toBe(429);
+  if (!lastResponse) throw new Error("The rate limit request did not run.");
+  expect(lastResponse.status()).toBe(429);
+  await expect(lastResponse.json()).resolves.toMatchObject({
+    error: { code: "RATE_LIMITED" },
+  });
 });
