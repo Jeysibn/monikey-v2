@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 through P2-09 are implemented; P2-09 adds owner-scoped transaction detail and audit reads, income/expense edits, compensating reversal journals, logical voids, immutable revision reasons, and deterministic account locks. P2-10 unified activity list/read and filters is next. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives are in progress and contain no sample financial values or fake persistence. Phase 2 P2-01 through P2-10 are implemented; P2-10 adds owner-scoped activity and account activity reads with keyset pagination and filters. P2-11 financial domain property-based and fail-closed repository tests is next. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
