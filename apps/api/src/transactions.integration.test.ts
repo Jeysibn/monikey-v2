@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
 import {
@@ -13,6 +13,7 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl)
   throw new Error("DATABASE_URL is required for transaction tests.");
 const pool = new Pool({ connectionString: databaseUrl });
+after(async () => pool.end());
 
 test("income and expense commands post balanced journals and derive balances", async () => {
   const client = await pool.connect();
@@ -225,7 +226,6 @@ test("income and expense commands post balanced journals and derive balances", a
   } finally {
     await client.query("ROLLBACK");
     client.release();
-    await pool.end();
   }
 });
 
