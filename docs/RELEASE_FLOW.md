@@ -9,3 +9,5 @@ The V2 repository follows the approved `feature → dev → main` workflow.
 5. Production deployment is a separate reviewed GitOps change using approved image digests. Merging to `main` does not deploy production.
 
 `main` is the default branch. Both `main` and `dev` require pull requests, current `validate` and `CodeQL` checks, resolved conversations, and prohibit force pushes and branch deletion. No workflow pushes images or changes the homelab GitOps repository.
+
+CI runs once for each pull request targeting `dev` or `main`. The workflow has no branch-push trigger because protected branch policy requires all changes to arrive through pull requests; this avoids running the same validation once for the branch push and again for the pull request.
