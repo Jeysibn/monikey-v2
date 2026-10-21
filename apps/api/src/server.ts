@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import { HealthResponseSchema } from "@monikey/contracts";
 import { Pool } from "pg";
@@ -18,13 +19,61 @@ await app.register(swagger, {
     servers: [{ url: "/api/v1" }],
   },
 });
-app.get(
-  "/healthz",
-  { schema: { tags: ["system"], summary: "Process liveness" } },
-  async () => ({
-    status: "ok",
+
+app.setErrorHandler((error: FastifyError, request, reply) => {
+  if (error.validation) {
+    return reply.code(400).send({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed.",
+        requestId: request.id,
+        details: error.validation.map((issue) => ({
+          path: issue.instancePath || "/",
+          message: issue.message ?? "Invalid value",
+        })),
+      },
+    });
+  }
+
+  const statusCode =
+    error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+      ? error.statusCode
+      : 500;
+  if (statusCode >= 500) request.log.error(error);
+
+  return reply.code(statusCode).send({
+    error: {
+      code:
+        statusCode === 404
+          ? "NOT_FOUND"
+          : statusCode === 409
+            ? "CONFLICT"
+            : statusCode < 500
+              ? "REQUEST_ERROR"
+              : "INTERNAL_ERROR",
+      message:
+        statusCode === 404
+          ? "The requested resource was not found."
+          : statusCode >= 500
+            ? "An unexpected error occurred."
+            : error.message,
+      requestId: request.id,
+    },
+  });
+});
+
+app.setNotFoundHandler((request, reply) =>
+  reply.code(404).send({
+    error: {
+      code: "NOT_FOUND",
+      message: "The requested resource was not found.",
+      requestId: request.id,
+    },
   }),
 );
+app.get("/healthz", { schema: { hide: true } }, async () => ({
+  status: "ok",
+}));
 
 app.get(
   "/api/v1/health",
@@ -33,8 +82,8 @@ app.get(
       tags: ["system"],
       summary: "API and database readiness",
       response: {
-        200: z.toJSONSchema(HealthResponseSchema),
-        503: z.toJSONSchema(HealthResponseSchema),
+        200: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
+        503: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
       },
     },
   },

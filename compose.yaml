@@ -33,12 +33,24 @@ services:
     command: ["npm", "run", "dev", "--workspace", "@monikey/api"]
     environment:
       API_PORT: 3000
+      NODE_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-monikey}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-monikey}?schema=public
     ports:
       - "3000:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   web:
     build:
@@ -49,7 +61,20 @@ services:
       API_ORIGIN: http://api:3000
     ports:
       - "5173:5173"
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   db-test:
     image: postgres:17.6-alpine

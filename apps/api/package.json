@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node dist/server.js",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate deploy"
+    "db:generate": "prisma generate --config ../../prisma.config.ts",
+    "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
   },
   "dependencies": {
     "@fastify/swagger": "9.9.2",
