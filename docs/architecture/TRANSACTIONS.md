@@ -53,6 +53,14 @@ Writes require same-origin checks, an authenticated session, CSRF, and a user-sc
 
 `GET /api/v1/transactions/:id` returns the owner-scoped stable record. `GET /api/v1/transactions/:id/audit` returns immutable revision metadata, before/after JSON, reasons, and UTC timestamps. Mutation retries include the transaction ID in the idempotency fingerprint.
 
+## Activity reads
+
+`GET /api/v1/transactions` returns the owner-scoped activity feed. It joins each transaction to its current revision and supports `kind`, `status`, `accountId`, `categoryId`, `from`, `to`, and note `search` filters. Results are sorted by `occurredOn DESC`, `createdAt DESC`, and `id DESC`.
+
+The `limit` query parameter is bounded to 1–100 (default 50). `nextCursor` is an opaque base64url cursor containing the last row's `(occurredOn, createdAt, id)` tuple; the service uses that tuple for keyset pagination. `GET /api/v1/accounts/:accountId/activity` applies the same contract with a required owner-scoped account filter. Both responses include the server's Asia/Manila `serverToday`.
+
+Account filtering checks all command-specific account fields in the current revision (`sourceAccountId`, `accountId`, `fromAccountId`, and `toAccountId`). The SQL query always applies the authenticated `user_id` first, so guessed transaction, account, category, or cursor values cannot cross owner boundaries.
+
 ## Journal mapping
 
 | Command              | Debit                                          | Credit                         |

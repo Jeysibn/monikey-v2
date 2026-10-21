@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { moneyMinor } from "@monikey/money";
 import type {
   AdjustmentCreateRequest,
+  TransactionActivityQuery,
   TransactionCreateRequest,
   TransactionDeleteRequest,
   TransactionEditRequest,
@@ -27,6 +28,16 @@ type TransactionMutationRow = {
   refundedTransactionId: string | null;
   note: string | null;
   afterJson: Record<string, unknown>;
+};
+
+type ActivityCursor = {
+  occurredOn: string;
+  createdAt: string;
+  id: string;
+};
+
+type TransactionActivityRow = TransactionMutationRow & {
+  createdAt: Date;
 };
 
 export type TransactionRecord = {
@@ -1238,5 +1249,106 @@ export async function readTransactionAudit(
       ...revision,
       createdAt: revision.createdAt.toISOString(),
     })),
+  };
+}
+
+function decodeActivityCursor(
+  value: string | undefined,
+): ActivityCursor | null {
+  if (!value) return null;
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as Partial<ActivityCursor>;
+    if (
+      typeof decoded.occurredOn !== "string" ||
+      typeof decoded.createdAt !== "string" ||
+      typeof decoded.id !== "string"
+    ) {
+      throw new Error("Invalid cursor");
+    }
+    return decoded as ActivityCursor;
+  } catch {
+    throw new TransactionValidationError("The activity cursor is invalid.");
+  }
+}
+
+function encodeActivityCursor(cursor: ActivityCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+export async function listTransactions(
+  client: PoolClient,
+  userId: string,
+  query: TransactionActivityQuery,
+  accountIdOverride?: string,
+) {
+  const cursor = decodeActivityCursor(query.cursor);
+  const accountId = accountIdOverride ?? query.accountId ?? null;
+  const result = await client.query<TransactionActivityRow>(
+    `SELECT t.id,
+            t.kind,
+            t.status,
+            t.current_revision AS "currentRevision",
+            t.occurred_on::text AS "occurredOn",
+            t.category_id AS "categoryId",
+            t.refunded_transaction_id AS "refundedTransactionId",
+            t.note,
+            t.created_at AS "createdAt",
+            r.after_json AS "afterJson"
+       FROM transactions t
+       JOIN transaction_revisions r
+         ON r.user_id = t.user_id
+        AND r.transaction_id = t.id
+        AND r.version = t.current_revision
+      WHERE t.user_id = $1
+        AND ($2::text IS NULL OR t.kind = $2)
+        AND ($3::text IS NULL OR t.status = $3)
+        AND ($4::uuid IS NULL OR t.category_id = $4)
+        AND ($5::date IS NULL OR t.occurred_on >= $5::date)
+        AND ($6::date IS NULL OR t.occurred_on <= $6::date)
+        AND ($7::text IS NULL OR t.note ILIKE '%' || $7 || '%')
+        AND ($8::uuid IS NULL OR (
+          r.after_json ->> 'sourceAccountId' = $8::text OR
+          r.after_json ->> 'accountId' = $8::text OR
+          r.after_json ->> 'fromAccountId' = $8::text OR
+          r.after_json ->> 'toAccountId' = $8::text
+        ))
+        AND ($9::date IS NULL OR $10::timestamptz IS NULL OR $11::uuid IS NULL OR
+          (t.occurred_on, t.created_at, t.id) < ($9::date, $10::timestamptz, $11::uuid))
+      ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
+      LIMIT $12::integer`,
+    [
+      userId,
+      query.kind ?? null,
+      query.status ?? null,
+      query.categoryId ?? null,
+      query.from ?? null,
+      query.to ?? null,
+      query.search ?? null,
+      accountId,
+      cursor?.occurredOn ?? null,
+      cursor?.createdAt ?? null,
+      cursor?.id ?? null,
+      query.limit + 1,
+    ],
+  );
+  const hasMore = result.rows.length > query.limit;
+  const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
+  const last = rows.at(-1);
+  return {
+    activity: rows.map((row) => ({
+      transaction: mapTransaction(row),
+      revision: row.afterJson,
+      createdAt: row.createdAt.toISOString(),
+    })),
+    nextCursor:
+      hasMore && last
+        ? encodeActivityCursor({
+            occurredOn: last.occurredOn,
+            createdAt: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
   };
 }

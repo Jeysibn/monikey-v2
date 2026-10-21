@@ -372,6 +372,51 @@ export const TransactionAuditResponseSchema = z.object({
   revisions: z.array(TransactionAuditEntrySchema),
 });
 
+export const TransactionActivityQuerySchema = z
+  .object({
+    cursor: z.string().max(500).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    search: z.string().trim().max(100).optional(),
+    kind: TransactionKindSchema.optional(),
+    status: z.enum(["POSTED", "VOID"]).optional(),
+    accountId: z.string().uuid().optional(),
+    categoryId: z.string().uuid().optional(),
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (
+      query.from !== undefined &&
+      query.to !== undefined &&
+      query.from > query.to
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "The from date must be on or before the to date.",
+        path: ["from"],
+      });
+    }
+  });
+
+export const TransactionActivityItemSchema = z.object({
+  transaction: TransactionSchema,
+  revision: z.record(z.string(), z.unknown()),
+  createdAt: z.string().datetime(),
+});
+
+export const TransactionActivityResponseSchema = z.object({
+  activity: z.array(TransactionActivityItemSchema),
+  nextCursor: z.string().nullable(),
+  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
@@ -385,6 +430,9 @@ export type TransactionEditRequest = z.infer<
 >;
 export type TransactionDeleteRequest = z.infer<
   typeof TransactionDeleteRequestSchema
+>;
+export type TransactionActivityQuery = z.infer<
+  typeof TransactionActivityQuerySchema
 >;
 export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;
