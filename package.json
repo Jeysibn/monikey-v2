@@ -10,7 +10,7 @@
     "dev": "npm run dev --workspace @monikey/api & npm run dev --workspace @monikey/web",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run build --workspace @monikey/contracts && npm run build --workspace @monikey/money && npm run typecheck --workspaces --if-present",
-    "test:unit": "npm run test --workspace @monikey/money",
+    "test:unit": "npm run test --workspace @monikey/money && npm run test:unit --workspace @monikey/api",
     "test:e2e": "playwright test",
     "api:types": "openapi-typescript \"${API_SPEC_URL:-http://localhost:3000/openapi.json}\" -o packages/contracts/src/generated/openapi.d.ts",
     "format:check": "prettier --check \"**/*.{json,md,ts,tsx,yml,yaml,html,css}\"",

@@ -9,5 +9,6 @@ ARG DATABASE_URL=postgresql://monikey:local-only-change-me@127.0.0.1:5432/monike
 RUN npm ci
 COPY . .
 RUN npm run build --workspace @monikey/contracts
+RUN npm run build --workspace @monikey/money
 EXPOSE 3000
 CMD ["npm", "run", "dev", "--workspace", "@monikey/api"]
