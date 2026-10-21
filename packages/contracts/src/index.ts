@@ -187,11 +187,13 @@ export type CategoryPatchRequest = z.infer<typeof CategoryPatchRequestSchema>;
 export type CategoryRecord = z.infer<typeof CategorySchema>;
 
 export const TransactionKindSchema = z.enum([
+  "OPENING_BALANCE",
   "INCOME",
   "EXPENSE",
   "TRANSFER",
   "REFUND",
   "ADJUSTMENT",
+  "CARD_PAYMENT",
 ]);
 const IncomeExpenseKindSchema = z.enum(["INCOME", "EXPENSE"]);
 const maxPostgresBigInt = 9_223_372_036_854_775_807n;
@@ -344,6 +346,32 @@ export const TransactionRequestSchema = z.union([
   AdjustmentCreateRequestSchema,
 ]);
 
+export const TransactionEditRequestSchema = z.intersection(
+  TransactionCreateRequestSchema,
+  z.object({ reason: z.string().trim().min(1).max(300) }).strict(),
+);
+
+export const TransactionDeleteRequestSchema = z
+  .object({ reason: z.string().trim().min(1).max(300) })
+  .strict();
+
+export const TransactionResponseSchema = z.object({
+  transaction: TransactionSchema,
+});
+
+export const TransactionAuditEntrySchema = z.object({
+  version: z.number().int().positive(),
+  before: z.record(z.string(), z.unknown()).nullable(),
+  after: z.record(z.string(), z.unknown()),
+  reason: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+
+export const TransactionAuditResponseSchema = z.object({
+  transaction: TransactionSchema,
+  revisions: z.array(TransactionAuditEntrySchema),
+});
+
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
@@ -351,6 +379,12 @@ export type TransferCreateRequest = z.infer<typeof TransferCreateRequestSchema>;
 export type RefundCreateRequest = z.infer<typeof RefundCreateRequestSchema>;
 export type AdjustmentCreateRequest = z.infer<
   typeof AdjustmentCreateRequestSchema
+>;
+export type TransactionEditRequest = z.infer<
+  typeof TransactionEditRequestSchema
+>;
+export type TransactionDeleteRequest = z.infer<
+  typeof TransactionDeleteRequestSchema
 >;
 export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;

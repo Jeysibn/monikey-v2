@@ -4,9 +4,12 @@ import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
 import {
   createAdjustment,
+  deleteTransaction,
+  editIncomeOrExpense,
   createIncomeOrExpense,
   createRefund,
   createTransfer,
+  readTransactionAudit,
   TransactionConflictError,
   TransactionNotFoundError,
 } from "./transactions.js";
@@ -426,6 +429,108 @@ test("transfer commands move balances and post optional fees as spending", async
         "2026-10-22",
       ),
       /negative/,
+    );
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
+test("edits and logical deletes reverse journals and preserve audit revisions", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const account = await createFinancialAccount(
+      client,
+      userId,
+      { type: "BANK", name: "Revision bank", openingBalanceMinor: "100000" },
+      "2026-10-22",
+    );
+    const category = await client.query<{ id: string }>(
+      `SELECT id FROM categories
+        WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Food'`,
+      [userId],
+    );
+    assert.ok(category.rows[0]?.id);
+
+    const original = await createIncomeOrExpense(
+      client,
+      userId,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: account.id,
+        categoryId: category.rows[0]!.id,
+        amountMinor: "25000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(original.account.balanceMinor, "75000");
+
+    const edited = await editIncomeOrExpense(
+      client,
+      userId,
+      original.transaction.id,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: account.id,
+        categoryId: category.rows[0]!.id,
+        amountMinor: "20000",
+        occurredOn: "2026-10-22",
+        reason: "Corrected receipt total",
+      },
+      "2026-10-22",
+    );
+    assert.equal(edited.transaction.currentRevision, 2);
+    assert.equal(edited.account.balanceMinor, "80000");
+
+    const auditAfterEdit = await readTransactionAudit(
+      client,
+      userId,
+      original.transaction.id,
+    );
+    assert.equal(auditAfterEdit.revisions.length, 2);
+    assert.equal(auditAfterEdit.revisions[1]?.version, 2);
+    assert.equal(
+      auditAfterEdit.revisions[1]?.reason,
+      "Corrected receipt total",
+    );
+
+    const voided = await deleteTransaction(
+      client,
+      userId,
+      original.transaction.id,
+      { reason: "Remove duplicate entry" },
+    );
+    assert.equal(voided.status, "VOID");
+    assert.equal(voided.currentRevision, 3);
+    const reread = await readTransactionAudit(
+      client,
+      userId,
+      original.transaction.id,
+    );
+    assert.equal(reread.revisions.length, 3);
+    assert.equal(reread.revisions[2]?.reason, "Remove duplicate entry");
+    const balance = await readFinancialAccount(client, userId, account.id);
+    assert.equal(balance.balanceMinor, "100000");
+
+    const journals = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM journals
+        WHERE user_id = $1 AND transaction_id = $2`,
+      [userId, original.transaction.id],
+    );
+    assert.equal(journals.rows[0]?.count, "4");
+    await assert.rejects(
+      deleteTransaction(client, userId, original.transaction.id, {
+        reason: "Try again",
+      }),
+      TransactionConflictError,
     );
   } finally {
     await client.query("ROLLBACK");
