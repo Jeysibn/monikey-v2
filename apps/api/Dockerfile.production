@@ -21,7 +21,10 @@ COPY packages/money/package.json packages/money/package.json
 RUN npm ci --omit=dev
 
 FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS runtime
+COPY --from=node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 /usr/local/bin/node /usr/local/bin/node
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production API_PORT=3000
+RUN apk update && apk upgrade --no-cache
 WORKDIR /workspace
 COPY --from=production-dependencies --chown=node:node /workspace/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/apps/api/package.json ./apps/api/package.json

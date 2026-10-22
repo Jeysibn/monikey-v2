@@ -19,8 +19,8 @@
     "test:bills": "tsx --test src/bills.integration.test.ts",
     "test:reports": "tsx --test src/reports.integration.test.ts",
     "test:transactions": "tsx --test src/transactions.integration.test.ts src/dashboard.integration.test.ts",
-    "db:generate": "prisma generate --config ../../prisma.config.ts",
-    "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"
+    "db:generate": "prisma generate --config ../../prisma.config.js",
+    "db:migrate": "prisma migrate deploy --config ../../prisma.config.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

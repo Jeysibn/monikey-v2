@@ -16,6 +16,7 @@ Phase 6 is a controlled homelab replacement, not a local application task. This 
 - `docs/runbooks/restore.md` now documents custom-format PostgreSQL backup validation and isolated restore commands.
 - A disposable Docker Compose restore drill succeeded on 2026-10-22. The archive passed `pg_restore --list`, restored into a new database with `--exit-on-error`, returned expected user/journal/revision counts, and the isolated database was removed. This is local readiness evidence only; it does not satisfy the production CronJob, retention, monitoring, or owner-approval gates below.
 - Production Docker build targets now exist for the API, web, and one-shot migration service. On 2026-10-23 all three built locally; the migration image applied five migrations to a disposable fresh PostgreSQL database, the API image returned ready with DB connected, and the nonroot web image served CSP/security headers and proxied the real API. See `docs/runbooks/production-images.md`. These are local image tests only; no registry publication, deployment, or live-cluster validation occurred.
+- Final local API, web, and migration image IDs have zero Trivy HIGH/CRITICAL findings and each has a local SPDX SBOM. Registry digest scans, provenance retention, and release policy remain open.
 
 ## Required before authoring Phase 6 manifests
 
