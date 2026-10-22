@@ -20,6 +20,7 @@ import {
   LoginRequestSchema,
   LoginResponseSchema,
   MeResponseSchema,
+  OnboardingFirstAccountResponseSchema,
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
   SessionsResponseSchema,
@@ -35,6 +36,7 @@ import {
 } from "@monikey/contracts";
 import {
   archiveFinancialAccount,
+  createFirstFinancialAccount,
   createFinancialAccount,
   listFinancialAccounts,
   readFinancialAccount,
@@ -952,6 +954,45 @@ app.patch(
       });
     }
     return { preferences: result.rows[0] };
+  },
+);
+
+app.post(
+  "/api/v1/onboarding/first-account",
+  {
+    schema: {
+      tags: ["onboarding", "accounts"],
+      summary: "Create the owner's first account and opening balance",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(FinancialAccountCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(OnboardingFirstAccountResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const body = FinancialAccountCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        account: await createFirstFinancialAccount(
+          client,
+          ownerUserId(request),
+          body,
+          serverTodayInManila(),
+        ),
+      })),
+    );
+    return reply.code(201).send(result.value);
   },
 );
 

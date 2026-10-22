@@ -395,9 +395,52 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   const { csrfToken } = await login.json();
   const emptyProfile = await page.request.get(`${api}/me`);
   const profileBeforeCreate = await emptyProfile.json();
-  expect(["NEEDS_FIRST_ACCOUNT", "READY"]).toContain(
-    profileBeforeCreate.onboardingStatus,
+  expect(profileBeforeCreate.onboardingStatus).toBe("NEEDS_FIRST_ACCOUNT");
+
+  const firstAccountInput = {
+    type: "CASH",
+    name: "Onboarding Cash",
+    openingBalanceMinor: "12345",
+  };
+  const firstAccountHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": "onboarding-first-account-test-0001",
+  };
+  const firstAccount = await page.request.post(
+    `${api}/onboarding/first-account`,
+    { headers: firstAccountHeaders, data: firstAccountInput },
   );
+  expect(firstAccount.status()).toBe(201);
+  await expect(firstAccount.json()).resolves.toMatchObject({
+    account: {
+      type: "CASH",
+      name: "Onboarding Cash",
+      balanceMinor: "12345",
+      currency: "PHP",
+    },
+  });
+
+  const replayFirstAccount = await page.request.post(
+    `${api}/onboarding/first-account`,
+    { headers: firstAccountHeaders, data: firstAccountInput },
+  );
+  expect(replayFirstAccount.status()).toBe(201);
+
+  const conflictingFirstAccount = await page.request.post(
+    `${api}/onboarding/first-account`,
+    {
+      headers: firstAccountHeaders,
+      data: { ...firstAccountInput, name: "Another first account" },
+    },
+  );
+  expect(conflictingFirstAccount.status()).toBe(409);
+
+  await expect(
+    page.request.get(`${api}/me`).then((response) => response.json()),
+  ).resolves.toMatchObject({
+    onboardingStatus: "READY",
+  });
 
   const invalidAccount = await page.request.post(`${api}/accounts`, {
     headers: {
