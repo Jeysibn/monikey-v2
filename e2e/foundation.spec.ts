@@ -202,7 +202,9 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   expect(profile.headers()["cache-control"]).toBe("no-store");
   const profileData = await profile.json();
   expect(profileData.serverToday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-  expect(profileData.onboardingStatus).toBe("NEEDS_FIRST_ACCOUNT");
+  expect(["NEEDS_FIRST_ACCOUNT", "READY"]).toContain(
+    profileData.onboardingStatus,
+  );
   expect(profileData).toMatchObject({
     user: {
       emailNormalized: "owner@example.test",
@@ -210,6 +212,65 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       currency: "PHP",
     },
   });
+
+  const firstAccountInput = {
+    type: "CASH",
+    name: "Onboarding Cash",
+    openingBalanceMinor: "12345",
+  };
+  const firstAccountHeaders = {
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": "onboarding-first-account-test-0001",
+  };
+  if (profileData.onboardingStatus === "NEEDS_FIRST_ACCOUNT") {
+    const firstAccount = await page.request.post(
+      "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+      { headers: firstAccountHeaders, data: firstAccountInput },
+    );
+    expect(firstAccount.status()).toBe(201);
+    await expect(firstAccount.json()).resolves.toMatchObject({
+      account: {
+        type: "CASH",
+        name: "Onboarding Cash",
+        balanceMinor: "12345",
+        currency: "PHP",
+      },
+    });
+    const replayFirstAccount = await page.request.post(
+      "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+      { headers: firstAccountHeaders, data: firstAccountInput },
+    );
+    expect(replayFirstAccount.status()).toBe(201);
+  } else {
+    const existingAccounts = await page.request
+      .get("http://127.0.0.1:3000/api/v1/accounts")
+      .then((response) => response.json());
+    expect(existingAccounts.accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "Onboarding Cash",
+          balanceMinor: "12345",
+        }),
+      ]),
+    );
+  }
+  const conflictingFirstAccount = await page.request.post(
+    "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+    {
+      headers: {
+        ...firstAccountHeaders,
+        "idempotency-key": "onboarding-first-account-conflict-0001",
+      },
+      data: { ...firstAccountInput, name: "Another first account" },
+    },
+  );
+  expect(conflictingFirstAccount.status()).toBe(409);
+  await expect(
+    page.request
+      .get("http://127.0.0.1:3000/api/v1/me")
+      .then((response) => response.json()),
+  ).resolves.toMatchObject({ onboardingStatus: "READY" });
 
   const unsupportedCurrency = await page.request.patch(
     "http://127.0.0.1:3000/api/v1/me/preferences",
@@ -376,88 +437,6 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   } finally {
     await secondContext.close();
   }
-});
-
-test("first-account onboarding persists the opening balance and prevents duplicates", async ({
-  page,
-}) => {
-  test.skip(test.info().project.name !== "desktop-chromium");
-  const origin = "http://localhost:5173";
-  const api = "http://127.0.0.1:3000/api/v1";
-  const login = await page.request.post(`${api}/auth/login`, {
-    headers: { origin },
-    data: {
-      email: "owner@example.test",
-      password: "CI-only-password-never-used-outside-tests",
-    },
-  });
-  expect(login.status()).toBe(200);
-  const { csrfToken } = await login.json();
-  const input = {
-    type: "CASH",
-    name: "Onboarding Cash",
-    openingBalanceMinor: "12345",
-  };
-  const key = "onboarding-first-account-test-0001";
-  const headers = {
-    origin,
-    "x-csrf-token": csrfToken,
-    "idempotency-key": key,
-  };
-  const profileBefore = await page.request
-    .get(`${api}/me`)
-    .then((response) => response.json());
-  if (profileBefore.onboardingStatus === "NEEDS_FIRST_ACCOUNT") {
-    const firstAccount = await page.request.post(
-      `${api}/onboarding/first-account`,
-      {
-        headers,
-        data: input,
-      },
-    );
-    expect(firstAccount.status()).toBe(201);
-    await expect(firstAccount.json()).resolves.toMatchObject({
-      account: {
-        type: "CASH",
-        name: "Onboarding Cash",
-        balanceMinor: "12345",
-        currency: "PHP",
-      },
-    });
-
-    const replay = await page.request.post(`${api}/onboarding/first-account`, {
-      headers,
-      data: input,
-    });
-    expect(replay.status()).toBe(201);
-  } else {
-    const accounts = await page.request
-      .get(`${api}/accounts`)
-      .then((response) => response.json());
-    expect(accounts.accounts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "Onboarding Cash",
-          balanceMinor: "12345",
-        }),
-      ]),
-    );
-  }
-
-  const conflicting = await page.request.post(
-    `${api}/onboarding/first-account`,
-    {
-      headers: {
-        ...headers,
-        "idempotency-key": "onboarding-first-account-conflict-0001",
-      },
-      data: { ...input, name: "Another first account" },
-    },
-  );
-  expect(conflicting.status()).toBe(409);
-  await expect(
-    page.request.get(`${api}/me`).then((response) => response.json()),
-  ).resolves.toMatchObject({ onboardingStatus: "READY" });
 });
 
 test("financial accounts preserve opening balances, history, and owner scope", async ({
