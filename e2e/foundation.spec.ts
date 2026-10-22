@@ -508,6 +508,43 @@ test("private login, session recovery, CSRF protection, and logout work", async 
         { headers: { origin, "x-csrf-token": secondUserCsrfToken } },
       );
       expect(crossUserRevoke.status()).toBe(404);
+      const ownerExport = await page.request.get(
+        "http://localhost:3000/api/v1/exports/json",
+      );
+      expect(ownerExport.status()).toBe(200);
+      const ownerExportData = await ownerExport.json();
+      const ownerAccountId = ownerExportData.accounts[0]?.id;
+      expect(ownerAccountId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      const ownerTransactionIds = new Set(
+        ownerExportData.transactions.map(
+          (transaction: { id: string }) => transaction.id,
+        ),
+      );
+      const secondExport = await thirdContext.request.get(
+        "http://localhost:3000/api/v1/exports/json",
+      );
+      expect(secondExport.status()).toBe(200);
+      const secondExportData = await secondExport.json();
+      expect(secondExportData.accounts).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: ownerAccountId }),
+        ]),
+      );
+      expect(
+        secondExportData.transactions.some((transaction: { id: string }) =>
+          ownerTransactionIds.has(transaction.id),
+        ),
+      ).toBe(false);
+      const secondCsv = await thirdContext.request.get(
+        "http://localhost:3000/api/v1/exports/transactions.csv",
+      );
+      expect(await secondCsv.text()).not.toContain(ownerAccountId);
+      const guessedAccount = await thirdContext.request.get(
+        `http://localhost:3000/api/v1/accounts/${ownerAccountId}`,
+      );
+      expect(guessedAccount.status()).toBe(404);
       expect(
         (await page.request.get("http://localhost:3000/api/v1/me")).status(),
       ).toBe(200);
@@ -1364,7 +1401,6 @@ test("reports, exports, security, and categories stay owner-scoped", async ({
     schemaVersion: "monikey-v2.export.v1",
     owner: { timezone: "Asia/Manila", currency: "PHP" },
   });
-
   await page.goto("/app/reports");
   await expect(
     page.getByRole("heading", { name: "Reports that reconcile." }),
