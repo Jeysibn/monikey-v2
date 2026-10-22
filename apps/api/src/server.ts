@@ -109,7 +109,12 @@ const databaseUrl = process.env.DATABASE_URL;
 const pool = databaseUrl
   ? new Pool({ connectionString: databaseUrl })
   : undefined;
-const app = Fastify({ logger: true, trustProxy: false });
+const app = Fastify({
+  logger: {
+    redact: { paths: ["req.url"], censor: "[redacted]" },
+  },
+  trustProxy: false,
+});
 const sessionCookie = "__Host-mk_session";
 const csrfCookie = "__Host-mk_csrf";
 const sessionMaxAgeSeconds = 60 * 60 * 24 * 14;

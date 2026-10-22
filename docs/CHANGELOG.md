@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-23 — Production image hardening
+
+- Added monthly grouped Dependabot updates for npm, GitHub Actions, and pinned container bases, with at most one open PR per ecosystem.
+- Added digest-pinned, multi-stage production API/web image targets and a dedicated one-shot migration image. API/web runtime users are nonroot; the API runtime includes production dependencies only.
+- Added a same-origin Nginx API proxy with CSP and browser security headers, cache policy for the shell/assets/service worker, and query-free access logs. Fastify request URLs are redacted to keep Activity search terms out of normal logs.
+- Verified all three builds locally, applied five migrations to a fresh disposable PostgreSQL database, checked production API readiness, and passed five read-only Playwright journeys through the production web image. No image publication, GitHub Actions run, or deployment occurred.
+
 ## 2026-10-22 — Phase 5 release review and Phase 6 readiness
 
 - Aligned the public API with the master-plan endpoint contract by adding `/api/v1/health/live`, `/api/v1/health/ready`, and `/api/v1/exports/data.json`; updated the web client, Compose readiness probe, OpenAPI types, and Playwright coverage.

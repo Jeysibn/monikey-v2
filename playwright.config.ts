@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
   outputDir: "test-results",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173",
     trace: "retain-on-failure",
   },
   projects: [
