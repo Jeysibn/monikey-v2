@@ -23,6 +23,7 @@ This is a source and local-runtime audit against the approved master plan. It re
 - One-worker Playwright: 23 passed, 7 intentional mobile skips.
 - Root integration alias: ledger, accounts, categories, transactions/dashboard, cards, bills, and reports all passed locally against PostgreSQL.
 - One-worker Playwright: 23 passed, 7 intentional mobile skips; the full authenticated release review passed all 18 route/viewport combinations in light and dark themes with zero axe violations, focus failures, page errors, API errors, overflow, unnamed controls, or undersized controls. Fresh API p95 was 24ms on desktop and 13ms on Pixel 7-sized emulation.
+- Migration upgrade: an isolated temporary PostgreSQL database applied the prior V2 schema checkpoint and the cards/bills migration successfully, then verified the final tables before cleanup.
 - Backup/restore: custom-format dump validated and restored into an isolated database before cleanup.
 
 ## Open gates

@@ -122,6 +122,7 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - Current local security validation — `npm run security:secrets` passed across 115 tracked files, and `npm audit --offline --audit-level=high` completed with 0 vulnerabilities. No GitHub Actions run was started.
 - Current contract validation — `npm run contracts:check` regenerated the OpenAPI declaration from the local API and matched `packages/contracts/src/generated/openapi.d.ts` exactly.
 - Root validation aliases — `npm run test:finance` passed 13 unit/invariant tests; `DATABASE_URL=... npm run test:integration` passed ledger, accounts, categories, transactions/dashboard (including opposite-direction concurrent transfers), cards, bills (including variable-bill confirmation/replay), and reports suites; `npm run test:full-stack` passed 23 Playwright tests with 7 intentional skips. A fresh `npm run review:local` passed all 18 route/viewport combinations in light and dark themes with zero axe violations, focus failures, page errors, API errors, overflow, unnamed controls, or undersized controls; API p95 was 24ms desktop and 13ms Pixel 7-sized. All runs used the disposable local Compose override and no GitHub Actions.
+- Migration upgrade validation — an isolated temporary PostgreSQL database accepted all migrations through `20261022230000_category_icons`, then upgraded with `20261023000000_cards_bills`; final card and bill tables were verified and the database was removed.
 
 ## Next work
 
