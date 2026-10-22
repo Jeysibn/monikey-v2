@@ -4,6 +4,21 @@
 
 Run `npm run typecheck`, `npm run test:unit`, `npm run test:invariants`, `npm run build`, `npm run format:check`, and `npm audit` from the repository root. Unit and property tests use Node's test runner through `tsx` and do not require a database. The invariant suite generates random valid journal sequences, checks compensating reversals and edits, verifies transfer fee identities, and exercises exact values above JavaScript's safe integer boundary. Repository guardrail tests verify PostgreSQL suites fail closed when `DATABASE_URL` is missing; integration suites use the shared guard before opening a pool.
 
+For local PostgreSQL coverage, start the Compose stack, bootstrap the disposable owner and second user, then run the API suites with the host database URL:
+
+```sh
+DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
+  npm run test:ledger --workspace @monikey/api
+DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
+  npm run test:accounts --workspace @monikey/api
+DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
+  npm run test:categories --workspace @monikey/api
+DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
+  npm run test:transactions --workspace @monikey/api
+```
+
+The transaction command includes `dashboard.integration.test.ts`, which checks that dashboard totals reconcile after opening balances, income, spending, transfer fees, and an edited expense. The dashboard endpoint is also covered by the authenticated home-screen Playwright path.
+
 ## PostgreSQL-backed browser acceptance
 
 The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state. The Quick Add path covers authenticated account/category loading, expense creation, exact amount validation, transfer mode, and saved-state feedback while the signed-out route remains an honest no-save preview.

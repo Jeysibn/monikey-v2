@@ -17,7 +17,12 @@ import {
   useNavigate,
   useLocation,
 } from "react-router";
-import { AmountEntry, PrivacyMask, ReferenceSelect } from "./components";
+import {
+  AmountEntry,
+  MoneyValue,
+  PrivacyMask,
+  ReferenceSelect,
+} from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
 import "./style.css";
 
@@ -396,6 +401,16 @@ function RoutePage({
 }
 
 function HomePage() {
+  const { profile, loading } = useAuth();
+
+  if (loading) {
+    return <DashboardLoading />;
+  }
+
+  if (profile) {
+    return <DashboardHome profile={profile} />;
+  }
+
   return (
     <section className="home-page" aria-labelledby="page-heading">
       <div className="page-intro home-intro">
@@ -445,6 +460,326 @@ function HomePage() {
           <span className="lower-rule" />
         </div>
       </div>
+    </section>
+  );
+}
+
+type DashboardAccount = {
+  id: string;
+  type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+  name: string;
+  balanceMinor: string;
+  archivedAt: string | null;
+};
+
+type DashboardActivity = {
+  transaction: {
+    id: string;
+    kind:
+      | "OPENING_BALANCE"
+      | "INCOME"
+      | "EXPENSE"
+      | "TRANSFER"
+      | "REFUND"
+      | "ADJUSTMENT"
+      | "CARD_PAYMENT";
+    status: "POSTED" | "VOID";
+    occurredOn: string;
+    note: string | null;
+  };
+  revision: Record<string, unknown>;
+  createdAt: string;
+};
+
+type DashboardSummaryResponse = {
+  availableMoneyMinor: string;
+  cardDebtMinor: string;
+  netFinancialPositionMinor: string;
+  month: string;
+  incomeMinor: string;
+  spendingMinor: string;
+  accounts: DashboardAccount[];
+  recentActivity: DashboardActivity[];
+  serverToday: string;
+};
+
+function dashboardMoney(value: string) {
+  return <MoneyValue amount={moneyMinor(value)} />;
+}
+
+function dashboardAccountType(type: DashboardAccount["type"]): string {
+  return {
+    CASH: "Cash",
+    BANK: "Bank",
+    EWALLET: "E-wallet",
+    CREDIT_CARD: "Credit card",
+  }[type];
+}
+
+function dashboardActivityAmount(activity: DashboardActivity): string | null {
+  const amount = activity.revision.amountMinor;
+  return typeof amount === "string" && /^-?\d+$/.test(amount) ? amount : null;
+}
+
+function dashboardActivityLabel(activity: DashboardActivity): string {
+  if (activity.transaction.note) return activity.transaction.note;
+  return {
+    OPENING_BALANCE: "Opening balance",
+    INCOME: "Income",
+    EXPENSE: "Expense",
+    TRANSFER: "Transfer",
+    REFUND: "Refund",
+    ADJUSTMENT: "Adjustment",
+    CARD_PAYMENT: "Card payment",
+  }[activity.transaction.kind];
+}
+
+function DashboardLoading() {
+  return (
+    <section className="dashboard-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Private dashboard</p>
+        <h1 id="page-heading">Your money, in balance.</h1>
+        <p className="page-description">Loading your saved figures…</p>
+      </div>
+      <div
+        className="dashboard-skeleton"
+        aria-label="Loading dashboard"
+        role="status"
+      >
+        <span className="skeleton-line skeleton-line-wide" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line skeleton-line-short" />
+      </div>
+    </section>
+  );
+}
+
+function DashboardHome({ profile }: { profile: Profile }) {
+  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setSummary(
+        await apiRequest<DashboardSummaryResponse>("/dashboard/summary"),
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Your dashboard could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+
+  if (loading && !summary) return <DashboardLoading />;
+
+  return (
+    <section className="dashboard-page" aria-labelledby="page-heading">
+      <div className="dashboard-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Private dashboard · {profile.user.currency}</p>
+          <h1 id="page-heading">Your money, in balance.</h1>
+          <p className="page-description">
+            A current view of the accounts and journals that belong to you.
+          </p>
+        </div>
+        <Link className="dashboard-primary-action" to="/app/transactions/new">
+          <span aria-hidden="true">+</span> Add transaction
+        </Link>
+      </div>
+
+      {error ? (
+        <div className="dashboard-error" role="alert">
+          <div>
+            <strong>Dashboard unavailable</strong>
+            <p>{error}</p>
+          </div>
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={() => void loadSummary()}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      {summary ? (
+        <>
+          <div className="dashboard-hero">
+            <div>
+              <p className="dashboard-label">Available money</p>
+              <div className="dashboard-balance">
+                <PrivacyMask label="available money">
+                  {dashboardMoney(summary.availableMoneyMinor)}
+                </PrivacyMask>
+              </div>
+              <p className="dashboard-helper">
+                Cash, bank, and e-wallet balances · {summary.serverToday}
+              </p>
+            </div>
+            <div className="dashboard-hero-meta">
+              <span className="status-dot" aria-hidden="true" />
+              <span>Posted journal totals</span>
+            </div>
+          </div>
+
+          <div className="dashboard-stat-grid" aria-label="Financial summary">
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net position</p>
+              <PrivacyMask label="net financial position">
+                {dashboardMoney(summary.netFinancialPositionMinor)}
+              </PrivacyMask>
+              <p className="dashboard-helper">After card debt</p>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Card debt</p>
+              <PrivacyMask label="card debt">
+                {dashboardMoney(summary.cardDebtMinor)}
+              </PrivacyMask>
+              <p className="dashboard-helper">Current liability balance</p>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">This month</p>
+              <p className="dashboard-stat-line dashboard-income">
+                <span>Income</span>
+                {dashboardMoney(summary.incomeMinor)}
+              </p>
+              <p className="dashboard-stat-line dashboard-expense">
+                <span>Spending</span>
+                {dashboardMoney(summary.spendingMinor)}
+              </p>
+              <p className="dashboard-helper">{summary.month}</p>
+            </div>
+          </div>
+
+          <div className="dashboard-columns">
+            <section
+              className="dashboard-panel"
+              aria-labelledby="accounts-heading"
+            >
+              <div className="dashboard-panel-heading">
+                <div>
+                  <p className="dashboard-label">Your accounts</p>
+                  <h2 id="accounts-heading">Balances at a glance</h2>
+                </div>
+                <Link className="quiet-link" to="/app/accounts">
+                  View all
+                </Link>
+              </div>
+              {summary.accounts.length ? (
+                <div className="account-list">
+                  {summary.accounts.map((account) => (
+                    <Link
+                      className="account-row"
+                      key={account.id}
+                      to={`/app/accounts/${account.id}`}
+                    >
+                      <span className="account-mark" aria-hidden="true">
+                        {account.type === "CREDIT_CARD" ? "◇" : "•"}
+                      </span>
+                      <span className="account-copy">
+                        <strong>{account.name}</strong>
+                        <span>{dashboardAccountType(account.type)}</span>
+                      </span>
+                      <span className="account-balance">
+                        <PrivacyMask label={`${account.name} balance`}>
+                          {dashboardMoney(account.balanceMinor)}
+                        </PrivacyMask>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="dashboard-empty">
+                  <p>No accounts yet.</p>
+                  <Link className="quiet-link" to="/onboarding">
+                    Create your first account
+                  </Link>
+                </div>
+              )}
+            </section>
+
+            <section
+              className="dashboard-panel"
+              aria-labelledby="activity-heading"
+            >
+              <div className="dashboard-panel-heading">
+                <div>
+                  <p className="dashboard-label">Latest records</p>
+                  <h2 id="activity-heading">Recent activity</h2>
+                </div>
+                <Link className="quiet-link" to="/app/activity">
+                  View all
+                </Link>
+              </div>
+              {summary.recentActivity.length ? (
+                <div className="activity-list">
+                  {summary.recentActivity.map((activity) => {
+                    const amount = dashboardActivityAmount(activity);
+                    const isIncome = ["INCOME", "REFUND"].includes(
+                      activity.transaction.kind,
+                    );
+                    return (
+                      <Link
+                        className="activity-row"
+                        key={activity.transaction.id}
+                        to={`/app/transactions/${activity.transaction.id}`}
+                      >
+                        <span className="activity-kind" aria-hidden="true">
+                          {isIncome
+                            ? "↑"
+                            : activity.transaction.kind === "EXPENSE"
+                              ? "↓"
+                              : "↔"}
+                        </span>
+                        <span className="activity-copy">
+                          <strong>{dashboardActivityLabel(activity)}</strong>
+                          <span>
+                            {activity.transaction.occurredOn} ·{" "}
+                            {activity.transaction.status === "VOID"
+                              ? "Voided"
+                              : activity.transaction.kind.replaceAll("_", " ")}
+                          </span>
+                        </span>
+                        <span
+                          className={`activity-amount${isIncome ? " is-income" : ""}`}
+                        >
+                          {amount ? (
+                            <PrivacyMask label="activity amount">
+                              {dashboardMoney(amount)}
+                            </PrivacyMask>
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="dashboard-empty">
+                  <p>Transactions will appear here after you record one.</p>
+                  <Link className="quiet-link" to="/app/transactions/new">
+                    Add a transaction
+                  </Link>
+                </div>
+              )}
+            </section>
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

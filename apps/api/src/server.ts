@@ -11,6 +11,7 @@ import {
   CategoryPatchRequestSchema,
   CategoryResponseSchema,
   CsrfResponseSchema,
+  DashboardSummarySchema,
   FinancialAccountCreateRequestBaseSchema,
   FinancialAccountCreateRequestSchema,
   FinancialAccountPatchRequestSchema,
@@ -58,6 +59,7 @@ import {
   readTransaction,
   readTransactionAudit,
 } from "./transactions.js";
+import { readDashboardSummary } from "./dashboard.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -565,6 +567,27 @@ app.get(
     },
   },
   readTransactionActivity,
+);
+
+app.get(
+  "/api/v1/dashboard/summary",
+  {
+    schema: {
+      tags: ["dashboard"],
+      summary: "Read the signed-in owner's ledger-derived dashboard summary",
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(DashboardSummarySchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const serverToday = serverTodayInManila();
+    return withDatabaseConnection((client) =>
+      readDashboardSummary(client, ownerUserId(request), serverToday),
+    );
+  },
 );
 
 app.get(

@@ -288,6 +288,20 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   await quickAddSelects.nth(1).selectOption({ label: "Food" });
   await page.getByRole("button", { name: "Record expense" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  await page.goto("/app");
+  await expect(
+    page.getByRole("heading", { name: "Your money, in balance." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Available money", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Recent activity", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Onboarding Cash", { exact: true }),
+  ).toBeVisible();
+  await page.goto("/app/transactions/new");
   await page.getByRole("tab", { name: "Transfer" }).click();
   await expect(page.getByText("To account *")).toBeVisible();
 

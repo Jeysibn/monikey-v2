@@ -420,6 +420,18 @@ export const TransactionActivityResponseSchema = z.object({
   serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+export const DashboardSummarySchema = z.object({
+  availableMoneyMinor: z.string().regex(/^-?\d+$/),
+  cardDebtMinor: z.string().regex(/^-?\d+$/),
+  netFinancialPositionMinor: z.string().regex(/^-?\d+$/),
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  incomeMinor: z.string().regex(/^-?\d+$/),
+  spendingMinor: z.string().regex(/^-?\d+$/),
+  accounts: z.array(FinancialAccountSchema),
+  recentActivity: z.array(TransactionActivityItemSchema),
+  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
@@ -437,6 +449,7 @@ export type TransactionDeleteRequest = z.infer<
 export type TransactionActivityQuery = z.infer<
   typeof TransactionActivityQuerySchema
 >;
+export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
 export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;
 
