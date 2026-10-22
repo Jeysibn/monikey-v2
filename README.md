@@ -34,6 +34,7 @@ npm run test:unit
 npm run test:invariants
 npm run build
 npm run format:check
+npm run security:secrets
 npm audit
 ```
 
