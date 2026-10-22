@@ -18,7 +18,7 @@ import {
   useLocation,
 } from "react-router";
 import { AmountEntry, PrivacyMask, ReferenceSelect } from "./components";
-import { parsePhpMinor } from "@monikey/money";
+import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
 import "./style.css";
 
 type Theme = "light" | "dark";
@@ -107,6 +107,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => {
     try {
       const result = await apiRequest<Profile>("/me");
+      const csrf = await apiRequest<{ csrfToken: string }>("/auth/csrf");
+      setCsrfToken(csrf.csrfToken);
       setProfile(result);
       return result;
     } catch {
@@ -737,7 +739,7 @@ function OnboardingPage() {
   );
 }
 
-function QuickAddPage() {
+function QuickAddPreviewPage() {
   const [amount, setAmount] = useState("");
 
   return (
@@ -780,6 +782,466 @@ function QuickAddPage() {
         <p className="no-save-note" role="status">
           Preview only. Nothing is saved from this screen yet.
         </p>
+      </form>
+    </section>
+  );
+}
+
+type QuickAddMode = "EXPENSE" | "INCOME" | "TRANSFER";
+type QuickAddAccount = {
+  id: string;
+  type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+  name: string;
+  balanceMinor: string;
+  archivedAt: string | null;
+};
+type QuickAddCategory = {
+  id: string;
+  kind: "INCOME" | "EXPENSE";
+  name: string;
+  archivedAt: string | null;
+};
+
+function QuickAddPage() {
+  const { profile, csrfToken } = useAuth();
+  const [mode, setMode] = useState<QuickAddMode>("EXPENSE");
+  const [accounts, setAccounts] = useState<QuickAddAccount[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [sourceAccountId, setSourceAccountId] = useState("");
+  const [destinationAccountId, setDestinationAccountId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [feeCategoryId, setFeeCategoryId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [fee, setFee] = useState("");
+  const [note, setNote] = useState("");
+  const [occurredOn, setOccurredOn] = useState(profile?.serverToday ?? "");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [negativeConfirmation, setNegativeConfirmation] = useState(false);
+
+  useEffect(() => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    setOccurredOn(profile.serverToday);
+    void Promise.all([
+      apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
+      apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+    ])
+      .then(([accountResult, categoryResult]) => {
+        const activeAccounts = accountResult.accounts.filter(
+          (account) => !account.archivedAt && account.type !== "CREDIT_CARD",
+        );
+        const activeCategories = categoryResult.categories.filter(
+          (category) => !category.archivedAt,
+        );
+        setAccounts(activeAccounts);
+        setCategories(activeCategories);
+        setSourceAccountId((current) => current || activeAccounts[0]?.id || "");
+        setDestinationAccountId(
+          (current) => current || activeAccounts[1]?.id || "",
+        );
+        setCategoryId((current) => current || "");
+      })
+      .catch((caught) => {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Saved accounts and categories could not be loaded.",
+        );
+      })
+      .finally(() => setLoading(false));
+  }, [profile]);
+
+  const visibleCategories = categories.filter((category) =>
+    mode === "TRANSFER" ? category.kind === "EXPENSE" : category.kind === mode,
+  );
+  const expenseCategories = categories.filter(
+    (category) => category.kind === "EXPENSE",
+  );
+
+  function parsePositive(value: string, label: string): bigint {
+    let parsed: bigint;
+    try {
+      parsed = parsePhpMinor(value);
+    } catch {
+      throw new Error(`${label} must be PHP with up to two decimal places.`);
+    }
+    if (parsed <= 0n) throw new Error(`${label} must be greater than zero.`);
+    return parsed;
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNegativeConfirmation(false);
+    try {
+      const amountMinor = parsePositive(amount, "Amount").toString();
+      if (!profile || !csrfToken)
+        throw new Error("Your session needs to be refreshed.");
+      if (!sourceAccountId) throw new Error("Choose an account.");
+      if (!occurredOn) throw new Error("Choose the transaction date.");
+      const common = {
+        occurredOn,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      };
+      const body =
+        mode === "TRANSFER"
+          ? {
+              kind: "TRANSFER" as const,
+              fromAccountId: sourceAccountId,
+              toAccountId: destinationAccountId,
+              amountMinor,
+              ...(fee.trim()
+                ? { feeMinor: parsePositive(fee, "Transfer fee").toString() }
+                : {}),
+              ...(feeCategoryId ? { feeCategoryId } : {}),
+              ...common,
+            }
+          : {
+              kind: mode,
+              sourceAccountId,
+              categoryId,
+              amountMinor,
+              ...common,
+            };
+      if (mode !== "TRANSFER" && !categoryId) {
+        throw new Error("Choose a category.");
+      }
+      if (mode === "TRANSFER" && !destinationAccountId) {
+        throw new Error("Choose a destination account.");
+      }
+      if (mode === "TRANSFER" && destinationAccountId === sourceAccountId) {
+        throw new Error("Choose two different accounts.");
+      }
+      setPending(true);
+      const response = await fetch("/api/v1/transactions", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      if (!response.ok) {
+        const message =
+          payload?.error?.message ?? "The transaction could not be saved.";
+        if (response.status === 409 && message.includes("negative")) {
+          setNegativeConfirmation(true);
+        }
+        throw new Error(message);
+      }
+      setAmount("");
+      setFee("");
+      setNote("");
+      setNegativeConfirmation(false);
+      setError("Transaction saved.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function confirmNegativeBalance() {
+    if (!csrfToken) return;
+    setError("");
+    setPending(true);
+    try {
+      const amountMinor = parsePositive(amount, "Amount").toString();
+      const body =
+        mode === "TRANSFER"
+          ? {
+              kind: "TRANSFER" as const,
+              fromAccountId: sourceAccountId,
+              toAccountId: destinationAccountId,
+              amountMinor,
+              acknowledgeNegativeBalance: true,
+              occurredOn,
+              ...(fee.trim()
+                ? { feeMinor: parsePositive(fee, "Transfer fee").toString() }
+                : {}),
+              ...(feeCategoryId ? { feeCategoryId } : {}),
+              ...(note.trim() ? { note: note.trim() } : {}),
+            }
+          : {
+              kind: mode,
+              sourceAccountId,
+              categoryId,
+              amountMinor,
+              acknowledgeNegativeBalance: true,
+              occurredOn,
+              ...(note.trim() ? { note: note.trim() } : {}),
+            };
+      const response = await fetch("/api/v1/transactions", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(
+          payload?.error?.message ?? "The transaction could not be saved.",
+        );
+      }
+      setAmount("");
+      setFee("");
+      setNote("");
+      setNegativeConfirmation(false);
+      setError("Transaction saved.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!profile) return <QuickAddPreviewPage />;
+
+  return (
+    <section className="route-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Quick add · Private</p>
+        <h1 id="page-heading">Record it while it is fresh.</h1>
+        <p className="page-description">
+          One short form for expenses, income, and transfers. Every save uses a
+          balanced journal and can be safely retried.
+        </p>
+      </div>
+      <form className="quick-add-card" onSubmit={submit}>
+        <div className="mode-tabs" role="tablist" aria-label="Transaction type">
+          {(["EXPENSE", "INCOME", "TRANSFER"] as QuickAddMode[]).map((item) => (
+            <button
+              key={item}
+              className={`mode-tab${mode === item ? " is-active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={mode === item}
+              onClick={() => {
+                setMode(item);
+                setError("");
+                setNegativeConfirmation(false);
+              }}
+            >
+              {item[0] + item.slice(1).toLowerCase()}
+            </button>
+          ))}
+        </div>
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">{mode}</p>
+            <h2>
+              {mode === "TRANSFER" ? "Move money" : `New ${mode.toLowerCase()}`}
+            </h2>
+          </div>
+          <span className="form-kind">{profile.serverToday}</span>
+        </div>
+        <div className="field-group">
+          <label className="field-label" htmlFor="quick-add-amount">
+            Amount <span aria-hidden="true">*</span>
+          </label>
+          <div className="amount-control">
+            <span className="currency-prefix" aria-hidden="true">
+              ₱
+            </span>
+            <input
+              className="amount-input"
+              id="quick-add-amount"
+              type="text"
+              inputMode="decimal"
+              required
+              value={amount}
+              onChange={(event) => setAmount(event.currentTarget.value)}
+              placeholder="0.00"
+            />
+          </div>
+          <p className="field-hint">PHP · up to 2 decimal places</p>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">
+              {mode === "TRANSFER" ? "From account" : "Account"}{" "}
+              <span aria-hidden="true">*</span>
+            </span>
+            <select
+              className="reference-select"
+              value={sourceAccountId}
+              onChange={(event) =>
+                setSourceAccountId(event.currentTarget.value)
+              }
+              disabled={loading}
+            >
+              <option value="">
+                {loading ? "Loading accounts…" : "Choose an account"}
+              </option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name} · {formatPhp(moneyMinor(account.balanceMinor))}
+                </option>
+              ))}
+            </select>
+          </label>
+          {mode === "TRANSFER" ? (
+            <label className="field-group">
+              <span className="field-label">
+                To account <span aria-hidden="true">*</span>
+              </span>
+              <select
+                className="reference-select"
+                value={destinationAccountId}
+                onChange={(event) =>
+                  setDestinationAccountId(event.currentTarget.value)
+                }
+                disabled={loading}
+              >
+                <option value="">Choose a destination</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="field-group">
+              <span className="field-label">
+                Category <span aria-hidden="true">*</span>
+              </span>
+              <select
+                className="reference-select"
+                value={categoryId}
+                onChange={(event) => setCategoryId(event.currentTarget.value)}
+                disabled={loading}
+              >
+                <option value="">
+                  {loading ? "Loading categories…" : "Choose a category"}
+                </option>
+                {visibleCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        {mode === "TRANSFER" ? (
+          <div className="reference-grid transfer-options">
+            <label className="field-group">
+              <span className="field-label">
+                Transfer fee <span className="field-optional">Optional</span>
+              </span>
+              <input
+                className="text-input"
+                type="text"
+                inputMode="decimal"
+                value={fee}
+                onChange={(event) => setFee(event.currentTarget.value)}
+                placeholder="0.00"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-label">
+                Fee category <span className="field-optional">Optional</span>
+              </span>
+              <select
+                className="reference-select"
+                value={feeCategoryId}
+                onChange={(event) =>
+                  setFeeCategoryId(event.currentTarget.value)
+                }
+                disabled={!fee}
+              >
+                <option value="">Choose a fee category</option>
+                {expenseCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+        <div className="reference-grid quick-add-details">
+          <label className="field-group">
+            <span className="field-label">
+              Date <span aria-hidden="true">*</span>
+            </span>
+            <input
+              className="text-input"
+              type="date"
+              value={occurredOn}
+              max={profile.serverToday}
+              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Note <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              type="text"
+              maxLength={500}
+              value={note}
+              onChange={(event) => setNote(event.currentTarget.value)}
+              placeholder="What was this for?"
+            />
+          </label>
+        </div>
+        {error ? (
+          <p
+            className={
+              error === "Transaction saved." ? "form-success" : "form-error"
+            }
+            role="status"
+          >
+            {error}
+          </p>
+        ) : null}
+        {negativeConfirmation ? (
+          <div className="confirmation-panel" role="alert">
+            <p>This will make the source account negative. Continue?</p>
+            <button
+              className="save-button"
+              type="button"
+              onClick={() => void confirmNegativeBalance()}
+              disabled={pending}
+            >
+              Confirm and record
+            </button>
+          </div>
+        ) : (
+          <button
+            className="save-button"
+            type="submit"
+            disabled={pending || loading || !accounts.length}
+          >
+            {pending ? "Saving…" : `Record ${mode.toLowerCase()}`}
+          </button>
+        )}
       </form>
     </section>
   );

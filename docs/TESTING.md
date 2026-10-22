@@ -6,7 +6,7 @@ Run `npm run typecheck`, `npm run test:unit`, `npm run test:invariants`, `npm ru
 
 ## PostgreSQL-backed browser acceptance
 
-The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state.
+The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state. The Quick Add path covers authenticated account/category loading, expense creation, exact amount validation, transfer mode, and saved-state feedback while the signed-out route remains an honest no-save preview.
 
 ```sh
 npx playwright install chromium
@@ -21,4 +21,4 @@ The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for
 
 ## Environment limitations
 
-The implementation environment currently has no Docker/container runtime or local PostgreSQL tools. In this environment, do not claim the Compose-backed browser suite passed. GitHub Actions is the current execution environment for that gate.
+The local Docker daemon is available after refreshing the shell's `docker` group membership. The Compose-backed suite was run locally against PostgreSQL, the API, and the web container; GitHub Actions remains the required pull-request gate.

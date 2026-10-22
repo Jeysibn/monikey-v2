@@ -1,5 +1,9 @@
 # Transaction commands
 
+## Quick Add client flow
+
+The authenticated Quick Add screen reads the owner-scoped account and category lists, then posts one of the existing command shapes to `POST /api/v1/transactions`. It sends exact minor-unit strings, the server-owned Manila date, optional notes, a fresh idempotency key, and the session CSRF token. Expense and income use matching category kinds; transfers can include a positive expense fee and fee category. A negative-balance conflict is shown as an explicit confirmation and retried with `acknowledgeNegativeBalance: true`. Signed-out visitors see the existing preview form, which never sends a mutation.
+
 P2-08 adds owner-scoped transfers, linked refunds, and explicit adjustments to the P2-07 income and expense commands. P2-09 adds audited edits and logical deletion on top of the same append-only model. Every command writes a stable transaction, revision, balanced journal, postings, and audit event in one PostgreSQL transaction.
 
 ## Command contract

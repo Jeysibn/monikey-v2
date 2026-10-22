@@ -601,6 +601,64 @@ h1 {
   background: var(--surface-card);
 }
 
+.mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 24px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.mode-tab {
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mode-tab.is-active {
+  background: var(--surface-card);
+  color: var(--brand-primary);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--brand-deep), transparent 88%);
+}
+
+.transfer-options,
+.quick-add-details {
+  margin-top: 18px;
+}
+
+.form-success {
+  margin: 15px 0 0;
+  color: var(--income);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.confirmation-panel {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--expense), transparent 45%);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--expense), transparent 94%);
+}
+
+.confirmation-panel p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.confirmation-panel .save-button {
+  margin-top: 12px;
+}
+
 .onboarding-card {
   width: min(100%, 650px);
 }

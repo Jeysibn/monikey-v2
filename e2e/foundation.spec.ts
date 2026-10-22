@@ -153,7 +153,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
 }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
-  const loginUrl = "http://127.0.0.1:3000/api/v1/auth/login";
+  const loginUrl = "http://localhost:3000/api/v1/auth/login";
   const rejectedOrigin = await page.request.post(loginUrl, {
     headers: { origin: "https://attacker.example" },
     data: {
@@ -192,12 +192,12 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   expect(sessionCookie).toContain("Secure");
 
   const csrfRecovery = await page.request.get(
-    "http://127.0.0.1:3000/api/v1/auth/csrf",
+    "http://localhost:3000/api/v1/auth/csrf",
   );
   expect(csrfRecovery.status()).toBe(200);
   await expect(csrfRecovery.json()).resolves.toEqual({ csrfToken });
 
-  const profile = await page.request.get("http://127.0.0.1:3000/api/v1/me");
+  const profile = await page.request.get("http://localhost:3000/api/v1/me");
   expect(profile.status()).toBe(200);
   expect(profile.headers()["cache-control"]).toBe("no-store");
   const profileData = await profile.json();
@@ -225,7 +225,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   };
   if (profileData.onboardingStatus === "NEEDS_FIRST_ACCOUNT") {
     const firstAccount = await page.request.post(
-      "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+      "http://localhost:3000/api/v1/onboarding/first-account",
       { headers: firstAccountHeaders, data: firstAccountInput },
     );
     expect(firstAccount.status()).toBe(201);
@@ -238,13 +238,13 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       },
     });
     const replayFirstAccount = await page.request.post(
-      "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+      "http://localhost:3000/api/v1/onboarding/first-account",
       { headers: firstAccountHeaders, data: firstAccountInput },
     );
     expect(replayFirstAccount.status()).toBe(201);
   } else {
     const existingAccounts = await page.request
-      .get("http://127.0.0.1:3000/api/v1/accounts")
+      .get("http://localhost:3000/api/v1/accounts")
       .then((response) => response.json());
     expect(existingAccounts.accounts).toEqual(
       expect.arrayContaining([
@@ -256,7 +256,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     );
   }
   const conflictingFirstAccount = await page.request.post(
-    "http://127.0.0.1:3000/api/v1/onboarding/first-account",
+    "http://localhost:3000/api/v1/onboarding/first-account",
     {
       headers: {
         ...firstAccountHeaders,
@@ -268,12 +268,31 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   expect(conflictingFirstAccount.status()).toBe(409);
   await expect(
     page.request
-      .get("http://127.0.0.1:3000/api/v1/me")
+      .get("http://localhost:3000/api/v1/me")
       .then((response) => response.json()),
   ).resolves.toMatchObject({ onboardingStatus: "READY" });
 
+  await page.goto("/app/transactions/new");
+  await expect(
+    page.getByRole("heading", { name: "Record it while it is fresh." }),
+  ).toBeVisible();
+  await page.locator("#quick-add-amount").fill("25.00");
+  const quickAddSelects = page.locator(".quick-add-card select");
+  const onboardingAccountId = await quickAddSelects
+    .nth(0)
+    .locator("option")
+    .filter({ hasText: "Onboarding Cash" })
+    .getAttribute("value");
+  expect(onboardingAccountId).toBeTruthy();
+  await quickAddSelects.nth(0).selectOption(onboardingAccountId!);
+  await quickAddSelects.nth(1).selectOption({ label: "Food" });
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  await page.getByRole("tab", { name: "Transfer" }).click();
+  await expect(page.getByText("To account *")).toBeVisible();
+
   const unsupportedCurrency = await page.request.patch(
-    "http://127.0.0.1:3000/api/v1/me/preferences",
+    "http://localhost:3000/api/v1/me/preferences",
     {
       headers: { origin, "x-csrf-token": csrfToken },
       data: { currency: "USD" },
@@ -281,7 +300,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   );
   expect(unsupportedCurrency.status()).toBe(400);
   const updatePreferences = await page.request.patch(
-    "http://127.0.0.1:3000/api/v1/me/preferences",
+    "http://localhost:3000/api/v1/me/preferences",
     {
       headers: { origin, "x-csrf-token": csrfToken },
       data: { theme: "dark", hideBalances: true },
@@ -307,7 +326,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   await page.clock.install();
 
   const sessions = await page.request.get(
-    "http://127.0.0.1:3000/api/v1/auth/sessions",
+    "http://localhost:3000/api/v1/auth/sessions",
   );
   const sessionRows = (await sessions.json()).sessions;
   expect(sessionRows).toHaveLength(1);
@@ -325,7 +344,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     expect(secondLogin.status()).toBe(200);
     const { csrfToken: secondCsrfToken } = await secondLogin.json();
     const bothSessions = await secondContext.request.get(
-      "http://127.0.0.1:3000/api/v1/auth/sessions",
+      "http://localhost:3000/api/v1/auth/sessions",
     );
     const activeSessions = (await bothSessions.json()).sessions;
     expect(activeSessions).toHaveLength(2);
@@ -347,40 +366,40 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       expect(secondUserLogin.status()).toBe(200);
       const { csrfToken: secondUserCsrfToken } = await secondUserLogin.json();
       const secondUserProfile = await thirdContext.request.get(
-        "http://127.0.0.1:3000/api/v1/me",
+        "http://localhost:3000/api/v1/me",
       );
       await expect(secondUserProfile.json()).resolves.toMatchObject({
         user: { theme: "system", hideBalances: false },
       });
       const crossUserRevoke = await thirdContext.request.delete(
-        `http://127.0.0.1:3000/api/v1/auth/sessions/${oldSession.id}`,
+        `http://localhost:3000/api/v1/auth/sessions/${oldSession.id}`,
         { headers: { origin, "x-csrf-token": secondUserCsrfToken } },
       );
       expect(crossUserRevoke.status()).toBe(404);
       expect(
-        (await page.request.get("http://127.0.0.1:3000/api/v1/me")).status(),
+        (await page.request.get("http://localhost:3000/api/v1/me")).status(),
       ).toBe(200);
     } finally {
       await thirdContext.close();
     }
 
     const revoke = await secondContext.request.delete(
-      `http://127.0.0.1:3000/api/v1/auth/sessions/${oldSession.id}`,
+      `http://localhost:3000/api/v1/auth/sessions/${oldSession.id}`,
       { headers: { origin, "x-csrf-token": secondCsrfToken } },
     );
     expect(revoke.status()).toBe(204);
     expect(
-      (await page.request.get("http://127.0.0.1:3000/api/v1/me")).status(),
+      (await page.request.get("http://localhost:3000/api/v1/me")).status(),
     ).toBe(401);
 
     const missingCsrf = await secondContext.request.post(
-      "http://127.0.0.1:3000/api/v1/auth/logout",
+      "http://localhost:3000/api/v1/auth/logout",
       { headers: { origin } },
     );
     expect(missingCsrf.status()).toBe(403);
 
     const changedPassword = await secondContext.request.post(
-      "http://127.0.0.1:3000/api/v1/auth/change-password",
+      "http://localhost:3000/api/v1/auth/change-password",
       {
         headers: { origin, "x-csrf-token": secondCsrfToken },
         data: {
@@ -412,7 +431,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     const { csrfToken: finalCsrfToken } = await newPasswordLogin.json();
 
     const restoredPassword = await secondContext.request.post(
-      "http://127.0.0.1:3000/api/v1/auth/change-password",
+      "http://localhost:3000/api/v1/auth/change-password",
       {
         headers: { origin, "x-csrf-token": finalCsrfToken },
         data: {
@@ -425,13 +444,13 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     const { csrfToken: restoredCsrfToken } = await restoredPassword.json();
 
     const logout = await secondContext.request.post(
-      "http://127.0.0.1:3000/api/v1/auth/logout",
+      "http://localhost:3000/api/v1/auth/logout",
       { headers: { origin, "x-csrf-token": restoredCsrfToken } },
     );
     expect(logout.status()).toBe(204);
     expect(
       (
-        await secondContext.request.get("http://127.0.0.1:3000/api/v1/me")
+        await secondContext.request.get("http://localhost:3000/api/v1/me")
       ).status(),
     ).toBe(401);
   } finally {
@@ -444,7 +463,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
 }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
-  const api = "http://127.0.0.1:3000/api/v1";
+  const api = "http://localhost:3000/api/v1";
   const login = await page.request.post(`${api}/auth/login`, {
     headers: { origin },
     data: {
@@ -617,7 +636,7 @@ test("categories seed defaults and retain archived history", async ({
 }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
-  const api = "http://127.0.0.1:3000/api/v1";
+  const api = "http://localhost:3000/api/v1";
   const secondLogin = await page.request.post(`${api}/auth/login`, {
     headers: { origin },
     data: {
@@ -752,7 +771,7 @@ test("expense and income commands are balanced and retry-safe", async ({
 }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
-  const api = "http://127.0.0.1:3000/api/v1";
+  const api = "http://localhost:3000/api/v1";
   const login = await page.request.post(`${api}/auth/login`, {
     headers: { origin },
     data: {
@@ -1038,7 +1057,7 @@ test("login rate limits repeated failures", async ({ page }) => {
   let lastResponse: APIResponse | undefined;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     lastResponse = await page.request.post(
-      "http://127.0.0.1:3000/api/v1/auth/login",
+      "http://localhost:3000/api/v1/auth/login",
       {
         headers: { origin },
         data: { email: "rate-limit@example.test", password: "wrong-password" },
