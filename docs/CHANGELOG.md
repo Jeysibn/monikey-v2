@@ -20,6 +20,7 @@
 - Added PostgreSQL coverage for variable bill payments: missing actual amounts are rejected, the confirmed amount posts once, and an identical retry returns the canonical result without a second expense.
 - Verified the V2 migration upgrade path from the prior category-icon schema through the cards/bills migration in an isolated temporary PostgreSQL database.
 - Strengthened the monthly-report integration fixture to verify a January expense refunded in February remains in January and produces negative February net expenses in the original category.
+- Added the authenticated Quick Add contextual sheet with route-aware return navigation, focus trapping, Escape/backdrop close, unsaved-entry protection, and a direct-link full-page fallback; local Playwright covers the interaction.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 

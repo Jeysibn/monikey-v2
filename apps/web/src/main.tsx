@@ -268,6 +268,11 @@ function NavigationLink({
   end?: boolean;
   action?: boolean;
 }) {
+  const location = useLocation();
+  const contextualFrom =
+    action && location.pathname !== to
+      ? `${location.pathname}${location.search}`
+      : undefined;
   return (
     <NavLink
       className={({ isActive }) =>
@@ -276,6 +281,7 @@ function NavigationLink({
       to={to}
       {...(end ? { end: true } : {})}
       {...(action ? { "aria-label": "Add transaction" } : {})}
+      {...(contextualFrom ? { state: { from: contextualFrom } } : {})}
     >
       <span className="nav-symbol" aria-hidden="true">
         {symbol}
@@ -3869,6 +3875,8 @@ type QuickAddCategory = {
 
 function QuickAddPage() {
   const { profile, csrfToken } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const isOnline = useOnlineStatus();
   const [mode, setMode] = useState<QuickAddMode>("EXPENSE");
   const [accounts, setAccounts] = useState<QuickAddAccount[]>([]);
@@ -3885,6 +3893,68 @@ function QuickAddPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [negativeConfirmation, setNegativeConfirmation] = useState(false);
+  const [hasEdited, setHasEdited] = useState(false);
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const returnTo = (location.state as { from?: string } | null)?.from ?? "/app";
+  const isSheet = Boolean(
+    (location.state as { from?: string } | null)?.from &&
+      returnTo !== location.pathname,
+  );
+
+  const closeSheet = useCallback(() => {
+    if (hasEdited && !window.confirm("Discard this unfinished transaction?")) {
+      return;
+    }
+    navigate(returnTo);
+  }, [hasEdited, navigate, returnTo]);
+
+  useEffect(() => {
+    if (!isSheet) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () =>
+      Array.from(
+        sheetRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSheet();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) return;
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    const frame = window.requestAnimationFrame(() => focusable()[0]?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeSheet, isSheet]);
+
+  useEffect(() => {
+    if (!hasEdited) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasEdited]);
 
   useEffect(() => {
     if (!profile) {
@@ -4014,6 +4084,7 @@ function QuickAddPage() {
       setAmount("");
       setFee("");
       setNote("");
+      setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
@@ -4082,6 +4153,7 @@ function QuickAddPage() {
       setAmount("");
       setFee("");
       setNote("");
+      setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
@@ -4097,8 +4169,23 @@ function QuickAddPage() {
 
   if (!profile) return <QuickAddPreviewPage />;
 
-  return (
-    <section className="route-page" aria-labelledby="page-heading">
+  const quickAddContent = (
+    <section
+      ref={sheetRef}
+      className={`route-page${isSheet ? " quick-add-sheet" : ""}`}
+      aria-labelledby="page-heading"
+      {...(isSheet ? { role: "dialog" as const, "aria-modal": true } : {})}
+    >
+      {isSheet ? (
+        <button
+          className="sheet-close-button"
+          type="button"
+          aria-label="Close quick add"
+          onClick={closeSheet}
+        >
+          ×
+        </button>
+      ) : null}
       <div className="page-intro">
         <p className="eyebrow">Quick add · Private</p>
         <h1 id="page-heading">Record it while it is fresh.</h1>
@@ -4107,7 +4194,11 @@ function QuickAddPage() {
           balanced journal and can be safely retried.
         </p>
       </div>
-      <form className="quick-add-card" onSubmit={submit}>
+      <form
+        className="quick-add-card"
+        onSubmit={submit}
+        onChange={() => setHasEdited(true)}
+      >
         <div className="mode-tabs" role="tablist" aria-label="Transaction type">
           {(["EXPENSE", "INCOME", "TRANSFER"] as QuickAddMode[]).map((item) => (
             <button
@@ -4118,6 +4209,7 @@ function QuickAddPage() {
               aria-selected={mode === item}
               onClick={() => {
                 setMode(item);
+                setHasEdited(true);
                 setError("");
                 setNegativeConfirmation(false);
               }}
@@ -4322,6 +4414,22 @@ function QuickAddPage() {
       </form>
     </section>
   );
+
+  if (isSheet) {
+    return (
+      <div
+        className="quick-add-overlay"
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeSheet();
+        }}
+      >
+        {quickAddContent}
+      </div>
+    );
+  }
+
+  return quickAddContent;
 }
 
 function SettingsPage() {

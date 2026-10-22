@@ -1080,6 +1080,46 @@ test("categories seed defaults and retain archived history", async ({
   expect(foreignPatch.status()).toBe(404);
 });
 
+test("authenticated quick add opens an accessible sheet with discard protection", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const login = await page.request.post(
+    "http://localhost:3000/api/v1/auth/login",
+    {
+      headers: { origin },
+      data: {
+        email: "sheet@example.test",
+        password: "CI-only-sheet-password-never-used",
+      },
+    },
+  );
+  expect(login.status()).toBe(200);
+  await page.goto("/app");
+  await expect(
+    page.getByRole("heading", { name: "Your money, in balance." }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Add transaction" }).click();
+  const sheet = page.getByRole("dialog", {
+    name: "Record it while it is fresh.",
+  });
+  await expect(sheet).toBeVisible();
+  await expect(
+    sheet.getByRole("button", { name: "Close quick add" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/app$/);
+  await page.getByRole("link", { name: "Add transaction" }).click();
+  await page.locator("#quick-add-amount").fill("12.50");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Discard this unfinished transaction");
+    await dialog.accept();
+  });
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/app$/);
+});
+
 test("expense and income commands are balanced and retry-safe", async ({
   page,
 }) => {
