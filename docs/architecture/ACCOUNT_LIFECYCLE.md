@@ -1,5 +1,11 @@
 # Account lifecycle contract
 
+## First-account onboarding
+
+The private-alpha entry point is `POST /api/v1/onboarding/first-account`. It uses the strict account contract, requires an authenticated owner session, same-origin mutation checks, CSRF, and an idempotency key. The transaction locks the owner row before checking for existing accounts, so concurrent requests cannot create two first accounts. A successful request creates the financial account, its ledger account, and an equity-backed opening journal entry when the opening amount is positive. A replay with the same idempotency key returns the original result; a later first-account attempt returns `409`.
+
+The web client sends unauthenticated visitors to sign in, then guides owners with `NEEDS_FIRST_ACCOUNT` through account type, name, optional institution, and opening balance. The profile changes to `READY` only after the persisted account exists.
+
 P2-05 provides private API operations for financial account creation, balance reads, renaming, ordering, and archival. Account records are always scoped by the session owner's `user_id`; a missing or foreign ID returns the same 404 envelope.
 
 ## Opening balances

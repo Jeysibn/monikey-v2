@@ -6,7 +6,7 @@ Run `npm run typecheck`, `npm run test:unit`, `npm run test:invariants`, `npm ru
 
 ## PostgreSQL-backed browser acceptance
 
-The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter.
+The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state.
 
 ```sh
 npx playwright install chromium

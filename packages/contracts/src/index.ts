@@ -143,6 +143,9 @@ export const FinancialAccountResponseSchema = z.object({
   account: FinancialAccountSchema,
 });
 
+export const OnboardingFirstAccountResponseSchema =
+  FinancialAccountResponseSchema;
+
 export const CategoryKindSchema = z.enum(["INCOME", "EXPENSE"]);
 
 export const CategoryIconSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
