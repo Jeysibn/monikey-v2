@@ -29,7 +29,7 @@ This is a source and local-runtime audit against the approved master plan. It re
 
 ## Open gates
 
-- P0-07 still needs image vulnerability scans, SBOM generation, immutable GHCR image publication/provenance, and release checks.
+- P0-07 local Trivy HIGH/CRITICAL scans are clean for all three final API/web/migration image IDs and local Syft SPDX SBOMs exist. Published-image digest scanning, SBOM/provenance retention, GHCR publication, and release checks remain open.
 - P1/P4/P5 still need full keyboard/contrast and screen-reader review, physical-device review, and owner acceptance.
 - Production backup scheduling, monitoring, TLS, SOPS/age, migration Job, manifests, cutover, and rollback remain Phase 6 work.
 - The authoritative `/home/jeysi/homelab-gitops` checkout and `kubectl`/Argo/Helm/Kustomize tools are unavailable, so no production assumptions were made.

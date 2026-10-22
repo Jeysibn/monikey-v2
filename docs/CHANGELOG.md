@@ -5,6 +5,8 @@
 - Added monthly grouped Dependabot updates for npm, GitHub Actions, and pinned container bases, with at most one open PR per ecosystem.
 - Added digest-pinned, multi-stage production API/web image targets and a dedicated one-shot migration image. API/web runtime users are nonroot; the API runtime includes production dependencies only.
 - Added a same-origin Nginx API proxy with CSP and browser security headers, cache policy for the shell/assets/service worker, and query-free access logs. Fastify request URLs are redacted to keep Activity search terms out of normal logs.
+- Tightened API/web runtime layers to refresh Alpine packages and removed npm/corepack from the API runtime. Local Trivy HIGH/CRITICAL scans against final API/web IDs reported zero findings; Syft SPDX inventories were regenerated locally.
+- Rebuilt the migration image with a minimal Prisma CLI dependency tree, omitted optional packages, and removed npm/corepack. All three final image IDs scan with zero HIGH/CRITICAL findings; the migration image applied all five migrations to a fresh disposable PostgreSQL database.
 - Verified all three builds locally, applied five migrations to a fresh disposable PostgreSQL database, checked production API readiness, and passed five read-only Playwright journeys through the production web image. No image publication, GitHub Actions run, or deployment occurred.
 
 ## 2026-10-22 — Phase 5 release review and Phase 6 readiness

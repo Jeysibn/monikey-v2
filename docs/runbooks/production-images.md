@@ -5,7 +5,7 @@ Updated: 2026-10-23
 These image targets prepare V2 for later reviewed release work. Local tags are
 not release artifacts. Do not push them to a registry or deploy them as part of
 this runbook. Production Kubernetes manifests, SOPS/age wiring, TLS, image
-scanning, SBOM, digest publication, and GitOps promotion remain Phase 6 gates.
+registry publication, provenance, and GitOps promotion remain Phase 6 gates.
 
 ## Build the three images
 
@@ -18,7 +18,8 @@ docker build -f apps/api/Dockerfile.migrate -t monikey-v2-migrate:local .
 ```
 
 The API/web image builds use Node 22.22 and Nginx 1.29.3 base image digests.
-The API runtime contains production dependencies, runs as `node`, and exposes a
+Runtime stages refresh and upgrade Alpine packages at build time. The API
+runtime contains production dependencies, runs as `node`, and exposes a
 liveness health check. The migration image runs as `node`. The web image serves
 the compiled Vite output with Nginx on port 8080 as UID 101, proxies `/api/` to
 the `api` service, and sets CSP, frame, MIME, referrer, and permissions headers.
@@ -90,3 +91,37 @@ headers on both the app and service-worker responses, served `/sw.js` with
 access logs, and passed five targeted desktop Playwright tests. No image was
 published, no GitHub Actions run was started, and no production resource was
 changed.
+
+## Local vulnerability scan and SBOM evidence
+
+On 2026-10-23, Trivy `0.76.0` scanned the final local API, web, and migration
+image IDs for HIGH and CRITICAL vulnerabilities. All three returned zero
+findings across their detected OS and language package targets. The scanner
+used its local database, whose metadata was valid through
+`2026-10-23T13:15:26Z`; the final migration scan produced no missing-detail
+warning. The images are local build artifacts, so publication still requires
+scanning the exact registry digests.
+
+The API runtime copies only the Node executable, upgrades Alpine packages,
+and removes npm/corepack. The web runtime refreshes Alpine and returns zero
+OS-package findings. The migration target uses a separate install stage for
+Prisma `7.10.1` and `dotenv` `16.6.1`, omits optional packages (including the
+esbuild binary), and copies only the required Prisma dependency tree into a
+nonroot Node runtime. It also upgrades Alpine packages and removes npm/corepack.
+This removes the bundled esbuild Go standard library and npm's bundled tools
+from the final migration image while preserving `prisma migrate deploy`.
+
+The final local image IDs and Trivy outcomes are:
+
+| Image     | Local image ID                                                            | HIGH | CRITICAL |
+| --------- | ------------------------------------------------------------------------- | ---: | -------: |
+| API       | `sha256:04b4cefda53e7057c6cf27753eeb18111a52cbbd60a5f74f9bb8949da08ad77e` |    0 |        0 |
+| Web       | `sha256:602f7bb0369508662d1a24d18cc9af3d250d49dbd241a43a25a6ab4e592b3d8d` |    0 |        0 |
+| Migration | `sha256:3dda8d5dd5ccb6f3d031a57bed0496c0ccfc3c8f96e0d52b22569eb4da3f3877` |    0 |        0 |
+
+Syft `1.55.0` generated SPDX JSON SBOMs for those images: 245 API, 71 web,
+and 160 migration packages. The files were kept under `/tmp` and not committed.
+Both scanner images were pinned by digest locally. Release automation still
+needs to scan published immutable image digests, retain SBOMs and provenance as
+artifacts, and gate publication on reviewed findings. No image was published
+or deployed, and no GitHub Actions run was started.
