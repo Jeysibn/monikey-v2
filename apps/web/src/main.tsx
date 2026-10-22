@@ -181,6 +181,23 @@ function useAuth(): AuthContextValue {
   return context;
 }
 
+function useOnlineStatus(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+
+  useEffect(() => {
+    const markOnline = () => setOnline(true);
+    const markOffline = () => setOnline(false);
+    window.addEventListener("online", markOnline);
+    window.addEventListener("offline", markOffline);
+    return () => {
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener("offline", markOffline);
+    };
+  }, []);
+
+  return online;
+}
+
 function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem("monikey-theme");
@@ -253,6 +270,7 @@ function AppShell() {
   const [theme, toggleTheme] = useTheme();
   const location = useLocation();
   const { profile, logout } = useAuth();
+  const isOnline = useOnlineStatus();
   const pageTitle =
     pageTitles[location.pathname] ??
     (location.pathname.includes("/statements")
@@ -330,6 +348,17 @@ function AppShell() {
         </header>
 
         <main className="page-content" id="main-content">
+          {!isOnline ? (
+            <div className="connection-notice" role="alert">
+              <span className="notice-mark" aria-hidden="true">
+                !
+              </span>
+              <span>
+                Offline. Financial submissions are disabled until the connection
+                returns.
+              </span>
+            </div>
+          ) : null}
           <div className="preview-notice" role="status">
             <span className="notice-mark" aria-hidden="true">
               i
@@ -2528,6 +2557,7 @@ type QuickAddCategory = {
 
 function QuickAddPage() {
   const { profile, csrfToken } = useAuth();
+  const isOnline = useOnlineStatus();
   const [mode, setMode] = useState<QuickAddMode>("EXPENSE");
   const [accounts, setAccounts] = useState<QuickAddAccount[]>([]);
   const [categories, setCategories] = useState<QuickAddCategory[]>([]);
@@ -2601,6 +2631,10 @@ function QuickAddPage() {
     event.preventDefault();
     setError("");
     setNegativeConfirmation(false);
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a transaction.");
+      return;
+    }
     try {
       const amountMinor = parsePositive(amount, "Amount").toString();
       if (!profile || !csrfToken)
@@ -2680,6 +2714,10 @@ function QuickAddPage() {
 
   async function confirmNegativeBalance() {
     if (!csrfToken) return;
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a transaction.");
+      return;
+    }
     setError("");
     setPending(true);
     try {
@@ -2952,7 +2990,7 @@ function QuickAddPage() {
               className="save-button"
               type="button"
               onClick={() => void confirmNegativeBalance()}
-              disabled={pending}
+              disabled={pending || !isOnline}
             >
               Confirm and record
             </button>
@@ -2961,7 +2999,7 @@ function QuickAddPage() {
           <button
             className="save-button"
             type="submit"
-            disabled={pending || loading || !accounts.length}
+            disabled={pending || loading || !accounts.length || !isOnline}
           >
             {pending ? "Saving…" : `Record ${mode.toLowerCase()}`}
           </button>
@@ -3080,6 +3118,12 @@ function App() {
       </Routes>
     </BrowserRouter>
   );
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  });
 }
 
 createRoot(document.getElementById("root")!).render(

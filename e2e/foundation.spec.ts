@@ -132,6 +132,54 @@ test("browser reaches the live API backed by PostgreSQL", async ({ page }) => {
   });
 });
 
+test("publishes a shell-only PWA manifest and reports offline state", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const manifest = await page.request.get("/manifest.webmanifest");
+  expect(manifest.status()).toBe(200);
+  await expect(manifest.json()).resolves.toMatchObject({
+    name: "MoniKey V2",
+    start_url: "/app",
+    display: "standalone",
+    icons: expect.arrayContaining([
+      expect.objectContaining({ src: "/icon.svg", type: "image/svg+xml" }),
+    ]),
+  });
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+    "href",
+    "/manifest.webmanifest",
+  );
+  const workerState = await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready;
+    const cacheNames = await caches.keys();
+    const cachedUrls = (
+      await Promise.all(
+        cacheNames.map(async (cacheName) =>
+          (await caches.open(cacheName)).keys(),
+        ),
+      )
+    ).flat();
+    return {
+      scriptUrl: registration.active?.scriptURL ?? "",
+      cachedUrls: cachedUrls.map((request) => request.url),
+    };
+  });
+  expect(workerState.scriptUrl).toMatch(/\/sw\.js$/);
+  expect(workerState.cachedUrls.some((url) => url.includes("/api/"))).toBe(
+    false,
+  );
+
+  await page.context().setOffline(true);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Offline." }),
+  ).toBeVisible();
+  await page.context().setOffline(false);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Offline." }),
+  ).toHaveCount(0);
+});
+
 test("unknown API routes use the shared not-found error contract", async ({
   page,
 }) => {
@@ -286,6 +334,17 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   expect(onboardingAccountId).toBeTruthy();
   await quickAddSelects.nth(0).selectOption(onboardingAccountId!);
   await quickAddSelects.nth(1).selectOption({ label: "Food" });
+  await page.context().setOffline(true);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Offline." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Record expense" }),
+  ).toBeDisabled();
+  await page.context().setOffline(false);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Offline." }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Record expense" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
   await page.goto("/app");

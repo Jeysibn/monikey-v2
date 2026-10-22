@@ -337,6 +337,21 @@ button {
   line-height: 1.4;
 }
 
+.connection-notice {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 9px 13px;
+  border: 1px solid color-mix(in srgb, var(--expense), transparent 45%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--expense), transparent 94%);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .notice-mark {
   display: grid;
   width: 19px;

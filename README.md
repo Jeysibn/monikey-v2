@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 are implemented; P3-01 adds private sign-in and guided first-account setup with a ledger-backed opening balance, P3-02 adds the authenticated Quick Add expense, income, and transfer flow, P3-03 adds the ledger-derived dashboard summary and home screen, P3-04 adds unified filtered Activity with detail edits and reversals, and P3-05 adds account management and archived history. Phase 3 private-alpha vertical slices continue with PWA and acceptance work. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 are implemented; P3-01 adds private sign-in and guided first-account setup with a ledger-backed opening balance, P3-02 adds the authenticated Quick Add expense, income, and transfer flow, P3-03 adds the ledger-derived dashboard summary and home screen, P3-04 adds unified filtered Activity with detail edits and reversals, P3-05 adds account management and archived history, and P3-06 adds a shell-only installable PWA with explicit offline write blocking. Phase 3 private-alpha vertical slices continue with acceptance work. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
