@@ -8,7 +8,7 @@ Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mo
 
 ## Development
 
-Requirements: Node.js 22.12+ and npm 10.9+. Docker Compose is required for the intended full-stack workflow.
+Requirements: Node.js 22.22+ and npm 10.9+. Docker Compose is required for the intended full-stack workflow.
 
 ```sh
 cp .env.example .env

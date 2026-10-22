@@ -14,8 +14,8 @@ The review uses the real API, PostgreSQL, and Playwright Chromium. It checks the
 
 | Viewport            | Report API p95 | Route DOM-content-loaded range | Overflow | Unnamed controls | Undersized controls |
 | ------------------- | -------------: | -----------------------------: | -------: | ---------------: | ------------------: |
-| Desktop 1440        |          30 ms |                      28–107 ms |     0 px |                0 |                   0 |
-| Pixel 7-sized 412px |          23 ms |                      27–107 ms |     0 px |                0 |                   0 |
+| Desktop 1440        |          38 ms |                      26–125 ms |     0 px |                0 |                   0 |
+| Pixel 7-sized 412px |         180 ms |                      25–125 ms |     0 px |                0 |                   0 |
 
 The axe scan reported zero WCAG 2A/2AA violations in both light and dark themes across all 18 route/viewport combinations (36 theme scans). Keyboard traversal visited every visible focusable control with zero focus-style failures across the same 18 route/viewport combinations. Reduced-motion emulation matched `prefers-reduced-motion: reduce` on both viewports and reduced body transition/animation duration to Chromium’s `1e-05s` representation of `0.01ms`.
 
@@ -23,8 +23,8 @@ A later rerun after making the harness authenticate once and reuse Playwright st
 
 | Viewport            | FCP range | LCP range |     CLS | Page errors | API error responses |
 | ------------------- | --------: | --------: | ------: | ----------: | ------------------: |
-| Desktop 1440        | 48–176 ms | 48–180 ms | 0–0.057 |           0 |                   0 |
-| Pixel 7-sized 412px | 44–172 ms | 44–212 ms |       0 |           0 |                   0 |
+| Desktop 1440        | 56–152 ms | 56–472 ms | 0–0.003 |           0 |                   0 |
+| Pixel 7-sized 412px | 52–244 ms | 52–244 ms |       0 |           0 |                   0 |
 
 LCP is captured with an initialization-time `PerformanceObserver`; these are repeatable local-development measurements rather than production budgets. The first full-surface run found and fixed undersized Activity privacy controls and filter actions, Quick Add mode tabs, dashboard links, and a mobile Settings privacy control before reaching this passing baseline.
 

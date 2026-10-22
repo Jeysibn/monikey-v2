@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -3895,11 +3896,13 @@ function QuickAddPage() {
   const [negativeConfirmation, setNegativeConfirmation] = useState(false);
   const [hasEdited, setHasEdited] = useState(false);
   const sheetRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const returnTo = (location.state as { from?: string } | null)?.from ?? "/app";
   const isSheet = Boolean(
     (location.state as { from?: string } | null)?.from &&
       returnTo !== location.pathname,
   );
+  const isSheetReady = isSheet && Boolean(profile);
 
   const closeSheet = useCallback(() => {
     if (hasEdited && !window.confirm("Discard this unfinished transaction?")) {
@@ -3909,7 +3912,7 @@ function QuickAddPage() {
   }, [hasEdited, navigate, returnTo]);
 
   useEffect(() => {
-    if (!isSheet) return;
+    if (!isSheetReady) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const focusable = () =>
@@ -3944,7 +3947,11 @@ function QuickAddPage() {
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [closeSheet, isSheet]);
+  }, [closeSheet, isSheetReady]);
+
+  useLayoutEffect(() => {
+    if (isSheetReady) closeButtonRef.current?.focus();
+  }, [isSheetReady]);
 
   useEffect(() => {
     if (!hasEdited) return;
@@ -4178,6 +4185,7 @@ function QuickAddPage() {
     >
       {isSheet ? (
         <button
+          ref={closeButtonRef}
           className="sheet-close-button"
           type="button"
           aria-label="Close quick add"

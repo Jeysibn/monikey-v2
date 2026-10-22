@@ -23,6 +23,7 @@
 - Added the authenticated Quick Add contextual sheet with route-aware return navigation, focus trapping, Escape/backdrop close, unsaved-entry protection, and a direct-link full-page fallback; local Playwright covers the interaction.
 - Added the repository ESLint baseline and required it in the existing PR validation job; the local lint pass also removed dead imports/assignments exposed by the new guardrail.
 - Added the root `npm run validate` alias so the static lint, type, finance, format, secret, and audit gate can be run as one local command without Docker.
+- Aligned Docker, CI, and local runtime requirements on Node 22.22 for the resolved React Router engine, and made Quick Add sheet focus wait for authenticated content before locking and focusing the dialog.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 

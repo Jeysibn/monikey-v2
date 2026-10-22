@@ -22,7 +22,7 @@ This is a source and local-runtime audit against the approved master plan. It re
 - Clean override-backed Docker stack: PostgreSQL, API, and web healthy.
 - One-worker Playwright: 24 passed, 8 intentional mobile/desktop skips; the authenticated Quick Add sheet uses an isolated disposable E2E user so the login throttle remains meaningful.
 - Root integration alias: ledger, accounts, categories, transactions/dashboard, cards, bills, and reports all passed locally against PostgreSQL.
-- One-worker Playwright: 24 passed, 8 intentional mobile/desktop skips; the full authenticated release review passed all 18 route/viewport combinations in light and dark themes with zero axe violations, focus failures, page errors, API errors, overflow, unnamed controls, or undersized controls. Fresh API p95 was 30ms on desktop and 23ms on Pixel 7-sized emulation.
+- One-worker Playwright: 24 passed, 8 intentional mobile/desktop skips; the full authenticated release review passed all 18 route/viewport combinations in light and dark themes with zero axe violations, focus failures, page errors, API errors, overflow, unnamed controls, or undersized controls. Fresh API p95 was 38ms on desktop and 180ms on Pixel 7-sized emulation.
 - Migration upgrade: an isolated temporary PostgreSQL database applied the prior V2 schema checkpoint and the cards/bills migration successfully, then verified the final tables before cleanup.
 - Backup/restore: custom-format dump validated and restored into an isolated database before cleanup.
 

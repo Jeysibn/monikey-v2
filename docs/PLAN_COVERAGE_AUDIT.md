@@ -53,8 +53,8 @@ the web container, and Playwright with one worker:
 - `npm run test:full-stack` — 24 passed and 8 intentional mobile/desktop skips.
 - `npm run review:local` — all 18 route/viewport combinations passed in light
   and dark themes with zero axe violations, focus failures, page/API errors,
-  overflow, unnamed controls, or undersized targets. API p95 was 30 ms on
-  desktop and 23 ms at Pixel 7 size.
+  overflow, unnamed controls, or undersized targets. API p95 was 38 ms on
+  desktop and 180 ms at Pixel 7 size.
 - PostgreSQL integration, migration-upgrade, backup/isolated-restore,
   contracts, exact-money/property, and cache-header checks are recorded in
   `docs/TESTING.md`, `docs/RELEASE_REVIEW.md`, and the architecture audit.
