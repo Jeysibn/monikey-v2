@@ -13,6 +13,7 @@
     "test:unit": "npm run test --workspace @monikey/money && npm run test:unit --workspace @monikey/api",
     "test:invariants": "npm run test:invariants --workspace @monikey/api",
     "test:e2e": "playwright test",
+    "review:local": "node scripts/local-release-review.mjs",
     "api:types": "openapi-typescript \"${API_SPEC_URL:-http://localhost:3000/openapi.json}\" -o packages/contracts/src/generated/openapi.d.ts",
     "format:check": "prettier --check \"**/*.{json,md,ts,tsx,yml,yaml,html,css}\"",
     "format": "prettier --write \"**/*.{json,md,ts,tsx,yml,yaml,html,css}\"",
