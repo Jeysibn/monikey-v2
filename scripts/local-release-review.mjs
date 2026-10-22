@@ -11,6 +11,12 @@ const password =
   process.env.MONIKEY_REVIEW_PASSWORD ??
   "CI-only-second-user-password-never-used";
 const routes = [
+  ["home", "/app", "Your money, in balance."],
+  ["activity", "/app/activity", "Activity that stays traceable."],
+  ["quick-add", "/app/transactions/new", "Record it while it is fresh."],
+  ["accounts", "/app/accounts", "Accounts you can trace."],
+  ["bills", "/app/bills", "Bills with a clear next step."],
+  ["settings", "/app/settings", "Settings"],
   ["reports", "/app/reports", "Reports that reconcile."],
   ["security", "/app/settings/security", "Security you can review."],
   ["categories", "/app/settings/categories", "Categories that keep context."],
@@ -127,7 +133,14 @@ try {
           );
         });
         const undersized = interactive.filter((element) => {
-          const rect = element.getBoundingClientRect();
+          // A native checkbox or radio is intentionally small visually, but
+          // its associated label is the interactive touch target.
+          const target =
+            element instanceof HTMLInputElement &&
+            (element.type === "checkbox" || element.type === "radio")
+              ? (element.closest("label") ?? element)
+              : element;
+          const rect = target.getBoundingClientRect();
           return (
             rect.width > 0 &&
             rect.height > 0 &&
