@@ -10,6 +10,7 @@
 - Added the tracked-file `npm run security:secrets` guard and the same check to the existing PR validation job; image publication/provenance remains deferred to Phase 6.
 - Recorded the local architecture audit covering ledger ownership, exact money, owner isolation, contracts, PWA caching, Compose topology, security guardrails, and remaining release gates.
 - Added `npm run contracts:check` to detect drift between the live OpenAPI document and the tracked generated declaration; the existing full-stack PR job runs it after the API starts.
+- Added the owner/device review checklist for the remaining Phase 1, Phase 4, Phase 5, and recovery sign-off gates.
 - Added permanent Playwright coverage for Reports, CSV/JSON exports, Security, Categories, and cross-user export/account isolation.
 - Recorded the read-only Phase 6 homelab audit and deployment safety boundary; no GitOps, cluster, secret, image-publication, cutover, or V1 resource action was performed.
 
