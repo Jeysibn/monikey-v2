@@ -272,6 +272,19 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       .then((response) => response.json()),
   ).resolves.toMatchObject({ onboardingStatus: "READY" });
 
+  await page.goto("/app/transactions/new");
+  await expect(
+    page.getByRole("heading", { name: "Record it while it is fresh." }),
+  ).toBeVisible();
+  await page.locator("#quick-add-amount").fill("250.00");
+  const quickAddSelects = page.locator(".quick-add-card select");
+  await quickAddSelects.nth(0).selectOption({ label: /Onboarding Cash/ });
+  await quickAddSelects.nth(1).selectOption({ label: "Food" });
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.getByRole("status")).toHaveText("Transaction saved.");
+  await page.getByRole("tab", { name: "Transfer" }).click();
+  await expect(page.getByText("To account *")).toBeVisible();
+
   const unsupportedCurrency = await page.request.patch(
     "http://127.0.0.1:3000/api/v1/me/preferences",
     {
