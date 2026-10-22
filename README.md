@@ -35,6 +35,7 @@ npm run test:invariants
 npm run build
 npm run format:check
 npm run security:secrets
+npm run contracts:check # requires the local API
 npm audit
 ```
 

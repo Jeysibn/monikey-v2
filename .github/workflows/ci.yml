@@ -51,6 +51,7 @@ jobs:
           api npm run seed-e2e-user --workspace @monikey/api
       - name: Verify financial schema constraints
         run: docker compose exec -T db psql -U monikey -d monikey -f - < prisma/tests/financial_schema.sql
+      - run: npm run contracts:check
       - name: Verify ledger service against PostgreSQL
         run: docker compose exec -T api npm run test:ledger --workspace @monikey/api
       - name: Verify account lifecycle against PostgreSQL
