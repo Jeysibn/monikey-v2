@@ -19,4 +19,6 @@ The review uses the real API, PostgreSQL, and Playwright Chromium. It checks the
 
 The axe scan reported zero WCAG 2A/2AA violations on all six reviewed route/viewport combinations. Reduced-motion emulation matched `prefers-reduced-motion: reduce` on both viewports and reduced body transition/animation duration to Chromium’s `1e-05s` representation of `0.01ms`.
 
+A later rerun after making the harness authenticate once and reuse Playwright storage state also passed locally: desktop report API p95 was 32 ms and Pixel 7-sized p95 was 75 ms, with route DOM-content-loaded ranges of 27–94 ms and 32–97 ms. It again reported zero overflow, unnamed controls, undersized targets, and axe violations. The timing difference is normal local warm-up variance; both runs used the real Docker API and PostgreSQL.
+
 This is an automated release baseline and interaction sweep. A full WCAG audit, screen-reader walkthrough, real-device review, and owner sign-off remain required before the Phase 5 exit gate. The measurements are local development evidence, not a production performance promise.
