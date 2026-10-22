@@ -29,6 +29,7 @@ When the API is running, regenerate the typed client with `npm run api:types`.
 ## Validation
 
 ```sh
+npm run lint
 npm run typecheck
 npm run test:unit
 npm run test:invariants
@@ -68,6 +69,7 @@ The checked-in Compose credentials are for local development only. Production se
 - [`docs/architecture/BILLS.md`](docs/architecture/BILLS.md): recurring bill rules, occurrences, and confirmation flows.
 - [`docs/architecture/REPORTS-EXPORTS.md`](docs/architecture/REPORTS-EXPORTS.md): monthly reports and portable export boundaries.
 - [`docs/architecture/ARCHITECTURE_AUDIT.md`](docs/architecture/ARCHITECTURE_AUDIT.md): verified boundaries, evidence, and open release gates.
+- [`docs/PLAN_COVERAGE_AUDIT.md`](docs/PLAN_COVERAGE_AUDIT.md): requirement-by-requirement master-plan coverage and remaining release gates.
 - [`docs/OWNER_REVIEW_CHECKLIST.md`](docs/OWNER_REVIEW_CHECKLIST.md): device, accessibility, financial-flow, security, and owner sign-off handoff.
 - [`docs/RELEASE_REVIEW.md`](docs/RELEASE_REVIEW.md): repeatable local accessibility, responsiveness, and performance baseline.
 - [`docs/PHASE6_READINESS.md`](docs/PHASE6_READINESS.md): read-only homelab audit and deployment safety boundary.
