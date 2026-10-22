@@ -119,6 +119,7 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - Local recovery validation — a disposable PostgreSQL custom-format dump was inspected with `pg_restore --list`, restored into an isolated database with `--exit-on-error`, and verified for users, journals, and transaction revisions before cleanup. See `docs/runbooks/restore.md`; production backup scheduling and owner acceptance remain pending.
 - Compose topology validation — the base config exposes only web port 5173; the explicit `compose.local-test.yaml` override exposes API 3000 and PostgreSQL 5432 for host-driven disposable acceptance. A clean override-backed Playwright run completed with 23 passed and 7 intentional skips; `npm run review:local` then passed with 29ms desktop and 18ms Pixel 7-sized API p95.
 - Web-vitals/error validation — the enhanced local release review captured FCP, initialization-observed LCP, CLS, page errors, and API error responses. Latest desktop ranges were FCP 56–176ms/LCP 100–176ms; Pixel 7-sized ranges were FCP 60–152ms/LCP 64–152ms; CLS, page errors, and API error responses were zero in both viewports.
+- Current local security validation — `npm run security:secrets` passed across 115 tracked files, and `npm audit --offline --audit-level=high` completed with 0 vulnerabilities. No GitHub Actions run was started.
 
 ## Next work
 
