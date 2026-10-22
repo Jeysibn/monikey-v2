@@ -49,6 +49,12 @@ jobs:
           -e MONIKEY_E2E_EMAIL=second@example.test
           -e MONIKEY_E2E_PASSWORD=CI-only-second-user-password-never-used
           api npm run seed-e2e-user --workspace @monikey/api
+      - name: Create isolated E2E sheet user
+        run: >-
+          docker compose exec -T -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true
+          -e MONIKEY_E2E_EMAIL=sheet@example.test
+          -e MONIKEY_E2E_PASSWORD=CI-only-sheet-password-never-used
+          api npm run seed-e2e-user --workspace @monikey/api
       - name: Verify financial schema constraints
         run: docker compose exec -T db psql -U monikey -d monikey -f - < prisma/tests/financial_schema.sql
       - run: npm run contracts:check

@@ -2,7 +2,7 @@
 
 Updated: 2026-10-22
 
-Run the repeatable local review after starting Docker Compose with the local test override and seeding the disposable second user:
+Run the repeatable local review after starting Docker Compose with the local test override and seeding a disposable E2E user:
 
 ```sh
 npm run review:local
@@ -14,8 +14,8 @@ The review uses the real API, PostgreSQL, and Playwright Chromium. It checks the
 
 | Viewport            | Report API p95 | Route DOM-content-loaded range | Overflow | Unnamed controls | Undersized controls |
 | ------------------- | -------------: | -----------------------------: | -------: | ---------------: | ------------------: |
-| Desktop 1440        |          28 ms |                      24–102 ms |     0 px |                0 |                   0 |
-| Pixel 7-sized 412px |          49 ms |                      25–107 ms |     0 px |                0 |                   0 |
+| Desktop 1440        |          30 ms |                      28–107 ms |     0 px |                0 |                   0 |
+| Pixel 7-sized 412px |          23 ms |                      27–107 ms |     0 px |                0 |                   0 |
 
 The axe scan reported zero WCAG 2A/2AA violations in both light and dark themes across all 18 route/viewport combinations (36 theme scans). Keyboard traversal visited every visible focusable control with zero focus-style failures across the same 18 route/viewport combinations. Reduced-motion emulation matched `prefers-reduced-motion: reduce` on both viewports and reduced body transition/animation duration to Chromium’s `1e-05s` representation of `0.01ms`.
 
