@@ -1,0 +1,92 @@
+# Local production image build and smoke checks
+
+Updated: 2026-10-23
+
+These image targets prepare V2 for later reviewed release work. Local tags are
+not release artifacts. Do not push them to a registry or deploy them as part of
+this runbook. Production Kubernetes manifests, SOPS/age wiring, TLS, image
+scanning, SBOM, digest publication, and GitOps promotion remain Phase 6 gates.
+
+## Build the three images
+
+Run from the repository root with Docker available:
+
+```sh
+docker build -f apps/api/Dockerfile.production -t monikey-v2-api:local-prod .
+docker build -f apps/web/Dockerfile.production -t monikey-v2-web:local-prod .
+docker build -f apps/api/Dockerfile.migrate -t monikey-v2-migrate:local .
+```
+
+The API/web image builds use Node 22.22 and Nginx 1.29.3 base image digests.
+The API runtime contains production dependencies, runs as `node`, and exposes a
+liveness health check. The migration image runs as `node`. The web image serves
+the compiled Vite output with Nginx on port 8080 as UID 101, proxies `/api/` to
+the `api` service, and sets CSP, frame, MIME, referrer, and permissions headers.
+Nginx access logs contain the URI path but omit query arguments. API request
+logs redact the request URL to avoid retaining Activity search terms. HSTS is
+not set until the approved private HTTPS hostname and device trust are verified.
+
+## Validate the production migration image
+
+Use a disposable database on the local test stack. The example assumes the
+Compose network is `monikey-v2_default` and the database service is `db`; inspect
+`docker network ls` and adapt the local network name if Compose selected a
+different project name.
+
+```sh
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T db \
+  createdb -U monikey monikey_prod_smoke
+docker run --rm --network monikey-v2_default \
+  -e "DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL from your local environment}" \
+  monikey-v2-migrate:local
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T db \
+  psql -U monikey -d monikey_prod_smoke -c \
+  "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('users', 'journals', 'card_statements', 'bills')"
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T db \
+  dropdb -U monikey monikey_prod_smoke
+```
+
+The schema query should return `4`. Always drop the disposable database after
+the check.
+
+## Validate the production web and API images
+
+The current disposable local Compose API and database can be reused for
+read-only web smoke checks. Start the web image on the same Compose network:
+
+```sh
+docker run -d --name monikey-v2-web-smoke \
+  --network monikey-v2_default -p 18080:8080 monikey-v2-web:local-prod
+curl --fail --silent --show-error --dump-header - \
+  http://localhost:18080/ -o /dev/null
+curl --fail --silent --show-error --dump-header - \
+  http://localhost:18080/api/v1/health/ready -o /dev/null
+curl --fail --silent --show-error --dump-header - \
+  http://localhost:18080/sw.js -o /dev/null
+PLAYWRIGHT_BASE_URL=http://localhost:18080 npx playwright test \
+  --project=desktop-chromium --workers=1 \
+  --grep='renders the honest home preview|routes, deep links|quick add action and theme control|unknown browser routes|browser reaches the live API backed by PostgreSQL'
+docker rm -f monikey-v2-web-smoke
+```
+
+The targeted browser tests are read-only and exercise route fallback, assets,
+and API proxying. Confirm `/sw.js` includes `Cache-Control: no-cache`. Do not
+run the financial write journeys against a shared or production database. To
+verify API log redaction, request a health URL with a harmless unique query
+marker and confirm the marker is absent from `docker logs` for the API and web
+containers. To verify the API image itself, run it on the Compose network with
+`DATABASE_URL` set to the disposable database and `APP_ORIGIN` set to the
+intended local test origin, then check `/api/v1/health/ready`.
+
+## Recorded local evidence
+
+On 2026-10-23 the three image builds succeeded. The migration image applied all
+five migrations to a fresh disposable PostgreSQL database and the four-table
+verification returned `4`; that database was removed. The API image returned
+`{"status":"ok","database":"connected"}` from readiness and ran as the
+`node` user. The web image ran as UID 101, returned CSP and browser security
+headers on both the app and service-worker responses, served `/sw.js` with
+`Cache-Control: no-cache`, omitted a unique query marker from API and Nginx
+access logs, and passed five targeted desktop Playwright tests. No image was
+published, no GitHub Actions run was started, and no production resource was
+changed.

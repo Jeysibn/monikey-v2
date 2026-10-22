@@ -37,6 +37,8 @@ npm run test:contracts # requires the local API
 
 `npm run compose:check` validates the base Compose file plus the disposable local test override without starting services.
 
+Separate [production image build targets](docs/runbooks/production-images.md) are available for local smoke checks: a nonroot API runtime, nonroot static web proxy with security headers, and a one-shot migration image. They have not been published or deployed; Phase 6 still requires image scans/SBOM and owner-reviewed GitOps release work.
+
 PostgreSQL-backed API slices can be run locally with `DATABASE_URL` set to the host-mapped Compose database. The card and bill suites are `npm run test:cards --workspace @monikey/api` and `npm run test:bills --workspace @monikey/api`.
 
 The browser acceptance suite uses a live PostgreSQL-backed Compose stack:

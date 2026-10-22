@@ -1,10 +1,10 @@
 # MoniKey V2 — Master Product, Architecture & Implementation Plan
 
-**Status:** Approved product specification; implementation blueprint (no code has been created or deployed)  
+**Status:** Approved product specification; implementation in progress (no production deployment has occurred). Current work-package evidence is maintained in `docs/IMPLEMENTATION_STATUS.md`.  
 **Version:** 1.0  
 **Prepared:** 2026-10-22 (Philippine Time)  
 **Product owner:** MoniKey project owner  
-**Implementation repository:** `Jeysibn/monikey-v2` (new repository, to be created)  
+**Implementation repository:** Public repository `Jeysibn/monikey-v2` (created)  
 **Reference-only V1:** https://github.com/Jeysibn/monikey  
 **Existing GitOps repository:** https://github.com/Jeysibn/homelab-gitops  
 **Target environment:** Docker Compose locally; existing k3s + Argo CD GitOps homelab in production

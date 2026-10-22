@@ -1,6 +1,6 @@
 # Master plan coverage audit
 
-Updated: 2026-10-22
+Updated: 2026-10-23
 
 This audit maps the approved `MONIKEY_V2_MASTER_PLAN.md` to the current V2
 repository. It distinguishes implementation evidence from owner, device, and
@@ -9,15 +9,15 @@ assigns to an owner review or to the live homelab.
 
 ## Coverage summary
 
-| Plan area                        | Current evidence                                                                                                                                                                                                                                        | State                                                                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| P0 foundation and guardrails     | Public `Jeysibn/monikey-v2`, npm workspaces, strict TypeScript, ESLint, Compose PostgreSQL/API/web/migrate, OpenAPI contracts, secret scan, CodeQL workflow, and Obsidian project records.                                                              | Implemented; image provenance remains a Phase 6 gate.                                                                               |
-| P1 UX and component system       | Blue/navy semantic tokens, light/dark themes, responsive shell, 44px target checks, reduced motion, route skeleton, screenshots, keyboard traversal, and accessible Quick Add sheet.                                                                    | Implemented locally; physical-device, full screen-reader, contrast walkthrough, and owner approval remain.                          |
-| P2 identity and financial domain | Argon2id private bootstrap, secure sessions, CSRF/origin/rate limits, PHT dates, exact bigint minor units, balanced immutable journals, account/category lifecycle, commands, revisions, refunds, adjustments, concurrency locks, and activity queries. | Backend and real-Postgres evidence complete.                                                                                        |
-| P3 private alpha                 | Onboarding, server-backed dashboard, Activity, Accounts, PWA shell, offline write protection, privacy masking, theme persistence, and Quick Add.                                                                                                        | Local alpha evidence complete; owner/device sign-off and backup readiness remain.                                                   |
-| P4 cards and recurring bills     | Card purchases, liability and utilization, statements, partial payment allocation, correction audit, fixed/variable bills, deterministic occurrences, pay/skip, and dashboard widgets.                                                                  | Local API/browser evidence complete; owner/device sign-off remains.                                                                 |
-| P5 reports and release polish    | Monthly reports, exact CSV/JSON exports, security and category settings, full local route review, architecture audit, and one-worker Playwright acceptance.                                                                                             | Automated baseline complete; independent QA, full WCAG review, physical-device review, backup readiness, and owner sign-off remain. |
-| P6 production replacement        | Read-only public GitOps audit and restore runbook only. No manifests, secrets, cluster changes, image publication, cutover, or V1 deletion were performed.                                                                                              | Pending authoritative homelab access and explicit owner approval.                                                                   |
+| Plan area                        | Current evidence                                                                                                                                                                                                                                                                      | State                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| P0 foundation and guardrails     | Public `Jeysibn/monikey-v2`, npm workspaces, strict TypeScript, ESLint, Compose PostgreSQL/API/web/migrate, OpenAPI contracts, secret scan, CodeQL workflow, grouped Dependabot, and locally built production API/web/migration images with pinned base digests and nonroot runtimes. | Implemented locally; image scan, SBOM, GHCR digest provenance, and release policy remain Phase 6 gates.                             |
+| P1 UX and component system       | Blue/navy semantic tokens, light/dark themes, responsive shell, 44px target checks, reduced motion, route skeleton, screenshots, keyboard traversal, and accessible Quick Add sheet.                                                                                                  | Implemented locally; physical-device, full screen-reader, contrast walkthrough, and owner approval remain.                          |
+| P2 identity and financial domain | Argon2id private bootstrap, secure sessions, CSRF/origin/rate limits, PHT dates, exact bigint minor units, balanced immutable journals, account/category lifecycle, commands, revisions, refunds, adjustments, concurrency locks, and activity queries.                               | Backend and real-Postgres evidence complete.                                                                                        |
+| P3 private alpha                 | Onboarding, server-backed dashboard, Activity, Accounts, PWA shell, offline write protection, privacy masking, theme persistence, and Quick Add.                                                                                                                                      | Local alpha evidence complete; owner/device sign-off and backup readiness remain.                                                   |
+| P4 cards and recurring bills     | Card purchases, liability and utilization, statements, partial payment allocation, correction audit, fixed/variable bills, deterministic occurrences, pay/skip, and dashboard widgets.                                                                                                | Local API/browser evidence complete; owner/device sign-off remains.                                                                 |
+| P5 reports and release polish    | Monthly reports, exact CSV/JSON exports, security and category settings, full local route review, architecture audit, and one-worker Playwright acceptance.                                                                                                                           | Automated baseline complete; independent QA, full WCAG review, physical-device review, backup readiness, and owner sign-off remain. |
+| P6 production replacement        | Read-only public GitOps audit and restore runbook only. No manifests, secrets, cluster changes, image publication, cutover, or V1 deletion were performed.                                                                                                                            | Pending authoritative homelab access and explicit owner approval.                                                                   |
 
 ## Verified product boundaries
 
@@ -65,6 +65,12 @@ the web container, and Playwright with one worker:
   archive in the repository.
 - `npm run compose:check` validates the base Compose topology and disposable
   local-test override before local or CI service startup.
+- Production API, web, and migration Dockerfiles built successfully locally.
+  The migration image applied all five migrations to a fresh disposable
+  PostgreSQL database; the API image returned connected readiness as UID
+  `node`; the web image returned the expected CSP/security headers, proxied
+  API readiness, and passed five targeted desktop Playwright journeys. No
+  image was published and no GitHub Actions run was started.
 
 No GitHub Actions run was started for this evidence. The PR workflow remains
 configured for merge protection and now seeds the dedicated sheet-test user.
