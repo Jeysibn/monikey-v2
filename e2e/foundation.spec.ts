@@ -1320,6 +1320,65 @@ test("expense and income commands are balanced and retry-safe", async ({
   });
 });
 
+test("reports, exports, security, and categories stay owner-scoped", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = "http://localhost:5173";
+  const login = await page.request.post(
+    "http://localhost:3000/api/v1/auth/login",
+    {
+      headers: { origin },
+      data: {
+        email: "second@example.test",
+        password: "CI-only-second-user-password-never-used",
+      },
+    },
+  );
+  expect(login.status()).toBe(200);
+  const report = await page.request.get(
+    "http://localhost:3000/api/v1/reports/monthly?month=2026-10",
+  );
+  expect(report.status()).toBe(200);
+  await expect(report.json()).resolves.toMatchObject({
+    report: {
+      month: "2026-10",
+      incomeMinor: expect.any(String),
+      netExpensesMinor: expect.any(String),
+      netCashFlowMinor: expect.any(String),
+    },
+  });
+  const csv = await page.request.get(
+    "http://localhost:3000/api/v1/exports/transactions.csv",
+  );
+  expect(csv.status()).toBe(200);
+  expect(csv.headers()["content-type"]).toContain("text/csv");
+  expect(csv.headers()["content-disposition"]).toContain(
+    "monikey-transactions.csv",
+  );
+  const json = await page.request.get(
+    "http://localhost:3000/api/v1/exports/json",
+  );
+  expect(json.status()).toBe(200);
+  await expect(json.json()).resolves.toMatchObject({
+    schemaVersion: "monikey-v2.export.v1",
+    owner: { timezone: "Asia/Manila", currency: "PHP" },
+  });
+
+  await page.goto("/app/reports");
+  await expect(
+    page.getByRole("heading", { name: "Reports that reconcile." }),
+  ).toBeVisible();
+  await page.goto("/app/settings/security");
+  await expect(
+    page.getByRole("heading", { name: "Security you can review." }),
+  ).toBeVisible();
+  await page.goto("/app/settings/categories");
+  await expect(
+    page.getByRole("heading", { name: "Categories that keep context." }),
+  ).toBeVisible();
+});
+
 test("login rate limits repeated failures", async ({ page }) => {
   test.skip(test.info().project.name !== "desktop-chromium");
   const origin = "http://localhost:5173";
