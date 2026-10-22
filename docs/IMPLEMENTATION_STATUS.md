@@ -121,6 +121,7 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - Web-vitals/error validation — the enhanced local release review captured FCP, initialization-observed LCP, CLS, page errors, and API error responses. Latest desktop ranges were FCP 56–176ms/LCP 100–176ms; Pixel 7-sized ranges were FCP 60–152ms/LCP 64–152ms; CLS, page errors, and API error responses were zero in both viewports.
 - Current local security validation — `npm run security:secrets` passed across 115 tracked files, and `npm audit --offline --audit-level=high` completed with 0 vulnerabilities. No GitHub Actions run was started.
 - Current contract validation — `npm run contracts:check` regenerated the OpenAPI declaration from the local API and matched `packages/contracts/src/generated/openapi.d.ts` exactly.
+- Root validation aliases — `npm run test:finance` passed 13 unit/invariant tests; `DATABASE_URL=... npm run test:integration` passed ledger, accounts, categories, transactions/dashboard, cards, bills, and reports suites; `npm run test:full-stack` passed 23 Playwright tests with 7 intentional skips. All runs used the disposable local Compose override and no GitHub Actions.
 
 ## Next work
 

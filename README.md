@@ -32,10 +32,11 @@ When the API is running, regenerate the typed client with `npm run api:types`.
 npm run typecheck
 npm run test:unit
 npm run test:invariants
+npm run test:finance
 npm run build
 npm run format:check
 npm run security:secrets
-npm run contracts:check # requires the local API
+npm run test:contracts # requires the local API
 npm audit
 ```
 
@@ -51,6 +52,8 @@ docker compose -f compose.yaml -f compose.local-test.yaml down --volumes --remov
 ```
 
 Use one Playwright worker for the stateful acceptance fixtures. This local run uses the actual API and PostgreSQL; no GitHub Actions run is needed for routine validation.
+
+After the local test override is running and `DATABASE_URL` points at its host PostgreSQL, `npm run test:integration` runs every PostgreSQL-backed API suite sequentially. `npm run test:full-stack` is the one-worker Playwright alias.
 
 The checked-in Compose credentials are for local development only. Production secrets must be managed through the approved GitOps secret path.
 
