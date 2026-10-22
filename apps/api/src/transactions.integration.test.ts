@@ -436,6 +436,195 @@ test("transfer commands move balances and post optional fees as spending", async
   }
 });
 
+test("opposite-direction transfers serialize without deadlock or balance drift", async () => {
+  const setupClient = await pool.connect();
+  let sourceId = "";
+  let destinationId = "";
+  let userId = "";
+  try {
+    await setupClient.query("BEGIN");
+    const owner = await setupClient.query<{ id: string }>(
+      `INSERT INTO users (email_normalized, password_hash)
+       SELECT 'concurrency@example.test', password_hash
+         FROM users
+        WHERE email_normalized = 'second@example.test'
+       ON CONFLICT (email_normalized)
+       DO UPDATE SET email_normalized = EXCLUDED.email_normalized
+       RETURNING id`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    userId = owner.rows[0]!.id;
+    await setupClient.query(
+      `INSERT INTO user_preferences (user_id)
+       VALUES ($1)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [userId],
+    );
+    const existingAccounts = await setupClient.query<{
+      id: string;
+      name: string;
+    }>(
+      `SELECT id, name FROM financial_accounts
+        WHERE user_id = $1
+          AND name IN ('Concurrent transfer source', 'Concurrent transfer destination')`,
+      [userId],
+    );
+    const accountByName = new Map(
+      existingAccounts.rows.map((account) => [account.name, account.id]),
+    );
+    if (!accountByName.has("Concurrent transfer source")) {
+      const source = await createFinancialAccount(
+        setupClient,
+        userId,
+        {
+          type: "BANK",
+          name: "Concurrent transfer source",
+          openingBalanceMinor: "100000",
+        },
+        "2026-10-22",
+      );
+      accountByName.set(source.name, source.id);
+    }
+    if (!accountByName.has("Concurrent transfer destination")) {
+      const destination = await createFinancialAccount(
+        setupClient,
+        userId,
+        {
+          type: "EWALLET",
+          name: "Concurrent transfer destination",
+          openingBalanceMinor: "100000",
+        },
+        "2026-10-22",
+      );
+      accountByName.set(destination.name, destination.id);
+    }
+    sourceId = accountByName.get("Concurrent transfer source")!;
+    destinationId = accountByName.get("Concurrent transfer destination")!;
+    await setupClient.query("COMMIT");
+  } finally {
+    await setupClient.query("ROLLBACK").catch(() => undefined);
+    setupClient.release();
+  }
+
+  const firstClient = await pool.connect();
+  const secondClient = await pool.connect();
+  let successfulTransferIds: string[] = [];
+  try {
+    await firstClient.query("BEGIN");
+    await secondClient.query("BEGIN");
+    await firstClient.query("SET LOCAL lock_timeout = '3000ms'");
+    await secondClient.query("SET LOCAL lock_timeout = '3000ms'");
+
+    const firstTransferPromise = createTransfer(
+      firstClient,
+      userId,
+      {
+        kind: "TRANSFER",
+        fromAccountId: sourceId,
+        toAccountId: destinationId,
+        amountMinor: "10000",
+        occurredOn: "2026-10-22",
+        note: "Concurrent transfer source to destination",
+      },
+      "2026-10-22",
+    ).then(async (result) => {
+      await firstClient.query("COMMIT");
+      return result;
+    });
+    const secondTransferPromise = createTransfer(
+      secondClient,
+      userId,
+      {
+        kind: "TRANSFER",
+        fromAccountId: destinationId,
+        toAccountId: sourceId,
+        amountMinor: "10000",
+        occurredOn: "2026-10-22",
+        note: "Concurrent transfer destination to source",
+      },
+      "2026-10-22",
+    ).then(async (result) => {
+      await secondClient.query("COMMIT");
+      return result;
+    });
+    const transferResults = await Promise.allSettled([
+      firstTransferPromise,
+      secondTransferPromise,
+    ]);
+    const successfulTransfers = [];
+    for (const result of transferResults) {
+      if (result.status === "rejected") throw result.reason;
+      successfulTransfers.push(result.value);
+    }
+    assert.notEqual(
+      successfulTransfers[0]!.transaction.id,
+      successfulTransfers[1]!.transaction.id,
+    );
+    successfulTransferIds = successfulTransfers.map(
+      (transfer) => transfer.transaction.id,
+    );
+  } finally {
+    await firstClient.query("ROLLBACK").catch(() => undefined);
+    await secondClient.query("ROLLBACK").catch(() => undefined);
+    firstClient.release();
+    secondClient.release();
+  }
+
+  const verifyClient = await pool.connect();
+  try {
+    const balances = await verifyClient.query<{
+      name: string;
+      balance: string;
+    }>(
+      `SELECT a.name,
+              COALESCE(sum(
+                CASE
+                  WHEN p.direction = 'DEBIT' THEN p.amount_minor
+                  ELSE -p.amount_minor
+                END
+              ), 0)::text AS balance
+         FROM financial_accounts a
+         JOIN ledger_accounts la
+           ON la.user_id = a.user_id AND la.financial_account_id = a.id
+         LEFT JOIN postings p
+           ON p.user_id = la.user_id AND p.ledger_account_id = la.id
+        WHERE a.user_id = $1 AND a.id IN ($2, $3)
+        GROUP BY a.id, a.name
+        ORDER BY a.name`,
+      [userId, sourceId, destinationId],
+    );
+    assert.deepEqual(balances.rows, [
+      { name: "Concurrent transfer destination", balance: "100000" },
+      { name: "Concurrent transfer source", balance: "100000" },
+    ]);
+
+    const journals = await verifyClient.query<{
+      posting_count: string;
+      debit_total: string;
+      credit_total: string;
+    }>(
+      `SELECT count(p.id)::text AS posting_count,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'DEBIT')::text AS debit_total,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'CREDIT')::text AS credit_total
+         FROM journals j
+         JOIN postings p ON p.user_id = j.user_id AND p.journal_id = j.id
+        WHERE j.user_id = $1 AND j.operation_kind = 'TRANSFER'
+          AND j.transaction_id = ANY($2::uuid[])
+        GROUP BY j.id
+        ORDER BY j.created_at`,
+      [userId, successfulTransferIds],
+    );
+    assert.equal(journals.rowCount, 2);
+    for (const journal of journals.rows) {
+      assert.equal(journal.posting_count, "2");
+      assert.equal(journal.debit_total, "10000");
+      assert.equal(journal.credit_total, "10000");
+    }
+  } finally {
+    verifyClient.release();
+  }
+});
+
 test("card purchases increase liability and payments settle it without new spending", async () => {
   const client = await pool.connect();
   try {

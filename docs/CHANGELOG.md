@@ -15,6 +15,7 @@
 - Expanded the local Playwright release review to all nine authenticated routes at desktop and Pixel 7-sized viewports, fixing undersized Activity controls, Quick Add mode tabs, dashboard links, and the mobile Settings privacy control before the full 18-combination baseline passed. Added settled dark-theme axe scans and keyboard focus traversal; all 36 light/dark route scans pass with zero focus failures.
 - Added permanent Playwright coverage for Reports, CSV/JSON exports, Security, Categories, and cross-user export/account isolation.
 - Recorded the read-only Phase 6 homelab audit and deployment safety boundary; no GitOps, cluster, secret, image-publication, cutover, or V1 resource action was performed.
+- Added a PostgreSQL integration regression test for opposite-direction concurrent transfers, verifying deterministic lock ordering, balanced journals, and no balance drift. The clean local integration, one-worker Playwright, and full route accessibility review were rerun against the disposable Docker stack without starting GitHub Actions.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 
