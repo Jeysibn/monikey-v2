@@ -17,6 +17,7 @@
 - Recorded the read-only Phase 6 homelab audit and deployment safety boundary; no GitOps, cluster, secret, image-publication, cutover, or V1 resource action was performed.
 - Added a PostgreSQL integration regression test for opposite-direction concurrent transfers, verifying deterministic lock ordering, balanced journals, and no balance drift. The clean local integration, one-worker Playwright, and full route accessibility review were rerun against the disposable Docker stack without starting GitHub Actions.
 - Strengthened the API personal-response cache guard for dashboard, category, card, report, export, account, bill, transaction, identity, and preference routes; the real-stack browser flow now asserts no-store headers on representative financial reads.
+- Added PostgreSQL coverage for variable bill payments: missing actual amounts are rejected, the confirmed amount posts once, and an identical retry returns the canonical result without a second expense.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 
