@@ -13,10 +13,9 @@ import {
   TransactionConflictError,
   TransactionNotFoundError,
 } from "./transactions.js";
+import { requireDatabaseUrl } from "./test-support/database-url.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl)
-  throw new Error("DATABASE_URL is required for transaction tests.");
+const databaseUrl = requireDatabaseUrl();
 const pool = new Pool({ connectionString: databaseUrl });
 after(async () => pool.end());
 

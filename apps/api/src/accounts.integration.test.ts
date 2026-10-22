@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
+import { requireDatabaseUrl } from "./test-support/database-url.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl)
-  throw new Error("DATABASE_URL is required for account tests.");
+const databaseUrl = requireDatabaseUrl();
 const pool = new Pool({ connectionString: databaseUrl });
 
 test("opening balances post against equity and read back from the ledger", async () => {

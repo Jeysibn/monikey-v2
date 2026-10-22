@@ -4,9 +4,9 @@ import { Pool } from "pg";
 import { moneyMinor } from "@monikey/money";
 import { LedgerNotFoundError, postBalancedJournal } from "./service.js";
 import { LedgerValidationError } from "./domain.js";
+import { requireDatabaseUrl } from "../test-support/database-url.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("DATABASE_URL is required for ledger tests.");
+const databaseUrl = requireDatabaseUrl();
 const pool = new Pool({ connectionString: databaseUrl });
 
 test("posts one audited balanced journal within its caller transaction", async () => {

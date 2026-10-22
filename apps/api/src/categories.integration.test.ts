@@ -9,10 +9,9 @@ import {
   listCategories,
   updateCategory,
 } from "./categories.js";
+import { requireDatabaseUrl } from "./test-support/database-url.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl)
-  throw new Error("DATABASE_URL is required for category tests.");
+const databaseUrl = requireDatabaseUrl();
 const pool = new Pool({ connectionString: databaseUrl });
 
 test("default and custom categories remain owner-scoped and history-safe", async () => {
