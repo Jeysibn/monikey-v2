@@ -74,17 +74,26 @@ test("monthly report nets refunds and exports owner-scoped exact minor units", a
         sourceAccountId: account.id,
         refundedTransactionId: expense.transaction.id,
         amountMinor: "5000",
-        occurredOn: "2025-01-12",
+        occurredOn: "2025-02-01",
       },
       "2026-10-22",
     );
     const report = await readMonthlyReport(client, userId, "2025-01");
     assert.equal(report.incomeMinor, "50000");
-    assert.equal(report.netExpensesMinor, "15000");
-    assert.equal(report.netCashFlowMinor, "35000");
+    assert.equal(report.netExpensesMinor, "20000");
+    assert.equal(report.netCashFlowMinor, "30000");
     assert.equal(
       report.categories.find((row) => row.categoryId === food.id)?.amountMinor,
-      "15000",
+      "20000",
+    );
+    const refundMonth = await readMonthlyReport(client, userId, "2025-02");
+    assert.equal(refundMonth.incomeMinor, "0");
+    assert.equal(refundMonth.netExpensesMinor, "-5000");
+    assert.equal(refundMonth.netCashFlowMinor, "5000");
+    assert.equal(
+      refundMonth.categories.find((row) => row.categoryId === food.id)
+        ?.amountMinor,
+      "-5000",
     );
 
     const exported = await listExportTransactions(
