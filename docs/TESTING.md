@@ -34,6 +34,20 @@ The browser suite must use the real API and real PostgreSQL; do not replace it w
 ```sh
 npx playwright install chromium
 docker compose -f compose.yaml -f compose.local-test.yaml up --build -d --wait --wait-timeout 180 api web
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T \
+  -e MONIKEY_BOOTSTRAP_EMAIL=owner@example.test \
+  -e MONIKEY_BOOTSTRAP_PASSWORD=CI-only-password-never-used-outside-tests \
+  api npm run bootstrap-owner --workspace @monikey/api
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T \
+  -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true \
+  -e MONIKEY_E2E_EMAIL=second@example.test \
+  -e MONIKEY_E2E_PASSWORD=CI-only-second-user-password-never-used \
+  api npm run seed-e2e-user --workspace @monikey/api
+docker compose -f compose.yaml -f compose.local-test.yaml exec -T \
+  -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true \
+  -e MONIKEY_E2E_EMAIL=sheet@example.test \
+  -e MONIKEY_E2E_PASSWORD=CI-only-sheet-password-never-used \
+  api npm run seed-e2e-user --workspace @monikey/api
 npx playwright test --workers=1
 docker compose -f compose.yaml -f compose.local-test.yaml down --volumes --remove-orphans
 ```
