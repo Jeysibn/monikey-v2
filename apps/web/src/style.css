@@ -926,6 +926,219 @@ h1 {
   }
 }
 
+.activity-filter-panel {
+  margin-top: 30px;
+  padding: 19px 20px 17px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
+.activity-filter-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 1.45fr) repeat(3, minmax(130px, 1fr))
+    repeat(2, minmax(125px, 0.85fr));
+  gap: 12px;
+}
+
+.activity-filter-grid .field-label {
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.activity-filter-grid .text-input,
+.activity-filter-grid .reference-select {
+  min-height: 44px;
+  font-size: 12px;
+}
+
+.activity-filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.activity-filter-actions .save-button {
+  width: auto;
+  min-width: 130px;
+  min-height: 42px;
+  margin-top: 0;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.activity-filter-actions .quiet-button {
+  min-width: 74px;
+}
+
+.activity-results {
+  margin-top: 18px;
+}
+
+.activity-feed {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
+.activity-feed-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  min-height: 75px;
+  align-items: center;
+  gap: 13px;
+  padding: 8px 17px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.activity-feed-row:last-child {
+  border-bottom: 0;
+}
+
+.activity-feed-row .activity-kind {
+  width: 32px;
+  height: 32px;
+}
+
+.activity-feed-row .activity-kind.is-income {
+  color: var(--income);
+}
+
+.activity-feed-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.activity-feed-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-feed-copy span {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-feed-amount {
+  color: var(--brand-deep);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.activity-feed-amount.is-income {
+  color: var(--income);
+}
+
+.activity-feed-amount .privacy-toggle {
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.activity-load-more {
+  display: block;
+  min-height: 44px;
+  margin: 15px auto 0;
+  padding: 0 17px;
+}
+
+.activity-empty {
+  padding: 26px 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
+.transaction-detail-card {
+  width: min(100%, 720px);
+  margin-top: 30px;
+  padding: 23px 25px 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 15px;
+  background: var(--surface-card);
+}
+
+.transaction-detail-summary {
+  padding-bottom: 19px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.transaction-detail-summary > .privacy-value,
+.transaction-detail-summary > strong {
+  display: inline-flex;
+  align-items: center;
+  color: var(--brand-deep);
+  font-size: 31px;
+  font-weight: 680;
+  letter-spacing: -0.05em;
+}
+
+.detail-edit-form {
+  margin-top: 23px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border-default);
+}
+
+.detail-reason-field {
+  margin-top: 19px;
+}
+
+.detail-reversal-panel {
+  margin-top: 23px;
+  padding: 16px 15px 13px;
+  border: 1px solid color-mix(in srgb, var(--expense), transparent 45%);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--expense), transparent 95%);
+}
+
+.detail-reversal-panel p:not(.dashboard-label):not(.field-hint) {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-reversal-panel .quiet-button {
+  color: var(--expense);
+}
+
+.revision-history {
+  margin-top: 25px;
+  padding-top: 21px;
+  border-top: 1px solid var(--border-default);
+}
+
+.revision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.revision-row strong {
+  color: var(--text-primary);
+  font-weight: 680;
+}
+
 .quick-add-card {
   width: min(100%, 650px);
   margin-top: 34px;
@@ -1358,6 +1571,14 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .activity-filter-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .activity-search-field {
+    grid-column: span 3;
+  }
+
   .welcome-card,
   .privacy-card {
     min-height: unset;
@@ -1612,6 +1833,68 @@ h1 {
   .dashboard-skeleton {
     margin-top: 25px;
     padding: 21px 18px;
+  }
+
+  .activity-filter-panel {
+    margin-top: 25px;
+    padding: 16px 15px 14px;
+  }
+
+  .activity-filter-grid {
+    grid-template-columns: 1fr;
+    gap: 13px;
+  }
+
+  .activity-search-field {
+    grid-column: auto;
+  }
+
+  .activity-filter-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+
+  .activity-filter-actions .save-button {
+    min-width: 0;
+  }
+
+  .activity-feed-row {
+    grid-template-columns: 31px minmax(0, 1fr) auto;
+    gap: 9px;
+    min-height: 68px;
+    padding: 7px 11px;
+  }
+
+  .activity-feed-row .activity-kind {
+    width: 29px;
+    height: 29px;
+  }
+
+  .activity-feed-copy strong {
+    font-size: 12px;
+  }
+
+  .activity-feed-copy span {
+    font-size: 10px;
+  }
+
+  .activity-feed-amount {
+    font-size: 11px;
+  }
+
+  .transaction-detail-card {
+    margin-top: 25px;
+    padding: 19px 16px 16px;
+  }
+
+  .transaction-detail-summary > .privacy-value,
+  .transaction-detail-summary > strong {
+    font-size: 26px;
+  }
+
+  .revision-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .welcome-card {

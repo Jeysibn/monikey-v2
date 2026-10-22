@@ -301,6 +301,33 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   await expect(
     page.getByText("Onboarding Cash", { exact: true }),
   ).toBeVisible();
+  await page.goto("/app/activity?kind=EXPENSE");
+  await expect(
+    page.getByRole("heading", { name: "Activity that stays traceable." }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Type")).toHaveValue("EXPENSE");
+  await page.reload();
+  await expect(page.getByLabel("Type")).toHaveValue("EXPENSE");
+  await expect(page.locator(".activity-feed-row")).toHaveCount(1);
+  await page.locator(".activity-feed-row").click();
+  await expect(
+    page.getByRole("heading", { name: "Review this record." }),
+  ).toBeVisible();
+  await page.locator("#detail-amount").fill("20.00");
+  await page
+    .getByLabel("Reason for edit or reversal *")
+    .fill("Corrected test receipt");
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(page.locator(".form-success")).toHaveText(
+    "Transaction updated and re-posted through the ledger.",
+  );
+  await page
+    .getByLabel("Reason for edit or reversal *")
+    .fill("Removed duplicate test entry");
+  await page.getByRole("button", { name: "Reverse transaction" }).click();
+  await expect(page.locator(".form-success")).toHaveText(
+    "Transaction reversed. Its original journal remains immutable.",
+  );
   await page.goto("/app/transactions/new");
   await page.getByRole("tab", { name: "Transfer" }).click();
   await expect(page.getByText("To account *")).toBeVisible();

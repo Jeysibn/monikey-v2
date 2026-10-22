@@ -16,6 +16,8 @@ import {
   Routes,
   useNavigate,
   useLocation,
+  useParams,
+  useSearchParams,
 } from "react-router";
 import {
   AmountEntry,
@@ -484,7 +486,10 @@ type DashboardActivity = {
       | "ADJUSTMENT"
       | "CARD_PAYMENT";
     status: "POSTED" | "VOID";
+    currentRevision: number;
     occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
     note: string | null;
   };
   revision: Record<string, unknown>;
@@ -780,6 +785,766 @@ function DashboardHome({ profile }: { profile: Profile }) {
           </div>
         </>
       ) : null}
+    </section>
+  );
+}
+
+type ActivityFilters = {
+  search: string;
+  from: string;
+  to: string;
+  kind: string;
+  accountId: string;
+  categoryId: string;
+};
+
+const activityKinds = [
+  "OPENING_BALANCE",
+  "INCOME",
+  "EXPENSE",
+  "TRANSFER",
+  "REFUND",
+  "ADJUSTMENT",
+  "CARD_PAYMENT",
+] as const;
+
+function activityFiltersFromParams(params: URLSearchParams): ActivityFilters {
+  return {
+    search: params.get("search") ?? "",
+    from: params.get("from") ?? "",
+    to: params.get("to") ?? "",
+    kind: params.get("kind") ?? "",
+    accountId: params.get("accountId") ?? "",
+    categoryId: params.get("categoryId") ?? "",
+  };
+}
+
+function activityFilterParams(filters: ActivityFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return params;
+}
+
+function formatActivityKind(kind: string): string {
+  return kind
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/(^| )\S/g, (letter) => letter.toUpperCase());
+}
+
+function revisionText(revision: Record<string, unknown>, key: string): string {
+  const value = revision[key];
+  return typeof value === "string" ? value : "";
+}
+
+function activityAccountIds(revision: Record<string, unknown>): string[] {
+  return ["sourceAccountId", "accountId", "fromAccountId", "toAccountId"]
+    .map((key) => revisionText(revision, key))
+    .filter(Boolean);
+}
+
+function ActivityPage() {
+  const { profile, loading: authLoading } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const paramsKey = searchParams.toString();
+  const [filters, setFilters] = useState<ActivityFilters>(() =>
+    activityFiltersFromParams(searchParams),
+  );
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [activity, setActivity] = useState<DashboardActivity[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    const urlFilters = activityFiltersFromParams(searchParams);
+    setFilters(urlFilters);
+    setLoading(true);
+    setError("");
+    const query = new URLSearchParams(searchParams);
+    query.set("limit", "25");
+    void Promise.all([
+      apiRequest<{ activity: DashboardActivity[]; nextCursor: string | null }>(
+        `/transactions?${query.toString()}`,
+      ),
+      apiRequest<{ accounts: DashboardAccount[] }>("/accounts"),
+      apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+    ])
+      .then(([activityResult, accountResult, categoryResult]) => {
+        setActivity(activityResult.activity);
+        setNextCursor(activityResult.nextCursor);
+        setAccounts(accountResult.accounts);
+        setCategories(categoryResult.categories);
+      })
+      .catch((caught) => {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Activity could not be loaded.",
+        );
+      })
+      .finally(() => setLoading(false));
+  }, [paramsKey, profile]);
+
+  function updateFilter(key: keyof ActivityFilters, value: string) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSearchParams(activityFilterParams(filters));
+  }
+
+  function clearFilters() {
+    setSearchParams(new URLSearchParams());
+  }
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    const query = activityFilterParams(filters);
+    query.set("limit", "25");
+    query.set("cursor", nextCursor);
+    try {
+      const result = await apiRequest<{
+        activity: DashboardActivity[];
+        nextCursor: string | null;
+      }>(`/transactions?${query.toString()}`);
+      setActivity((current) => [...current, ...result.activity]);
+      setNextCursor(result.nextCursor);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "More activity could not be loaded.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const accountNames = new Map(
+    accounts.map((account) => [account.id, account.name]),
+  );
+  const categoryNames = new Map(
+    categories.map((category) => [category.id, category.name]),
+  );
+
+  if (authLoading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Your timeline"
+        title="Activity"
+        description="Activity is private and only loads records owned by the signed-in account."
+        icon="◷"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  return (
+    <section className="activity-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Your timeline · Private</p>
+        <h1 id="page-heading">Activity that stays traceable.</h1>
+        <p className="page-description">
+          Search and filter the posted records behind your balances. Open any
+          row to inspect its revision and correct or reverse it safely.
+        </p>
+      </div>
+
+      <form className="activity-filter-panel" onSubmit={applyFilters}>
+        <div className="activity-filter-grid">
+          <label className="field-group activity-search-field">
+            <span className="field-label">Search</span>
+            <input
+              className="text-input"
+              type="search"
+              value={filters.search}
+              onChange={(event) =>
+                updateFilter("search", event.currentTarget.value)
+              }
+              placeholder="Notes or labels"
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Type</span>
+            <select
+              className="reference-select"
+              value={filters.kind}
+              onChange={(event) =>
+                updateFilter("kind", event.currentTarget.value)
+              }
+            >
+              <option value="">All types</option>
+              {activityKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {formatActivityKind(kind)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Account</span>
+            <select
+              className="reference-select"
+              value={filters.accountId}
+              onChange={(event) =>
+                updateFilter("accountId", event.currentTarget.value)
+              }
+            >
+              <option value="">All accounts</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Category</span>
+            <select
+              className="reference-select"
+              value={filters.categoryId}
+              onChange={(event) =>
+                updateFilter("categoryId", event.currentTarget.value)
+              }
+            >
+              <option value="">All categories</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">From</span>
+            <input
+              className="text-input"
+              type="date"
+              value={filters.from}
+              onChange={(event) =>
+                updateFilter("from", event.currentTarget.value)
+              }
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">To</span>
+            <input
+              className="text-input"
+              type="date"
+              value={filters.to}
+              onChange={(event) =>
+                updateFilter("to", event.currentTarget.value)
+              }
+            />
+          </label>
+        </div>
+        <div className="activity-filter-actions">
+          <button className="save-button" type="submit">
+            Apply filters
+          </button>
+          <button className="quiet-button" type="button" onClick={clearFilters}>
+            Clear
+          </button>
+        </div>
+      </form>
+
+      {error ? (
+        <div className="dashboard-error" role="alert">
+          <div>
+            <strong>Activity unavailable</strong>
+            <p>{error}</p>
+          </div>
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={() => setSearchParams(new URLSearchParams(searchParams))}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      <div className="activity-results" aria-live="polite">
+        {loading ? (
+          <div className="dashboard-skeleton" role="status">
+            <span className="skeleton-line skeleton-line-wide" />
+            <span className="skeleton-line" />
+            <span className="skeleton-line" />
+          </div>
+        ) : activity.length ? (
+          <div className="activity-feed">
+            {activity.map((item) => {
+              const amount = dashboardActivityAmount(item);
+              const ids = activityAccountIds(item.revision);
+              const accountLabel = ids
+                .map((id) => accountNames.get(id))
+                .filter(Boolean)
+                .join(" → ");
+              const categoryLabel = item.transaction.categoryId
+                ? categoryNames.get(item.transaction.categoryId)
+                : null;
+              const isIncome = ["INCOME", "REFUND"].includes(
+                item.transaction.kind,
+              );
+              return (
+                <Link
+                  className="activity-feed-row"
+                  key={item.transaction.id}
+                  to={`/app/transactions/${item.transaction.id}`}
+                >
+                  <span
+                    className={`activity-kind${isIncome ? " is-income" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {isIncome
+                      ? "↑"
+                      : item.transaction.kind === "EXPENSE"
+                        ? "↓"
+                        : "↔"}
+                  </span>
+                  <span className="activity-feed-copy">
+                    <strong>{dashboardActivityLabel(item)}</strong>
+                    <span>
+                      {item.transaction.occurredOn} ·{" "}
+                      {formatActivityKind(item.transaction.kind)}
+                      {accountLabel ? ` · ${accountLabel}` : ""}
+                      {categoryLabel ? ` · ${categoryLabel}` : ""}
+                    </span>
+                  </span>
+                  <span
+                    className={`activity-feed-amount${isIncome ? " is-income" : ""}`}
+                  >
+                    {amount ? (
+                      <PrivacyMask label="activity amount">
+                        {dashboardMoney(amount)}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="dashboard-empty activity-empty">
+            <p>No records match these filters.</p>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={clearFilters}
+            >
+              Show all activity
+            </button>
+          </div>
+        )}
+      </div>
+      {nextCursor ? (
+        <button
+          className="quiet-button activity-load-more"
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+type TransactionAuditRevision = {
+  version: number;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown>;
+  reason: string | null;
+  createdAt: string;
+};
+
+function TransactionDetailPage() {
+  const { transactionId } = useParams<{ transactionId: string }>();
+  const { csrfToken, profile, loading: authLoading } = useAuth();
+  const [transaction, setTransaction] = useState<
+    DashboardActivity["transaction"] | null
+  >(null);
+  const [revisions, setRevisions] = useState<TransactionAuditRevision[]>([]);
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [amount, setAmount] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [occurredOn, setOccurredOn] = useState("");
+  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!transactionId || !profile) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [detail, audit, accountResult, categoryResult] = await Promise.all([
+        apiRequest<{ transaction: DashboardActivity["transaction"] }>(
+          `/transactions/${transactionId}`,
+        ),
+        apiRequest<{
+          transaction: DashboardActivity["transaction"];
+          revisions: TransactionAuditRevision[];
+        }>(`/transactions/${transactionId}/audit`),
+        apiRequest<{ accounts: DashboardAccount[] }>(
+          "/accounts?includeArchived=true",
+        ),
+        apiRequest<{ categories: QuickAddCategory[] }>(
+          "/categories?includeArchived=true",
+        ),
+      ]);
+      setTransaction(detail.transaction);
+      setRevisions(audit.revisions);
+      setAccounts(accountResult.accounts);
+      setCategories(categoryResult.categories);
+      const current = audit.revisions.at(-1)?.after ?? {};
+      setAmount(revisionText(current, "amountMinor"));
+      setAccountId(
+        revisionText(current, "sourceAccountId") ||
+          revisionText(current, "accountId"),
+      );
+      setCategoryId(
+        detail.transaction.categoryId ?? revisionText(current, "categoryId"),
+      );
+      setOccurredOn(detail.transaction.occurredOn);
+      setNote(detail.transaction.note ?? revisionText(current, "note"));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile, transactionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!transactionId || !csrfToken || !transaction) return;
+    if (!reason.trim()) {
+      setError("Give the revision a reason.");
+      return;
+    }
+    let amountMinor: string;
+    try {
+      amountMinor = parsePhpMinor(amount).toString();
+      if (BigInt(amountMinor) <= 0n) throw new Error("positive");
+    } catch {
+      setError("Enter a positive PHP amount with up to two decimals.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/transactions/${transactionId}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          kind: transaction.kind,
+          sourceAccountId: accountId,
+          categoryId,
+          amountMinor,
+          occurredOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+          reason: reason.trim(),
+        }),
+      });
+      setSuccess("Transaction updated and re-posted through the ledger.");
+      setReason("");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function reverseTransaction() {
+    setError("");
+    setSuccess("");
+    if (!transactionId || !csrfToken || !reason.trim()) {
+      setError("Give the reversal a reason.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/transactions/${transactionId}`, {
+        method: "DELETE",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      setSuccess(
+        "Transaction reversed. Its original journal remains immutable.",
+      );
+      setReason("");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be reversed.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Activity"
+        title="Sign in to review this record."
+        description="Transaction details are private and only available to the owning account."
+        icon="↗"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (error && !transaction) {
+    return (
+      <section className="route-page" aria-labelledby="page-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Activity</p>
+          <h1 id="page-heading">Transaction unavailable.</h1>
+          <p className="page-description">{error}</p>
+        </div>
+        <Link className="quiet-link" to="/app/activity">
+          Back to Activity
+        </Link>
+      </section>
+    );
+  }
+  if (!transaction) return null;
+
+  const currentRevision = revisions.at(-1)?.after ?? {};
+  const editable =
+    transaction.kind === "INCOME" || transaction.kind === "EXPENSE";
+  const activeAccounts = accounts.filter((account) => !account.archivedAt);
+  const matchingCategories = categories.filter(
+    (category) =>
+      !category.archivedAt && (!editable || category.kind === transaction.kind),
+  );
+
+  return (
+    <section
+      className="route-page transaction-detail-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">
+          Activity · {formatActivityKind(transaction.kind)}
+        </p>
+        <h1 id="page-heading">Review this record.</h1>
+        <p className="page-description">
+          Revision {transaction.currentRevision} ·{" "}
+          {transaction.status === "VOID" ? "Voided" : "Posted"}. Changes create
+          compensating journals and keep the original history.
+        </p>
+      </div>
+      <div className="transaction-detail-card">
+        <div className="transaction-detail-summary">
+          <span className="dashboard-label">Current amount</span>
+          {revisionText(currentRevision, "amountMinor") ? (
+            <PrivacyMask label="transaction amount">
+              {dashboardMoney(revisionText(currentRevision, "amountMinor"))}
+            </PrivacyMask>
+          ) : (
+            <strong>{formatActivityKind(transaction.kind)}</strong>
+          )}
+          <span className="dashboard-helper">
+            {transaction.occurredOn}
+            {transaction.note ? ` · ${transaction.note}` : ""}
+          </span>
+        </div>
+
+        {success ? (
+          <p className="form-success" role="status">
+            {success}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {editable && transaction.status === "POSTED" ? (
+          <form className="detail-edit-form" onSubmit={submitEdit}>
+            <div className="form-heading">
+              <div>
+                <p className="form-kicker">EDIT POSTED RECORD</p>
+                <h2>Correct the details</h2>
+              </div>
+              <span className="form-kind">Ledger-safe</span>
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="detail-amount">
+                Amount *
+              </label>
+              <input
+                className="text-input"
+                id="detail-amount"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => setAmount(event.currentTarget.value)}
+              />
+            </div>
+            <div className="reference-grid">
+              <label className="field-group">
+                <span className="field-label">Account *</span>
+                <select
+                  className="reference-select"
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.currentTarget.value)}
+                >
+                  <option value="">Choose an account</option>
+                  {activeAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-group">
+                <span className="field-label">Category *</span>
+                <select
+                  className="reference-select"
+                  value={categoryId}
+                  onChange={(event) => setCategoryId(event.currentTarget.value)}
+                >
+                  <option value="">Choose a category</option>
+                  {matchingCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="reference-grid">
+              <label className="field-group">
+                <span className="field-label">Date *</span>
+                <input
+                  className="text-input"
+                  type="date"
+                  value={occurredOn}
+                  onChange={(event) => setOccurredOn(event.currentTarget.value)}
+                />
+              </label>
+              <label className="field-group">
+                <span className="field-label">Note</span>
+                <input
+                  className="text-input"
+                  value={note}
+                  onChange={(event) => setNote(event.currentTarget.value)}
+                  maxLength={500}
+                />
+              </label>
+            </div>
+            <button className="save-button" type="submit" disabled={pending}>
+              {pending ? "Saving…" : "Save revision"}
+            </button>
+          </form>
+        ) : null}
+
+        {transaction.status === "POSTED" ? (
+          <label className="field-group detail-reason-field">
+            <span className="field-label">Reason for edit or reversal *</span>
+            <input
+              className="text-input"
+              value={reason}
+              onChange={(event) => setReason(event.currentTarget.value)}
+              maxLength={300}
+              placeholder="Corrected receipt or duplicate entry"
+            />
+          </label>
+        ) : null}
+
+        {transaction.status === "POSTED" ? (
+          <div className="detail-reversal-panel">
+            <p className="dashboard-label">Reverse this record</p>
+            <p>
+              Use a reversal when the posted record should no longer affect
+              balances. The original journal stays immutable.
+            </p>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={() => void reverseTransaction()}
+              disabled={pending || !reason.trim()}
+            >
+              {pending ? "Reversing…" : "Reverse transaction"}
+            </button>
+            <p className="field-hint">
+              The reason is saved in the immutable audit history.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="revision-history">
+          <div className="dashboard-panel-heading">
+            <div>
+              <p className="dashboard-label">Immutable history</p>
+              <h2>Revisions</h2>
+            </div>
+          </div>
+          {revisions.map((revision) => (
+            <div className="revision-row" key={revision.version}>
+              <strong>Revision {revision.version}</strong>
+              <span>
+                {new Date(revision.createdAt).toLocaleString("en-PH", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+              </span>
+              <span>{revision.reason ?? "Original posting"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Link className="quiet-link" to="/app/activity">
+        Back to Activity
+      </Link>
     </section>
   );
 }
@@ -1627,28 +2392,11 @@ function App() {
         <Route path="/" element={<AppShell />}>
           <Route index element={<HomePage />} />
           <Route path="app" element={<HomePage />} />
-          <Route
-            path="app/activity"
-            element={
-              <RoutePage
-                eyebrow="Your timeline"
-                title="Activity"
-                description="Find and review the financial actions you record."
-                icon="◷"
-              />
-            }
-          />
+          <Route path="app/activity" element={<ActivityPage />} />
           <Route path="app/transactions/new" element={<QuickAddPage />} />
           <Route
             path="app/transactions/:transactionId"
-            element={
-              <RoutePage
-                eyebrow="Activity"
-                title="Transaction details"
-                description="A transaction view will show its account, category and complete change history."
-                icon="↗"
-              />
-            }
+            element={<TransactionDetailPage />}
           />
           <Route
             path="app/accounts"

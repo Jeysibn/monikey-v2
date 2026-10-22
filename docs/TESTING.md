@@ -17,7 +17,7 @@ DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?s
   npm run test:transactions --workspace @monikey/api
 ```
 
-The transaction command includes `dashboard.integration.test.ts`, which checks that dashboard totals reconcile after opening balances, income, spending, transfer fees, and an edited expense. The dashboard endpoint is also covered by the authenticated home-screen Playwright path.
+The transaction command includes `dashboard.integration.test.ts`, which checks that dashboard totals reconcile after opening balances, income, spending, transfer fees, and an edited expense. The authenticated home-screen Playwright path covers the dashboard endpoint, and the private owner journey covers Activity filter reload, detail edit, reversal, and immutable-history feedback.
 
 ## PostgreSQL-backed browser acceptance
 
