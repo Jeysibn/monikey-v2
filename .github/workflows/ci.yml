@@ -26,6 +26,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: compose.yaml:compose.local-test.yaml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

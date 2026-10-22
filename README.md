@@ -18,7 +18,9 @@ docker compose up --build
 
 Web: `http://localhost:5173`
 
-API readiness: `http://localhost:3000/api/v1/health/ready` (liveness: `/api/v1/health/live`)
+The base Compose stack exposes only the web service. For local API/database tests, use the test override below; it exposes the API on `localhost:3000` and PostgreSQL on `localhost:5432`.
+
+API readiness with the test override: `http://localhost:3000/api/v1/health/ready` (liveness: `/api/v1/health/live`)
 
 OpenAPI: `http://localhost:3000/openapi.json`
 
@@ -41,9 +43,9 @@ The browser acceptance suite uses a live PostgreSQL-backed Compose stack:
 
 ```sh
 npx playwright install chromium
-docker compose up --build -d --wait --wait-timeout 180 api web
+docker compose -f compose.yaml -f compose.local-test.yaml up --build -d --wait --wait-timeout 180 api web
 npx playwright test --workers=1
-docker compose down --volumes --remove-orphans
+docker compose -f compose.yaml -f compose.local-test.yaml down --volumes --remove-orphans
 ```
 
 Use one Playwright worker for the stateful acceptance fixtures. This local run uses the actual API and PostgreSQL; no GitHub Actions run is needed for routine validation.

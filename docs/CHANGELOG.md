@@ -3,6 +3,7 @@
 ## 2026-10-22 — Phase 5 release review and Phase 6 readiness
 
 - Aligned the public API with the master-plan endpoint contract by adding `/api/v1/health/live`, `/api/v1/health/ready`, and `/api/v1/exports/data.json`; updated the web client, Compose readiness probe, OpenAPI types, and Playwright coverage.
+- Aligned Compose with the planned topology: the base stack exposes only the web port, while `compose.local-test.yaml` explicitly adds API/PostgreSQL host mappings for disposable local acceptance.
 - Added a repeatable local release review with WCAG 2A/2AA axe checks, responsive overflow and target-size checks, reduced-motion verification, and a report API timing baseline.
 - Made the local release review authenticate once and reuse its session across viewport checks so repeated local runs do not consume the sign-in rate-limit budget.
 - Added permanent Playwright coverage for Reports, CSV/JSON exports, Security, Categories, and cross-user export/account isolation.

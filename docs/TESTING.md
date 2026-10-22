@@ -4,7 +4,7 @@
 
 Run `npm run typecheck`, `npm run test:unit`, `npm run test:invariants`, `npm run build`, `npm run format:check`, and `npm audit` from the repository root. `npm run review:local` adds the repeatable desktop/Pixel 7-sized release baseline for Reports, Security, and Categories. Unit and property tests use Node's test runner through `tsx` and do not require a database. The invariant suite generates random valid journal sequences, checks compensating reversals and edits, verifies transfer fee identities, and exercises exact values above JavaScript's safe integer boundary. Repository guardrail tests verify PostgreSQL suites fail closed when `DATABASE_URL` is missing; integration suites use the shared guard before opening a pool.
 
-For local PostgreSQL coverage, start the Compose stack, bootstrap the disposable owner and second user, then run the API suites with the host database URL:
+For local PostgreSQL coverage, start the Compose stack with the disposable test override, bootstrap the disposable owner and second user, then run the API suites with the host database URL:
 
 ```sh
 DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
@@ -31,14 +31,14 @@ The browser suite must use the real API and real PostgreSQL; do not replace it w
 
 ```sh
 npx playwright install chromium
-docker compose up --build -d --wait --wait-timeout 180 api web
+docker compose -f compose.yaml -f compose.local-test.yaml up --build -d --wait --wait-timeout 180 api web
 npx playwright test --workers=1
-docker compose down --volumes --remove-orphans
+docker compose -f compose.yaml -f compose.local-test.yaml down --volumes --remove-orphans
 ```
 
 Compose starts PostgreSQL, runs all migrations to completion, waits for the API readiness endpoint, then serves the web client. Bootstrap the disposable owner and second user locally before database-backed tests. The SQL contract suite verifies account and category checks, composite owner references, append-only postings, positive exact amounts, per-owner idempotency uniqueness, and deferred balanced-journal enforcement. API database tests exercise the ledger writer, account opening balances, category lifecycle, expense/income/transfer/refund/adjustment commands, card liability/payment/statement commands, recurring bill generation/payment, revision commands, and activity query behavior against PostgreSQL, including deterministic day-31 February handling, owner scope, statement allocation limits, and linked bill payments. Playwright covers desktop and Pixel 7 mobile emulation, honest empty-state content, database readiness, private login, secure cookie attributes, CSRF and origin rejection, profile/session recovery, cross-user isolation, preferences, Manila server date despite a skewed browser clock, account, category, transaction creation/replay/conflict, transfer/refund/adjustment flows, card detail/payment and Bills routes, edit/audit/delete flows, ledger-derived balances, rename/archive history, invalid inputs, logout, invalid credentials, and rate limiting. The local release review authenticates once, reuses the session across its desktop and mobile contexts, and therefore remains repeatable under the API's intentional five-attempt login limiter. Routine validation is local and uses one worker because the acceptance fixtures intentionally share a database state; no GitHub Actions run is needed for these checks.
 
-The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for focused integration suites.
+The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for focused integration suites. The checked-in `compose.local-test.yaml` override exposes the normal disposable stack's API and PostgreSQL ports only when local host-driven integration or Playwright tests need them; the base Compose topology exposes only the web port.
 
 ## Environment limitations
 
