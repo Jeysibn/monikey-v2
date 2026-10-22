@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-22 — Phase 5 release review and Phase 6 readiness
+
+- Added a repeatable local release review with WCAG 2A/2AA axe checks, responsive overflow and target-size checks, reduced-motion verification, and a report API timing baseline.
+- Added permanent Playwright coverage for Reports, CSV/JSON exports, Security, Categories, and cross-user export/account isolation.
+- Recorded the read-only Phase 6 homelab audit and deployment safety boundary; no GitOps, cluster, secret, image-publication, cutover, or V1 resource action was performed.
+
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 
 - Added owner-scoped monthly reports with ledger-derived income, spending, refunds, net cash flow, and category summaries.
