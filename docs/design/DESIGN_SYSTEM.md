@@ -68,10 +68,10 @@ The primary mobile navigation has Home, Activity, Add, and Accounts. Add is an a
 
 ## Review checklist
 
-- [ ] Validate body and semantic color contrast in both themes.
+- [x] Automated axe WCAG 2A/2AA contrast scan passes on all nine routes at desktop and Pixel 7-sized viewports in both themes; manual visual contrast review remains.
 - [x] Capture and inspect the 360, 390, 768, 1440 and 1920px layouts locally.
 - [ ] Walk through keyboard navigation and visible focus.
-- [ ] Verify reduced-motion behavior.
+- [x] Automated reduced-motion emulation passes in both viewports; physical-device motion review remains.
 - [ ] Owner reviews the navigation and visual direction on actual phone and desktop before Phase 1 exit.
 
 ## Current preview captures

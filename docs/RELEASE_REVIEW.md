@@ -14,17 +14,17 @@ The review uses the real API, PostgreSQL, and Playwright Chromium. It checks the
 
 | Viewport            | Report API p95 | Route DOM-content-loaded range | Overflow | Unnamed controls | Undersized controls |
 | ------------------- | -------------: | -----------------------------: | -------: | ---------------: | ------------------: |
-| Desktop 1440        |          31 ms |                      28–100 ms |     0 px |                0 |                   0 |
-| Pixel 7-sized 412px |          15 ms |                       27–94 ms |     0 px |                0 |                   0 |
+| Desktop 1440        |          18 ms |                      32–110 ms |     0 px |                0 |                   0 |
+| Pixel 7-sized 412px |          15 ms |                      33–109 ms |     0 px |                0 |                   0 |
 
-The axe scan reported zero WCAG 2A/2AA violations on all 18 reviewed route/viewport combinations. Reduced-motion emulation matched `prefers-reduced-motion: reduce` on both viewports and reduced body transition/animation duration to Chromium’s `1e-05s` representation of `0.01ms`.
+The axe scan reported zero WCAG 2A/2AA violations in both light and dark themes across all 18 route/viewport combinations (36 theme scans). Reduced-motion emulation matched `prefers-reduced-motion: reduce` on both viewports and reduced body transition/animation duration to Chromium’s `1e-05s` representation of `0.01ms`.
 
 A later rerun after making the harness authenticate once and reuse Playwright storage state also passed locally across all 18 route/viewport combinations. It reported zero overflow, unnamed controls, undersized targets, axe violations, page errors, and API error responses. The latest web-vitals/error samples were:
 
 | Viewport            | FCP range | LCP range |     CLS | Page errors | API error responses |
 | ------------------- | --------: | --------: | ------: | ----------: | ------------------: |
-| Desktop 1440        | 52–164 ms | 64–212 ms | 0–0.057 |           0 |                   0 |
-| Pixel 7-sized 412px | 48–152 ms | 48–152 ms |       0 |           0 |                   0 |
+| Desktop 1440        | 60–176 ms | 84–324 ms | 0–0.057 |           0 |                   0 |
+| Pixel 7-sized 412px | 56–164 ms | 64–256 ms |       0 |           0 |                   0 |
 
 LCP is captured with an initialization-time `PerformanceObserver`; these are repeatable local-development measurements rather than production budgets. The first full-surface run found and fixed undersized Activity privacy controls and filter actions, Quick Add mode tabs, dashboard links, and a mobile Settings privacy control before reaching this passing baseline.
 

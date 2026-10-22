@@ -12,7 +12,7 @@
 - Added `npm run contracts:check` to detect drift between the live OpenAPI document and the tracked generated declaration; the existing full-stack PR job runs it after the API starts.
 - Added root `test:integration`, `test:contracts`, `test:finance`, and `test:full-stack` aliases so local validation mirrors the master-plan test layers without using GitHub Actions.
 - Added the owner/device review checklist for the remaining Phase 1, Phase 4, Phase 5, and recovery sign-off gates.
-- Expanded the local Playwright release review to all nine authenticated routes at desktop and Pixel 7-sized viewports, fixing undersized Activity controls, Quick Add mode tabs, dashboard links, and the mobile Settings privacy control before the full 18-combination baseline passed.
+- Expanded the local Playwright release review to all nine authenticated routes at desktop and Pixel 7-sized viewports, fixing undersized Activity controls, Quick Add mode tabs, dashboard links, and the mobile Settings privacy control before the full 18-combination baseline passed. Added settled dark-theme axe scans; all 36 light/dark route scans pass.
 - Added permanent Playwright coverage for Reports, CSV/JSON exports, Security, Categories, and cross-user export/account isolation.
 - Recorded the read-only Phase 6 homelab audit and deployment safety boundary; no GitOps, cluster, secret, image-publication, cutover, or V1 resource action was performed.
 

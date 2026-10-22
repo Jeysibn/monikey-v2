@@ -205,12 +205,28 @@ try {
         0,
         `${name} has WCAG violations: ${JSON.stringify(accessibility.violations)}`,
       );
+      await page.evaluate(() => {
+        document.documentElement.dataset.theme = "dark";
+      });
+      await page.waitForTimeout(300);
+      const darkAccessibility = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa"])
+        .analyze();
+      assert.equal(
+        darkAccessibility.violations.length,
+        0,
+        `${name} has dark-theme WCAG violations: ${JSON.stringify(darkAccessibility.violations)}`,
+      );
+      await page.evaluate(() => {
+        document.documentElement.dataset.theme = "light";
+      });
       routeResults.push({
         name,
         ...metrics,
         pageErrors: routePageErrors,
         apiErrorResponses: routeApiErrors,
         axeViolations: accessibility.violations.length,
+        darkThemeAxeViolations: darkAccessibility.violations.length,
       });
     }
 
