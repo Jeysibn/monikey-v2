@@ -43,16 +43,16 @@ Semantic colors must not be the only cue. Amounts retain signs and adjacent labe
 
 ## Navigation and route behavior
 
-| Route group                                    | Mobile                                       | Desktop                     | States required                            |
-| ---------------------------------------------- | -------------------------------------------- | --------------------------- | ------------------------------------------ |
-| `/app` Home                                    | Primary bottom navigation                    | Main content with side rail | Loading, empty, error, unauthorized        |
-| `/app/activity`                                | Primary bottom navigation                    | Main content with side rail | Search, filter, empty, error               |
-| `/app/transactions/new`                        | Contextual full-page fallback; later sheet   | Dialog or full page         | Validation, pending, server error, discard |
-| `/app/accounts` and `/app/accounts/:accountId` | Primary bottom navigation, contextual detail | Main content with side rail | Empty, archived/missing, error             |
-| `/app/accounts/:accountId/statements`          | Contextual from card                         | Main content                | Card-only boundary, empty, error           |
-| `/app/bills`, `/app/reports`, `/app/settings`  | Secondary destinations                       | Main content with side rail | Empty, error, unauthorized                 |
-| `/login`, `/onboarding`                        | Full-width forms                             | Narrow centered forms       | Validation, pending, rate limit, recovery  |
-| `*`                                            | In-shell 404                                 | In-shell 404                | Helpful recovery link                      |
+| Route group                                    | Mobile                                                  | Desktop                     | States required                            |
+| ---------------------------------------------- | ------------------------------------------------------- | --------------------------- | ------------------------------------------ |
+| `/app` Home                                    | Primary bottom navigation                               | Main content with side rail | Loading, empty, error, unauthorized        |
+| `/app/activity`                                | Primary bottom navigation                               | Main content with side rail | Search, filter, empty, error               |
+| `/app/transactions/new`                        | Contextual bottom sheet; direct-link full-page fallback | Dialog or full page         | Validation, pending, server error, discard |
+| `/app/accounts` and `/app/accounts/:accountId` | Primary bottom navigation, contextual detail            | Main content with side rail | Empty, archived/missing, error             |
+| `/app/accounts/:accountId/statements`          | Contextual from card                                    | Main content                | Card-only boundary, empty, error           |
+| `/app/bills`, `/app/reports`, `/app/settings`  | Secondary destinations                                  | Main content with side rail | Empty, error, unauthorized                 |
+| `/login`, `/onboarding`                        | Full-width forms                                        | Narrow centered forms       | Validation, pending, rate limit, recovery  |
+| `*`                                            | In-shell 404                                            | In-shell 404                | Helpful recovery link                      |
 
 The primary mobile navigation has Home, Activity, Add, and Accounts. Add is an action. Bills, Reports, and Settings remain secondary. Activity filters are URL state; deep links and browser back must restore the logical view. Until identity exists, route skeletons contain no owner data and clearly state that access control is not yet implemented.
 
