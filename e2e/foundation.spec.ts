@@ -328,6 +328,33 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   await expect(page.locator(".form-success")).toHaveText(
     "Transaction reversed. Its original journal remains immutable.",
   );
+  await page.goto("/app/accounts");
+  await expect(
+    page.getByRole("heading", { name: "Accounts you can trace." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Onboarding Cash", { exact: true }),
+  ).toBeVisible();
+  await page.locator(".account-detail-row").click();
+  await expect(
+    page.getByRole("heading", { name: "Onboarding Cash" }),
+  ).toBeVisible();
+  await page.getByLabel("Name *").fill("Onboarding Cash Renamed");
+  await page.getByRole("button", { name: "Save account details" }).click();
+  await expect(page.locator(".form-success")).toHaveText(
+    "Account details saved.",
+  );
+  await page.getByRole("button", { name: "Archive account" }).click();
+  await expect(page.locator(".form-success")).toHaveText(
+    "Account archived. Its history remains available.",
+  );
+  await page.goto("/app/accounts");
+  await page.getByLabel("Include archived history").check();
+  await expect(
+    page.getByText("Onboarding Cash Renamed", { exact: true }),
+  ).toBeVisible();
+  await page.locator(".account-detail-row").click();
+  await expect(page.getByText(/Archived history/)).toBeVisible();
   await page.goto("/app/transactions/new");
   await page.getByRole("tab", { name: "Transfer" }).click();
   await expect(page.getByText("To account *")).toBeVisible();

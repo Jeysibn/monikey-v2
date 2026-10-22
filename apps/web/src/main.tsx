@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
@@ -510,6 +511,15 @@ type DashboardSummaryResponse = {
 
 function dashboardMoney(value: string) {
   return <MoneyValue amount={moneyMinor(value)} />;
+}
+
+function phpInputFromMinor(value: string): string {
+  const amount = moneyMinor(value);
+  const negative = amount < 0n;
+  const absolute = negative ? -amount : amount;
+  return `${negative ? "-" : ""}${absolute / 100n}.${(absolute % 100n)
+    .toString()
+    .padStart(2, "0")}`;
 }
 
 function dashboardAccountType(type: DashboardAccount["type"]): string {
@@ -1175,6 +1185,15 @@ type TransactionAuditRevision = {
   createdAt: string;
 };
 
+type AccountRecord = DashboardAccount & {
+  institution: string | null;
+  currency: "PHP";
+  sortOrder: number;
+  creditLimitMinor: string | null;
+  statementDay: number | null;
+  dueDay: number | null;
+};
+
 function TransactionDetailPage() {
   const { transactionId } = useParams<{ transactionId: string }>();
   const { csrfToken, profile, loading: authLoading } = useAuth();
@@ -1194,9 +1213,11 @@ function TransactionDetailPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
     if (!transactionId || !profile) return;
+    const version = ++loadVersion.current;
     setLoading(true);
     setError("");
     try {
@@ -1215,12 +1236,14 @@ function TransactionDetailPage() {
           "/categories?includeArchived=true",
         ),
       ]);
+      if (version !== loadVersion.current) return;
       setTransaction(detail.transaction);
       setRevisions(audit.revisions);
       setAccounts(accountResult.accounts);
       setCategories(categoryResult.categories);
       const current = audit.revisions.at(-1)?.after ?? {};
-      setAmount(revisionText(current, "amountMinor"));
+      const currentAmount = revisionText(current, "amountMinor");
+      setAmount(currentAmount ? phpInputFromMinor(currentAmount) : "");
       setAccountId(
         revisionText(current, "sourceAccountId") ||
           revisionText(current, "accountId"),
@@ -1231,13 +1254,14 @@ function TransactionDetailPage() {
       setOccurredOn(detail.transaction.occurredOn);
       setNote(detail.transaction.note ?? revisionText(current, "note"));
     } catch (caught) {
+      if (version !== loadVersion.current) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "The transaction could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
   }, [profile, transactionId]);
 
@@ -1544,6 +1568,606 @@ function TransactionDetailPage() {
       </div>
       <Link className="quiet-link" to="/app/activity">
         Back to Activity
+      </Link>
+    </section>
+  );
+}
+
+function accountTypeLabel(type: DashboardAccount["type"]): string {
+  return dashboardAccountType(type);
+}
+
+function AccountsPage() {
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [type, setType] = useState<AccountRecord["type"]>("BANK");
+  const [name, setName] = useState("");
+  const [institution, setInstitution] = useState("");
+  const [openingBalance, setOpeningBalance] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ accounts: AccountRecord[] }>(
+        "/accounts?includeArchived=true",
+      );
+      setAccounts(result.accounts);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Accounts could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!csrfToken) {
+      setError("Your session needs to be refreshed.");
+      return;
+    }
+    if (!name.trim()) {
+      setError("Give the account a name.");
+      return;
+    }
+    let openingBalanceMinor: string;
+    try {
+      openingBalanceMinor = parsePhpMinor(openingBalance || "0").toString();
+      if (BigInt(openingBalanceMinor) < 0n) throw new Error("negative");
+    } catch {
+      setError("Enter a valid non-negative PHP opening balance.");
+      return;
+    }
+    let creditLimitMinor: string | undefined;
+    if (type === "CREDIT_CARD" && creditLimit.trim()) {
+      try {
+        creditLimitMinor = parsePhpMinor(creditLimit).toString();
+        if (BigInt(creditLimitMinor) <= 0n) throw new Error("positive");
+      } catch {
+        setError("Enter a positive PHP credit limit.");
+        return;
+      }
+    }
+    setPending(true);
+    try {
+      await apiRequest("/accounts", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          type,
+          name: name.trim(),
+          openingBalanceMinor,
+          ...(institution.trim() ? { institution: institution.trim() } : {}),
+          ...(creditLimitMinor ? { creditLimitMinor } : {}),
+        }),
+      });
+      setName("");
+      setInstitution("");
+      setOpeningBalance("");
+      setCreditLimit("");
+      setShowCreate(false);
+      setSuccess("Account created with a ledger-backed opening balance.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be created.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || (loading && !accounts.length)) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Your money"
+        title="Accounts"
+        description="Sign in to see balances that belong to your private journal."
+        icon="▤"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  const visibleAccounts = accounts.filter(
+    (account) => showArchived || !account.archivedAt,
+  );
+
+  return (
+    <section className="accounts-page" aria-labelledby="page-heading">
+      <div className="accounts-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Your money · Private</p>
+          <h1 id="page-heading">Accounts you can trace.</h1>
+          <p className="page-description">
+            Balances come from posted journals. Archive an account when it is no
+            longer active and its history remains available.
+          </p>
+        </div>
+        <button
+          className="dashboard-primary-action"
+          type="button"
+          onClick={() => setShowCreate((current) => !current)}
+        >
+          <span aria-hidden="true">+</span>{" "}
+          {showCreate ? "Close form" : "Add account"}
+        </button>
+      </div>
+
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {showCreate ? (
+        <form className="account-create-card" onSubmit={createAccount}>
+          <div className="form-heading">
+            <div>
+              <p className="form-kicker">NEW ACCOUNT</p>
+              <h2>Give every balance a home.</h2>
+            </div>
+            <span className="form-kind">PHP</span>
+          </div>
+          <div className="reference-grid">
+            <label className="field-group">
+              <span className="field-label">Type *</span>
+              <select
+                className="reference-select"
+                value={type}
+                onChange={(event) =>
+                  setType(event.currentTarget.value as AccountRecord["type"])
+                }
+              >
+                <option value="CASH">Cash</option>
+                <option value="BANK">Bank</option>
+                <option value="EWALLET">E-wallet</option>
+                <option value="CREDIT_CARD">Credit card</option>
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-label">Name *</span>
+              <input
+                className="text-input"
+                value={name}
+                onChange={(event) => setName(event.currentTarget.value)}
+                maxLength={120}
+              />
+            </label>
+          </div>
+          <div className="reference-grid">
+            <label className="field-group">
+              <span className="field-label">Opening balance *</span>
+              <input
+                className="text-input"
+                inputMode="decimal"
+                value={openingBalance}
+                onChange={(event) =>
+                  setOpeningBalance(event.currentTarget.value)
+                }
+                placeholder="0.00"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-label">
+                Institution <span className="field-optional">Optional</span>
+              </span>
+              <input
+                className="text-input"
+                value={institution}
+                onChange={(event) => setInstitution(event.currentTarget.value)}
+                maxLength={120}
+              />
+            </label>
+          </div>
+          {type === "CREDIT_CARD" ? (
+            <label className="field-group account-credit-limit">
+              <span className="field-label">
+                Credit limit <span className="field-optional">Optional</span>
+              </span>
+              <input
+                className="text-input"
+                inputMode="decimal"
+                value={creditLimit}
+                onChange={(event) => setCreditLimit(event.currentTarget.value)}
+                placeholder="0.00"
+              />
+            </label>
+          ) : null}
+          <button className="save-button" type="submit" disabled={pending}>
+            {pending ? "Creating…" : "Create account"}
+          </button>
+        </form>
+      ) : null}
+
+      <div className="accounts-toolbar">
+        <p className="dashboard-label">
+          {visibleAccounts.length}{" "}
+          {visibleAccounts.length === 1 ? "account" : "accounts"}
+        </p>
+        <label className="archive-toggle">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.currentTarget.checked)}
+          />
+          <span>Include archived history</span>
+        </label>
+      </div>
+
+      {visibleAccounts.length ? (
+        <div className="accounts-list">
+          {visibleAccounts.map((account) => (
+            <Link
+              className={`account-detail-row${account.archivedAt ? " is-archived" : ""}`}
+              key={account.id}
+              to={`/app/accounts/${account.id}`}
+            >
+              <span className="account-mark" aria-hidden="true">
+                {account.type === "CREDIT_CARD" ? "◇" : "•"}
+              </span>
+              <span className="account-copy">
+                <strong>{account.name}</strong>
+                <span>
+                  {accountTypeLabel(account.type)}
+                  {account.institution ? ` · ${account.institution}` : ""}
+                  {account.archivedAt ? " · Archived" : ""}
+                </span>
+              </span>
+              <span className="account-balance">
+                <PrivacyMask label={`${account.name} balance`}>
+                  {dashboardMoney(account.balanceMinor)}
+                </PrivacyMask>
+              </span>
+              <span className="account-row-arrow" aria-hidden="true">
+                →
+              </span>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="dashboard-empty account-empty">
+          <p>
+            {showArchived
+              ? "No accounts have been created yet."
+              : "No active accounts."}
+          </p>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => setShowCreate(true)}
+          >
+            Create an account
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AccountDetailPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [account, setAccount] = useState<AccountRecord | null>(null);
+  const [activity, setActivity] = useState<DashboardActivity[]>([]);
+  const [name, setName] = useState("");
+  const [sortOrder, setSortOrder] = useState("0");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [accountResult, activityResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ activity: DashboardActivity[] }>(
+          `/accounts/${accountId}/activity?limit=50`,
+        ),
+      ]);
+      setAccount(accountResult.account);
+      setActivity(activityResult.activity);
+      setName(accountResult.account.name);
+      setSortOrder(String(accountResult.account.sortOrder));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function saveAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accountId || !csrfToken || !name.trim()) {
+      setError("Give the account a name.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiRequest(`/accounts/${accountId}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          sortOrder: Number(sortOrder) || 0,
+        }),
+      });
+      setSuccess("Account details saved.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function archiveAccount() {
+    if (!accountId || !csrfToken) return;
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiRequest(`/accounts/${accountId}/archive`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+      });
+      setSuccess("Account archived. Its history remains available.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be archived.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Account overview"
+        title="Sign in to review accounts."
+        description="Account details and history are private to the owning account."
+        icon="▤"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!account) {
+    return (
+      <RoutePage
+        eyebrow="Account overview"
+        title="Account unavailable."
+        description={
+          error || "The requested account is not available to this owner."
+        }
+        icon="▤"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  return (
+    <section
+      className="route-page account-detail-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">
+          {accountTypeLabel(account.type)} · Account overview
+        </p>
+        <h1 id="page-heading">{account.name}</h1>
+        <p className="page-description">
+          {account.institution ? `${account.institution} · ` : ""}
+          {account.archivedAt ? "Archived history" : "Active account"}. Balance
+          is derived from posted ledger entries.
+        </p>
+      </div>
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="account-detail-hero">
+        <span className="dashboard-label">Current balance</span>
+        <PrivacyMask label={`${account.name} balance`}>
+          {dashboardMoney(account.balanceMinor)}
+        </PrivacyMask>
+        <span className="dashboard-helper">
+          {account.currency} · {activity.length} recorded{" "}
+          {activity.length === 1 ? "entry" : "entries"}
+        </span>
+      </div>
+
+      <form className="account-edit-card" onSubmit={saveAccount}>
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">ACCOUNT METADATA</p>
+            <h2>Keep the label useful</h2>
+          </div>
+          <span className="form-kind">
+            {account.archivedAt ? "Archived" : "Editable"}
+          </span>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              disabled={Boolean(account.archivedAt)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Sort order</span>
+            <input
+              className="text-input"
+              type="number"
+              min="0"
+              value={sortOrder}
+              onChange={(event) => setSortOrder(event.currentTarget.value)}
+              disabled={Boolean(account.archivedAt)}
+            />
+          </label>
+        </div>
+        {!account.archivedAt ? (
+          <button className="save-button" type="submit" disabled={pending}>
+            {pending ? "Saving…" : "Save account details"}
+          </button>
+        ) : null}
+      </form>
+
+      {!account.archivedAt ? (
+        <div className="account-archive-panel">
+          <p className="dashboard-label">Archive account</p>
+          <p>
+            Archiving stops future postings while retaining this account and its
+            activity for history.
+          </p>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void archiveAccount()}
+            disabled={pending}
+          >
+            Archive account
+          </button>
+        </div>
+      ) : null}
+
+      <section
+        className="account-history-panel"
+        aria-labelledby="account-history-heading"
+      >
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Ledger history</p>
+            <h2 id="account-history-heading">Recent activity</h2>
+          </div>
+          <Link
+            className="quiet-link"
+            to={`/app/activity?accountId=${account.id}`}
+          >
+            View all
+          </Link>
+        </div>
+        {activity.length ? (
+          <div className="activity-feed">
+            {activity.map((item) => {
+              const amount = dashboardActivityAmount(item);
+              const isIncome = ["INCOME", "REFUND"].includes(
+                item.transaction.kind,
+              );
+              return (
+                <Link
+                  className="activity-feed-row"
+                  key={item.transaction.id}
+                  to={`/app/transactions/${item.transaction.id}`}
+                >
+                  <span
+                    className={`activity-kind${isIncome ? " is-income" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {isIncome
+                      ? "↑"
+                      : item.transaction.kind === "EXPENSE"
+                        ? "↓"
+                        : "↔"}
+                  </span>
+                  <span className="activity-feed-copy">
+                    <strong>{dashboardActivityLabel(item)}</strong>
+                    <span>
+                      {item.transaction.occurredOn} ·{" "}
+                      {formatActivityKind(item.transaction.kind)}
+                    </span>
+                  </span>
+                  <span
+                    className={`activity-feed-amount${isIncome ? " is-income" : ""}`}
+                  >
+                    {amount ? (
+                      <PrivacyMask label="activity amount">
+                        {dashboardMoney(amount)}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No activity recorded for this account.</p>
+          </div>
+        )}
+      </section>
+      <Link className="quiet-link" to="/app/accounts">
+        Back to Accounts
       </Link>
     </section>
   );
@@ -2398,27 +3022,10 @@ function App() {
             path="app/transactions/:transactionId"
             element={<TransactionDetailPage />}
           />
-          <Route
-            path="app/accounts"
-            element={
-              <RoutePage
-                eyebrow="Your money"
-                title="Accounts"
-                description="Cash, banks, wallets and card balances will be calculated from your journal."
-                icon="▤"
-              />
-            }
-          />
+          <Route path="app/accounts" element={<AccountsPage />} />
           <Route
             path="app/accounts/:accountId"
-            element={
-              <RoutePage
-                eyebrow="Account overview"
-                title="Account details"
-                description="See a saved account, its balance and its chronological activity."
-                icon="▤"
-              />
-            }
+            element={<AccountDetailPage />}
           />
           <Route
             path="app/accounts/:accountId/statements"

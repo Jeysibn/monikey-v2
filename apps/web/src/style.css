@@ -1064,6 +1064,161 @@ h1 {
   background: var(--surface-card);
 }
 
+.accounts-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.accounts-heading .dashboard-primary-action {
+  border: 0;
+  cursor: pointer;
+}
+
+.account-create-card,
+.account-edit-card {
+  width: min(100%, 720px);
+  margin-top: 25px;
+  padding: 22px 24px 19px;
+  border: 1px solid var(--border-default);
+  border-radius: 15px;
+  background: var(--surface-card);
+}
+
+.account-credit-limit {
+  margin-top: 18px;
+}
+
+.accounts-toolbar {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 29px;
+}
+
+.accounts-toolbar .dashboard-label {
+  margin: 0;
+}
+
+.archive-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.archive-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand-primary);
+}
+
+.accounts-list {
+  overflow: hidden;
+  margin-top: 7px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
+.account-detail-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto 24px;
+  min-height: 82px;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 17px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.account-detail-row:last-child {
+  border-bottom: 0;
+}
+
+.account-detail-row.is-archived {
+  opacity: 0.7;
+}
+
+.account-detail-row .account-mark {
+  width: 32px;
+  height: 32px;
+}
+
+.account-detail-row .account-copy strong {
+  font-size: 14px;
+}
+
+.account-detail-row .account-copy span {
+  font-size: 11px;
+}
+
+.account-detail-row .account-balance {
+  font-size: 14px;
+}
+
+.account-row-arrow {
+  color: var(--brand-primary);
+  font-size: 17px;
+}
+
+.account-empty {
+  margin-top: 12px;
+}
+
+.account-detail-hero {
+  display: grid;
+  width: min(100%, 720px);
+  gap: 7px;
+  margin-top: 29px;
+  padding: 22px 24px 20px;
+  border: 1px solid
+    color-mix(in srgb, var(--brand-primary), var(--border-default) 65%);
+  border-radius: 15px;
+  background: var(--surface-card);
+}
+
+.account-detail-hero > .privacy-value {
+  color: var(--brand-deep);
+  font-size: clamp(2.35rem, 5vw, 4rem);
+  font-weight: 680;
+  letter-spacing: -0.06em;
+}
+
+.account-archive-panel {
+  width: min(100%, 720px);
+  margin-top: 19px;
+  padding: 16px 15px 13px;
+  border: 1px solid color-mix(in srgb, var(--expense), transparent 45%);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--expense), transparent 95%);
+}
+
+.account-archive-panel p:not(.dashboard-label) {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-archive-panel .quiet-button {
+  color: var(--expense);
+}
+
+.account-history-panel {
+  width: min(100%, 720px);
+  margin-top: 25px;
+  padding: 21px 20px 15px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-card);
+}
+
 .transaction-detail-card {
   width: min(100%, 720px);
   margin-top: 30px;
@@ -1579,6 +1734,11 @@ h1 {
     grid-column: span 3;
   }
 
+  .accounts-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .welcome-card,
   .privacy-card {
     min-height: unset;
@@ -1838,6 +1998,55 @@ h1 {
   .activity-filter-panel {
     margin-top: 25px;
     padding: 16px 15px 14px;
+  }
+
+  .accounts-heading .dashboard-primary-action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .account-create-card,
+  .account-edit-card {
+    padding: 18px 16px 15px;
+  }
+
+  .accounts-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 22px;
+  }
+
+  .account-detail-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto 15px;
+    gap: 8px;
+    min-height: 75px;
+    padding: 8px 11px;
+  }
+
+  .account-detail-row .account-copy strong {
+    font-size: 12px;
+  }
+
+  .account-detail-row .account-copy span {
+    font-size: 10px;
+  }
+
+  .account-detail-row .account-balance {
+    font-size: 11px;
+  }
+
+  .account-detail-hero {
+    margin-top: 25px;
+    padding: 19px 17px 17px;
+  }
+
+  .account-detail-hero > .privacy-value {
+    font-size: clamp(2.25rem, 13vw, 3.5rem);
+  }
+
+  .account-history-panel {
+    padding: 18px 15px 12px;
   }
 
   .activity-filter-grid {
