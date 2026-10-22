@@ -41,6 +41,15 @@ export class AccountNotFoundError extends Error {
   }
 }
 
+export class AccountConflictError extends Error {
+  readonly statusCode = 409;
+
+  constructor(message = "The first account has already been created.") {
+    super(message);
+    this.name = "AccountConflictError";
+  }
+}
+
 function mapAccount(row: FinancialAccountRow): FinancialAccountRecord {
   return {
     ...row,
@@ -223,6 +232,25 @@ export async function createFinancialAccount(
   );
   await ensureDefaultCategories(client, userId);
   return queryAccount(client, userId, accountId);
+}
+
+export async function createFirstFinancialAccount(
+  client: PoolClient,
+  userId: string,
+  request: FinancialAccountCreateRequest,
+  occurredOn: string,
+): Promise<FinancialAccountRecord> {
+  const owner = await client.query<{ id: string }>(
+    `SELECT id FROM users WHERE id = $1 FOR UPDATE`,
+    [userId],
+  );
+  if (owner.rowCount === 0) throw new AccountNotFoundError();
+  const existing = await client.query<{ id: string }>(
+    `SELECT id FROM financial_accounts WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  if (existing.rows.length > 0) throw new AccountConflictError();
+  return createFinancialAccount(client, userId, request, occurredOn);
 }
 
 export async function updateFinancialAccount(

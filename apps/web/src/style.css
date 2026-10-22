@@ -592,6 +592,76 @@ h1 {
   background: var(--surface-card);
 }
 
+.auth-card {
+  width: min(100%, 520px);
+  margin-top: 34px;
+  padding: 25px 26px 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 15px;
+  background: var(--surface-card);
+}
+
+.onboarding-card {
+  width: min(100%, 650px);
+}
+
+.auth-card .field-group + .field-group {
+  margin-top: 18px;
+}
+
+.text-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 13px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.text-input:focus {
+  border-color: var(--brand-primary);
+  outline: 3px solid color-mix(in srgb, var(--brand-primary), transparent 82%);
+  outline-offset: 0;
+}
+
+.field-optional {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.form-error {
+  margin: 16px 0 0;
+  color: var(--expense);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.auth-back-link {
+  justify-content: center;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.session-link {
+  display: block;
+  margin: 0 0 8px auto;
+  border: 0;
+  background: transparent;
+  color: var(--brand-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.session-link:hover {
+  text-decoration: underline;
+}
+
 .form-heading {
   display: flex;
   align-items: flex-start;
