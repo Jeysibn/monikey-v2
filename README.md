@@ -63,6 +63,7 @@ The checked-in Compose credentials are for local development only. Production se
 - [`docs/architecture/CARDS.md`](docs/architecture/CARDS.md): credit-card liability, payments, and statements.
 - [`docs/architecture/BILLS.md`](docs/architecture/BILLS.md): recurring bill rules, occurrences, and confirmation flows.
 - [`docs/architecture/REPORTS-EXPORTS.md`](docs/architecture/REPORTS-EXPORTS.md): monthly reports and portable export boundaries.
+- [`docs/architecture/ARCHITECTURE_AUDIT.md`](docs/architecture/ARCHITECTURE_AUDIT.md): verified boundaries, evidence, and open release gates.
 - [`docs/RELEASE_REVIEW.md`](docs/RELEASE_REVIEW.md): repeatable local accessibility, responsiveness, and performance baseline.
 - [`docs/PHASE6_READINESS.md`](docs/PHASE6_READINESS.md): read-only homelab audit and deployment safety boundary.
 - [`docs/runbooks/restore.md`](docs/runbooks/restore.md): local PostgreSQL backup and isolated restore procedure.
