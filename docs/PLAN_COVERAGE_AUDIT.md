@@ -46,6 +46,8 @@ the web container, and Playwright with one worker:
 - `npm run typecheck` — passed.
 - `npm run lint` — passed with the repository ESLint baseline.
 - `npm run validate` — passed as the combined static, database-free gate.
+- The combined gate explicitly runs the workspace production build in addition
+  to TypeScript checks.
 - `npm ci --ignore-scripts --offline` — clean lockfile install completed with zero vulnerabilities.
 - `npm run build --workspace @monikey/web` — passed.
 - `npm run format:check` and `git diff --check` — passed.

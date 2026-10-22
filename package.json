@@ -18,7 +18,7 @@
     "test:e2e": "playwright test",
     "test:full-stack": "npm run test:e2e -- --workers=1",
     "lint": "eslint .",
-    "validate": "npm run lint && npm run typecheck && npm run test:finance && npm run format:check && npm run security:secrets && npm audit --audit-level=high",
+    "validate": "npm run lint && npm run typecheck && npm run build && npm run test:finance && npm run format:check && npm run security:secrets && npm audit --audit-level=high",
     "backup:local": "node scripts/local-backup-restore.mjs backup",
     "restore:local": "node scripts/local-backup-restore.mjs restore",
     "compose:check": "docker compose -f compose.yaml -f compose.local-test.yaml config --quiet",
