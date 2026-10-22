@@ -61,6 +61,7 @@ The checked-in Compose credentials are for local development only. Production se
 - [`docs/architecture/BILLS.md`](docs/architecture/BILLS.md): recurring bill rules, occurrences, and confirmation flows.
 - [`docs/architecture/REPORTS-EXPORTS.md`](docs/architecture/REPORTS-EXPORTS.md): monthly reports and portable export boundaries.
 - [`docs/RELEASE_REVIEW.md`](docs/RELEASE_REVIEW.md): repeatable local accessibility, responsiveness, and performance baseline.
+- [`docs/PHASE6_READINESS.md`](docs/PHASE6_READINESS.md): read-only homelab audit and deployment safety boundary.
 - [`AGENTS.md`](AGENTS.md): implementation constraints for contributors and coding agents.
 
 V1 is reference-only; no V1 code or financial data is used by this repository.
