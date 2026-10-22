@@ -77,6 +77,7 @@ async function assertCardAccount(
   client: PoolClient,
   userId: string,
   cardAccountId: string,
+  allowArchived = false,
 ) {
   const result = await client.query<{ type: string; archivedAt: Date | null }>(
     `SELECT type, archived_at AS "archivedAt"
@@ -88,7 +89,7 @@ async function assertCardAccount(
   if (!account || account.type !== "CREDIT_CARD") {
     throw new CardStatementNotFoundError();
   }
-  if (account.archivedAt) {
+  if (account.archivedAt && !allowArchived) {
     throw new CardStatementConflictError(
       "Archived cards cannot receive new statements.",
     );
@@ -99,8 +100,9 @@ export async function listCardStatements(
   client: PoolClient,
   userId: string,
   cardAccountId: string,
+  allowArchived = false,
 ): Promise<CardStatementRecord[]> {
-  await assertCardAccount(client, userId, cardAccountId);
+  await assertCardAccount(client, userId, cardAccountId, allowArchived);
   const result = await client.query<StatementRow>(
     `${statementSelect}
       WHERE s.user_id = $1 AND s.card_account_id = $2

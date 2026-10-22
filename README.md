@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 and Phase 3 private-alpha slices are implemented. Phase 4 now includes credit-card purchases/payments, manual statements with allocations, recurring bill rules and occurrences, bill payment/skip confirmation, and dashboard bill visibility. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 and Phase 3 private-alpha slices are implemented. Phase 4 includes credit-card purchases/payments, manual statements with allocations, recurring bill rules and occurrences, bill payment/skip confirmation, and dashboard bill visibility. Phase 5 reporting, exports, category management, and security controls are implemented locally; release-level UX/QA remains. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
@@ -59,6 +59,7 @@ The checked-in Compose credentials are for local development only. Production se
 - [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md): milestone state and evidence.
 - [`docs/architecture/CARDS.md`](docs/architecture/CARDS.md): credit-card liability, payments, and statements.
 - [`docs/architecture/BILLS.md`](docs/architecture/BILLS.md): recurring bill rules, occurrences, and confirmation flows.
+- [`docs/architecture/REPORTS-EXPORTS.md`](docs/architecture/REPORTS-EXPORTS.md): monthly reports and portable export boundaries.
 - [`AGENTS.md`](AGENTS.md): implementation constraints for contributors and coding agents.
 
 V1 is reference-only; no V1 code or financial data is used by this repository.

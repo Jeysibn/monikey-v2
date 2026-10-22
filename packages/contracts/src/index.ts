@@ -699,6 +699,46 @@ export const DashboardSummarySchema = z.object({
   serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+export const ReportMonthQuerySchema = z
+  .object({
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  })
+  .strict();
+
+export const MonthlyReportCategorySchema = z.object({
+  categoryId: z.string().uuid().nullable(),
+  categoryName: z.string(),
+  amountMinor: z.string().regex(/^-?\d+$/),
+});
+
+export const MonthlyReportSchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  incomeMinor: z.string().regex(/^-?\d+$/),
+  netExpensesMinor: z.string().regex(/^-?\d+$/),
+  netCashFlowMinor: z.string().regex(/^-?\d+$/),
+  categories: z.array(MonthlyReportCategorySchema),
+});
+
+export const MonthlyReportResponseSchema = z.object({
+  report: MonthlyReportSchema,
+});
+
+export const JsonExportSchema = z.object({
+  schemaVersion: z.literal("monikey-v2.export.v1"),
+  generatedAt: z.string().datetime(),
+  owner: z.object({
+    timezone: z.literal("Asia/Manila"),
+    currency: z.literal("PHP"),
+  }),
+  accounts: z.array(FinancialAccountSchema),
+  categories: z.array(CategorySchema),
+  transactions: z.array(z.record(z.string(), z.unknown())),
+  bills: z.array(BillSchema),
+  cardStatements: z.array(CardStatementSchema),
+});
+
+export const JsonExportResponseSchema = JsonExportSchema;
+
 export type TransactionCreateRequest = z.infer<
   typeof TransactionCreateRequestSchema
 >;
@@ -732,6 +772,8 @@ export type TransactionActivityQuery = z.infer<
   typeof TransactionActivityQuerySchema
 >;
 export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
+export type ReportMonthQuery = z.infer<typeof ReportMonthQuerySchema>;
+export type MonthlyReport = z.infer<typeof MonthlyReportSchema>;
 export type TransactionRequest = z.infer<typeof TransactionRequestSchema>;
 export type TransactionRecord = z.infer<typeof TransactionSchema>;
 

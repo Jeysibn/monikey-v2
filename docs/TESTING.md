@@ -19,9 +19,11 @@ DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?s
   npm run test:cards --workspace @monikey/api
 DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
   npm run test:bills --workspace @monikey/api
+DATABASE_URL='postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public' \
+  npm run test:reports --workspace @monikey/api
 ```
 
-The transaction command includes `dashboard.integration.test.ts`, which checks that dashboard totals reconcile after opening balances, income, spending, transfer fees, and an edited expense. The card suite checks liability purchases, payments, statement allocations, and statement correction. The bill suite checks deterministic day-31 February clamping, owner scope, and one linked expense payment. The authenticated home-screen Playwright path covers the dashboard endpoint, upcoming bill widget, card detail/payment route, and Bills screen; the private owner journey covers Activity filter reload, detail edit, reversal, immutable-history feedback, account rename, archive, and retained history.
+The transaction command includes `dashboard.integration.test.ts`, which checks that dashboard totals reconcile after opening balances, income, spending, transfer fees, and an edited expense. The card suite checks liability purchases, payments, statement allocations, and statement correction. The bill suite checks deterministic day-31 February clamping, owner scope, and one linked expense payment. The reports suite checks refund netting, category totals, exact minor-unit exports, and CSV formula-injection mitigation. The standard Playwright suite covers the private owner journey, and the targeted authenticated Phase 5 browser check covers Reports, February export date handling, JSON/CSV export headers, Security, and Categories against the same real API and PostgreSQL stack.
 
 ## PostgreSQL-backed browser acceptance
 

@@ -1294,6 +1294,134 @@ h1 {
   margin-top: 24px;
 }
 
+.report-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(100%, 760px);
+  margin-top: 28px;
+}
+
+.report-toolbar .field-group {
+  width: min(100%, 220px);
+}
+
+.report-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.report-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 760px);
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.report-category-panel,
+.session-panel {
+  width: min(100%, 760px);
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 15px;
+  background: var(--surface-card);
+}
+
+.report-category-table {
+  display: grid;
+}
+
+.report-category-row,
+.session-row,
+.category-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.report-category-row > span:first-child,
+.session-row > div,
+.category-row > div {
+  display: grid;
+  gap: 5px;
+}
+
+.report-category-header {
+  border-top: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.report-category-row strong,
+.session-row strong,
+.category-row strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.report-category-row span,
+.session-row span,
+.category-row span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.report-bar {
+  display: block;
+  height: 4px;
+  max-width: 320px;
+  border-radius: 99px;
+  background: var(--brand-primary);
+}
+
+.session-current {
+  color: var(--brand-primary) !important;
+  font-weight: 700;
+}
+
+.security-form,
+.category-form {
+  display: grid;
+  gap: 16px;
+}
+
+.category-list {
+  width: min(100%, 760px);
+  margin-top: 25px;
+}
+
+@media (max-width: 640px) {
+  .report-toolbar,
+  .report-stat-grid {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .report-toolbar .field-group {
+    width: 100%;
+  }
+
+  .report-export-actions .quiet-button {
+    flex: 1 1 140px;
+    text-align: center;
+  }
+
+  .report-category-panel,
+  .session-panel {
+    padding: 16px;
+  }
+}
+
 .bill-section {
   width: min(100%, 760px);
   margin-top: 34px;

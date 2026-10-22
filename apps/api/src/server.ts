@@ -31,12 +31,15 @@ import {
   FinancialAccountResponseSchema,
   FinancialAccountsResponseSchema,
   HealthResponseSchema,
+  JsonExportResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
   MeResponseSchema,
   OnboardingFirstAccountResponseSchema,
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
+  MonthlyReportResponseSchema,
+  ReportMonthQuerySchema,
   SessionsResponseSchema,
   TransactionAuditResponseSchema,
   TransactionActivityQuerySchema,
@@ -87,6 +90,11 @@ import {
   readTransactionAudit,
 } from "./transactions.js";
 import { readDashboardSummary } from "./dashboard.js";
+import {
+  listExportTransactions,
+  readMonthlyReport,
+  transactionsCsv,
+} from "./reports.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
@@ -615,6 +623,161 @@ app.get(
     return withDatabaseConnection((client) =>
       readDashboardSummary(client, ownerUserId(request), serverToday),
     );
+  },
+);
+
+app.get(
+  "/api/v1/reports/monthly",
+  {
+    schema: {
+      tags: ["reports"],
+      summary:
+        "Read owner-scoped monthly income, expenses, cash flow and categories",
+      querystring: z.toJSONSchema(ReportMonthQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(MonthlyReportResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { month } = ReportMonthQuerySchema.parse(request.query);
+    const report = await withDatabaseConnection((client) =>
+      readMonthlyReport(client, ownerUserId(request), month),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { report };
+  },
+);
+
+const ExportQuerySchema = z
+  .object({
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (query.from && query.to && query.from > query.to) {
+      context.addIssue({
+        code: "custom",
+        message: "The from date must be on or before the to date.",
+        path: ["from"],
+      });
+    }
+  });
+
+app.get(
+  "/api/v1/exports/transactions.csv",
+  {
+    schema: {
+      tags: ["exports"],
+      summary: "Download owner-scoped transactions as formula-safe CSV",
+      querystring: z.toJSONSchema(ExportQuerySchema, { target: "draft-7" }),
+      response: { ...authErrorResponses(), 200: { type: "string" } },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = ExportQuerySchema.parse(request.query);
+    const csv = await withDatabaseConnection((client) =>
+      listExportTransactions(
+        client,
+        ownerUserId(request),
+        query.from,
+        query.to,
+      ),
+    );
+    reply
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Type", "text/csv; charset=utf-8")
+      .header(
+        "Content-Disposition",
+        'attachment; filename="monikey-transactions.csv"',
+      );
+    return reply.send(transactionsCsv(csv));
+  },
+);
+
+app.get(
+  "/api/v1/exports/json",
+  {
+    schema: {
+      tags: ["exports"],
+      summary: "Download owner-scoped structured JSON export",
+      querystring: z.toJSONSchema(ExportQuerySchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(JsonExportResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = ExportQuerySchema.parse(request.query);
+    const exported = await withDatabaseConnection(async (client) => {
+      const [user, accounts, categories, transactions, bills] =
+        await Promise.all([
+          client.query<{ timezone: string; currency: string }>(
+            `SELECT timezone, currency FROM user_preferences WHERE user_id = $1`,
+            [ownerUserId(request)],
+          ),
+          listFinancialAccounts(client, ownerUserId(request), true),
+          listCategories(client, ownerUserId(request), {
+            includeArchived: true,
+          }),
+          listExportTransactions(
+            client,
+            ownerUserId(request),
+            query.from,
+            query.to,
+          ),
+          listBills(client, ownerUserId(request), true),
+        ]);
+      const statements = (
+        await Promise.all(
+          accounts
+            .filter((account) => account.type === "CREDIT_CARD")
+            .map((account) =>
+              listCardStatements(
+                client,
+                ownerUserId(request),
+                account.id,
+                true,
+              ),
+            ),
+        )
+      ).flat();
+      return {
+        schemaVersion: "monikey-v2.export.v1" as const,
+        generatedAt: new Date().toISOString(),
+        owner: {
+          timezone: (user.rows[0]?.timezone ?? "Asia/Manila") as "Asia/Manila",
+          currency: (user.rows[0]?.currency ?? "PHP") as "PHP",
+        },
+        accounts,
+        categories,
+        transactions,
+        bills,
+        cardStatements: statements,
+      };
+    });
+    reply
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Type", "application/json; charset=utf-8")
+      .header(
+        "Content-Disposition",
+        'attachment; filename="monikey-export.json"',
+      );
+    return reply.send(exported);
   },
 );
 

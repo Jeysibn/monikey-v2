@@ -4399,11 +4399,602 @@ function SettingsPage() {
           </button>
         </div>
       ) : null}
+      <div className="settings-preference-card settings-links-card">
+        <div>
+          <p className="empty-title">Account controls</p>
+          <p className="field-hint">
+            Manage categories, sessions, and password access.
+          </p>
+        </div>
+        <div className="card-detail-actions">
+          <Link className="quiet-link" to="/app/settings/categories">
+            Categories
+          </Link>
+          <Link className="quiet-link" to="/app/settings/security">
+            Security
+          </Link>
+        </div>
+      </div>
       {message ? (
         <p className="form-success" role="status">
           {message}
         </p>
       ) : null}
+    </section>
+  );
+}
+
+type MonthlyReportView = {
+  month: string;
+  incomeMinor: string;
+  netExpensesMinor: string;
+  netCashFlowMinor: string;
+  categories: {
+    categoryId: string | null;
+    categoryName: string;
+    amountMinor: string;
+  }[];
+};
+
+function monthEndDate(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return "";
+  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+}
+
+function ReportsPage() {
+  const { profile, loading: authLoading } = useAuth();
+  const [month, setMonth] = useState(profile?.serverToday.slice(0, 7) ?? "");
+  const [report, setReport] = useState<MonthlyReportView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !month) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ report: MonthlyReportView }>(
+        `/reports/monthly?month=${month}`,
+      );
+      setReport(result.report);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Reports could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [month, profile]);
+
+  useEffect(() => {
+    if (profile && !month) setMonth(profile.serverToday.slice(0, 7));
+  }, [month, profile]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Understand your month"
+        title="Reports"
+        description="Monthly insights are generated from your private ledger and are available after sign-in."
+        icon="▥"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  const maxCategory =
+    report?.categories.reduce((max, category) => {
+      const amount = BigInt(category.amountMinor);
+      const absolute = amount < 0n ? -amount : amount;
+      return absolute > max ? absolute : max;
+    }, 0n) ?? 0n;
+  const exportTo = monthEndDate(month);
+  return (
+    <section className="route-page reports-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Understand your month · Private</p>
+        <h1 id="page-heading">Reports that reconcile.</h1>
+        <p className="page-description">
+          Income, net expenses, cash flow, and categories come from posted
+          journals. Transfers and card payments are excluded from spending.
+        </p>
+      </div>
+      <div className="report-toolbar">
+        <label className="field-group">
+          <span className="field-label">Month</span>
+          <input
+            className="text-input"
+            type="month"
+            value={month}
+            onChange={(event) => setMonth(event.currentTarget.value)}
+          />
+        </label>
+        <div className="report-export-actions">
+          <a
+            className="quiet-button"
+            href={`/api/v1/exports/transactions.csv?from=${month}-01&to=${exportTo}`}
+          >
+            Download CSV
+          </a>
+          <a className="quiet-button" href="/api/v1/exports/json">
+            Download JSON
+          </a>
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {report ? (
+        <>
+          <div className="report-stat-grid" aria-label="Monthly totals">
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Income</p>
+              <PrivacyMask label="monthly income">
+                {dashboardMoney(report.incomeMinor)}
+              </PrivacyMask>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net expenses</p>
+              <PrivacyMask label="net monthly expenses">
+                {dashboardMoney(report.netExpensesMinor)}
+              </PrivacyMask>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net cash flow</p>
+              <PrivacyMask label="net cash flow">
+                {dashboardMoney(report.netCashFlowMinor)}
+              </PrivacyMask>
+            </div>
+          </div>
+          <section
+            className="report-category-panel"
+            aria-labelledby="category-report-heading"
+          >
+            <div className="dashboard-panel-heading">
+              <div>
+                <p className="dashboard-label">Expense categories</p>
+                <h2 id="category-report-heading">Where the month moved</h2>
+              </div>
+            </div>
+            {report.categories.length ? (
+              <div
+                className="report-category-table"
+                role="table"
+                aria-label="Monthly expense categories"
+              >
+                <div
+                  className="report-category-row report-category-header"
+                  role="row"
+                >
+                  <span role="columnheader">Category</span>
+                  <span role="columnheader">Net amount</span>
+                </div>
+                {report.categories.map((category) => (
+                  <div
+                    className="report-category-row"
+                    role="row"
+                    key={category.categoryId ?? "uncategorized"}
+                  >
+                    <span role="cell">
+                      <strong>{category.categoryName}</strong>
+                      <span
+                        className="report-bar"
+                        style={{
+                          width: `${(() => {
+                            const amount = BigInt(category.amountMinor);
+                            const absolute = amount < 0n ? -amount : amount;
+                            if (maxCategory === 0n) return "4";
+                            const width = (absolute * 100n) / maxCategory;
+                            return (width < 4n ? 4n : width).toString();
+                          })()}%`,
+                        }}
+                      />
+                    </span>
+                    <span role="cell">
+                      <PrivacyMask
+                        label={`${category.categoryName} monthly amount`}
+                      >
+                        {dashboardMoney(category.amountMinor)}
+                      </PrivacyMask>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-empty">
+                <p>No categorized expenses in this month.</p>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+type SessionRecord = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+  current: boolean;
+};
+
+function SecurityPage() {
+  const {
+    profile,
+    csrfToken,
+    refreshProfile,
+    loading: authLoading,
+  } = useAuth();
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!profile) return;
+    try {
+      const result = await apiRequest<{ sessions: SessionRecord[] }>(
+        "/auth/sessions",
+      );
+      setSessions(result.sessions);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Sessions could not be loaded.",
+      );
+    }
+  }, [profile]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function revoke(sessionId: string) {
+    if (!csrfToken) return;
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/auth/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      setMessage("Session revoked.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The session could not be revoked.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    if (!csrfToken || newPassword !== confirmPassword) {
+      setError("New passwords must match.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest("/auth/change-password", {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      await refreshProfile();
+      setMessage("Password updated. Other sessions were signed out.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The password could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading) return <DashboardLoading />;
+  if (!profile)
+    return (
+      <RoutePage
+        eyebrow="Security"
+        title="Sign in to manage security."
+        description="Sessions and password controls are private to the account owner."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  return (
+    <section
+      className="route-page security-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Private access</p>
+        <h1 id="page-heading">Security you can review.</h1>
+        <p className="page-description">
+          Rotate your password and revoke sessions you no longer recognize.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
+      <form
+        className="account-edit-card security-form"
+        onSubmit={changePassword}
+      >
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">PASSWORD</p>
+            <h2>Change password</h2>
+          </div>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Current password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.currentTarget.value)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">New password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={12}
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.currentTarget.value)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Confirm new password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={12}
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.currentTarget.value)}
+          />
+        </label>
+        <button className="save-button" type="submit" disabled={pending}>
+          {pending ? "Updating…" : "Update password"}
+        </button>
+      </form>
+      <section className="session-panel" aria-labelledby="sessions-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Active sessions</p>
+            <h2 id="sessions-heading">Where you are signed in</h2>
+          </div>
+        </div>
+        {sessions.map((session) => (
+          <div className="session-row" key={session.id}>
+            <div>
+              <strong>
+                {session.current ? "This session" : "Other session"}
+              </strong>
+              <span>
+                {session.userAgent ?? "Unknown device"} · Last seen{" "}
+                {new Date(session.lastSeenAt).toLocaleString("en-PH")}
+              </span>
+            </div>
+            {session.current ? (
+              <span className="session-current">Current</span>
+            ) : (
+              <button
+                className="quiet-button"
+                type="button"
+                disabled={pending}
+                onClick={() => void revoke(session.id)}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+      </section>
+    </section>
+  );
+}
+
+function CategoriesPage() {
+  const { profile, csrfToken, loading: authLoading } = useAuth();
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [kind, setKind] = useState<QuickAddCategory["kind"]>("EXPENSE");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) return;
+    const result = await apiRequest<{ categories: QuickAddCategory[] }>(
+      "/categories?includeArchived=true",
+    );
+    setCategories(result.categories);
+  }, [profile]);
+  useEffect(() => {
+    void load().catch((caught) =>
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Categories could not be loaded.",
+      ),
+    );
+  }, [load]);
+  async function create(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!csrfToken || !name.trim()) return;
+    try {
+      await apiRequest("/categories", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ kind, name: name.trim() }),
+      });
+      setName("");
+      setMessage("Category created.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The category could not be created.",
+      );
+    }
+  }
+  async function archive(category: QuickAddCategory) {
+    if (!csrfToken) return;
+    try {
+      await apiRequest(`/categories/${category.id}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ archived: !category.archivedAt }),
+      });
+      setMessage(
+        category.archivedAt ? "Category restored." : "Category archived.",
+      );
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The category could not be updated.",
+      );
+    }
+  }
+  if (authLoading) return <DashboardLoading />;
+  if (!profile)
+    return (
+      <RoutePage
+        eyebrow="Categories"
+        title="Sign in to manage categories."
+        description="Categories organize future records without changing posted history."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  return (
+    <section
+      className="route-page categories-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Personalize</p>
+        <h1 id="page-heading">Categories that keep context.</h1>
+        <p className="page-description">
+          Renaming or archiving a category never rewrites a posted journal.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
+      <form className="account-edit-card category-form" onSubmit={create}>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Type *</span>
+            <select
+              className="reference-select"
+              value={kind}
+              onChange={(event) =>
+                setKind(event.currentTarget.value as QuickAddCategory["kind"])
+              }
+            >
+              <option value="EXPENSE">Expense</option>
+              <option value="INCOME">Income</option>
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              required
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Home supplies"
+            />
+          </label>
+        </div>
+        <button className="save-button" type="submit">
+          Create category
+        </button>
+      </form>
+      <section className="category-list" aria-label="Saved categories">
+        {categories.map((category) => (
+          <div className="category-row" key={category.id}>
+            <div>
+              <strong>{category.name}</strong>
+              <span>
+                {category.kind === "EXPENSE" ? "Expense" : "Income"}
+                {category.archivedAt ? " · Archived" : ""}
+              </span>
+            </div>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={() => void archive(category)}
+            >
+              {category.archivedAt ? "Restore" : "Archive"}
+            </button>
+          </div>
+        ))}
+      </section>
     </section>
   );
 }
@@ -4447,30 +5038,10 @@ function App() {
             element={<CardStatementsPage />}
           />
           <Route path="app/bills" element={<BillsPage />} />
-          <Route
-            path="app/reports"
-            element={
-              <RoutePage
-                eyebrow="Understand your month"
-                title="Reports"
-                description="Monthly totals and categories will come from the same saved journal as your balances."
-                icon="▥"
-              />
-            }
-          />
+          <Route path="app/reports" element={<ReportsPage />} />
           <Route path="app/settings" element={<SettingsPage />} />
-          <Route
-            path="app/settings/categories"
-            element={
-              <RoutePage
-                eyebrow="Personalize"
-                title="Categories"
-                description="Your income and expense categories will organize records without changing history."
-                icon="◇"
-              />
-            }
-          />
-          <Route path="app/settings/security" element={<LoginPage />} />
+          <Route path="app/settings/categories" element={<CategoriesPage />} />
+          <Route path="app/settings/security" element={<SecurityPage />} />
           <Route path="login" element={<LoginPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="*" element={<NotFoundPage />} />
