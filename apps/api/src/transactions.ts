@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { moneyMinor } from "@monikey/money";
 import type {
   AdjustmentCreateRequest,
+  CardPaymentCreateRequest,
   TransactionActivityQuery,
   TransactionCreateRequest,
   TransactionDeleteRequest,
@@ -60,6 +61,12 @@ export type TransferCreateResult = {
   transaction: TransactionRecord;
   sourceAccount: FinancialAccountRecord;
   destinationAccount: FinancialAccountRecord;
+};
+
+export type CardPaymentCreateResult = {
+  transaction: TransactionRecord;
+  cardAccount: FinancialAccountRecord;
+  fundingAccount: FinancialAccountRecord;
 };
 
 export class TransactionNotFoundError extends Error {
@@ -399,9 +406,9 @@ export async function createIncomeOrExpense(
     request.sourceAccountId,
   );
   if (account.archivedAt) throw new TransactionNotFoundError();
-  if (account.type === "CREDIT_CARD") {
+  if (account.type === "CREDIT_CARD" && request.kind !== "EXPENSE") {
     throw new TransactionConflictError(
-      "Credit card purchases are not available in this command yet.",
+      "Credit card accounts can only record purchases as expenses.",
     );
   }
 
@@ -424,6 +431,7 @@ export async function createIncomeOrExpense(
   const currentBalance = BigInt(currentAccount.balanceMinor);
   if (
     request.kind === "EXPENSE" &&
+    account.type !== "CREDIT_CARD" &&
     currentBalance < amount &&
     request.acknowledgeNegativeBalance !== true
   ) {
@@ -480,7 +488,12 @@ export async function createIncomeOrExpense(
 
   const accountPosting = {
     ledgerAccountId: account.ledgerAccountId,
-    direction: request.kind === "EXPENSE" ? "CREDIT" : "DEBIT",
+    direction:
+      account.type === "CREDIT_CARD"
+        ? "CREDIT"
+        : request.kind === "EXPENSE"
+          ? "CREDIT"
+          : "DEBIT",
     amountMinor: amount,
   } as const;
   const categoryPosting = {
@@ -954,6 +967,180 @@ export async function createAdjustment(
   };
 }
 
+export async function createCardPayment(
+  client: PoolClient,
+  userId: string,
+  cardAccountId: string,
+  request: CardPaymentCreateRequest,
+  serverToday: string,
+): Promise<CardPaymentCreateResult> {
+  assertOccurredOnNotFuture(request.occurredOn, serverToday);
+  if (cardAccountId === request.fundingAccountId) {
+    throw new TransactionConflictError(
+      "A card payment needs a separate funding account.",
+    );
+  }
+  const amount = moneyMinor(request.amountMinor);
+  const accounts = await lockAccountsInOrder(client, userId, [
+    cardAccountId,
+    request.fundingAccountId,
+  ]);
+  const cardAccount = accounts.get(cardAccountId)!;
+  const fundingAccount = accounts.get(request.fundingAccountId)!;
+  if (cardAccount.archivedAt || fundingAccount.archivedAt) {
+    throw new TransactionNotFoundError();
+  }
+  if (cardAccount.type !== "CREDIT_CARD") {
+    throw new TransactionConflictError(
+      "Payments can only settle a credit card account.",
+    );
+  }
+  if (fundingAccount.type === "CREDIT_CARD") {
+    throw new TransactionConflictError(
+      "A card payment must be funded by cash, bank, or e-wallet money.",
+    );
+  }
+
+  if (request.statementId) {
+    const statementLock = await client.query<{
+      cardAccountId: string;
+      amountDueMinor: string;
+    }>(
+      `SELECT card_account_id AS "cardAccountId", amount_due_minor::text AS "amountDueMinor"
+         FROM card_statements
+        WHERE user_id = $1 AND id = $2
+        FOR UPDATE`,
+      [userId, request.statementId],
+    );
+    const statement = statementLock.rows[0];
+    if (!statement || statement.cardAccountId !== cardAccountId) {
+      throw new TransactionNotFoundError();
+    }
+    const allocated = await client.query<{ amount: string }>(
+      `SELECT COALESCE(sum(amount_minor), 0)::text AS amount
+         FROM card_statement_allocations
+        WHERE user_id = $1 AND statement_id = $2`,
+      [userId, request.statementId],
+    );
+    const remaining =
+      BigInt(statement.amountDueMinor) -
+      BigInt(allocated.rows[0]?.amount ?? "0");
+    if (amount > remaining) {
+      throw new TransactionConflictError(
+        "The payment exceeds the remaining amount due on this statement.",
+      );
+    }
+  }
+
+  const currentFunding = await readFinancialAccount(
+    client,
+    userId,
+    request.fundingAccountId,
+  );
+  if (
+    BigInt(currentFunding.balanceMinor) < amount &&
+    request.acknowledgeNegativeBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This payment would make ${currentFunding.name} negative. Confirm the negative balance to continue.`,
+    );
+  }
+
+  const transactionResult = await client.query<{
+    id: string;
+    kind: TransactionKind;
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  }>(
+    `INSERT INTO transactions
+       (user_id, kind, occurred_on, category_id, note, refunded_transaction_id)
+     VALUES ($1, 'CARD_PAYMENT', $2::date, NULL, $3, NULL)
+     RETURNING id, kind, status, current_revision AS "currentRevision",
+               occurred_on::text AS "occurredOn", category_id AS "categoryId",
+               refunded_transaction_id AS "refundedTransactionId", note`,
+    [userId, request.occurredOn, request.note ?? null],
+  );
+  const transaction = transactionResult.rows[0];
+  if (!transaction)
+    throw new TransactionValidationError("Unable to create card payment.");
+
+  await client.query(
+    `INSERT INTO transaction_revisions
+       (user_id, transaction_id, version, before_json, after_json, actor_id)
+     VALUES ($1, $2, 1, NULL, $3::jsonb, $1)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "CARD_PAYMENT",
+        cardAccountId,
+        fundingAccountId: request.fundingAccountId,
+        amountMinor: request.amountMinor,
+        ...(request.statementId ? { statementId: request.statementId } : {}),
+        occurredOn: request.occurredOn,
+        note: request.note ?? null,
+      }),
+    ],
+  );
+
+  await postBalancedJournal(client, {
+    userId,
+    transactionId: transaction.id,
+    operationKind: "CARD_PAYMENT",
+    postings: [
+      {
+        ledgerAccountId: cardAccount.ledgerAccountId,
+        direction: "DEBIT",
+        amountMinor: amount,
+      },
+      {
+        ledgerAccountId: fundingAccount.ledgerAccountId,
+        direction: "CREDIT",
+        amountMinor: amount,
+      },
+    ],
+  });
+
+  await client.query(
+    `INSERT INTO audit_events
+       (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+     VALUES ($1, $1, 'TRANSACTION', $2, 'POSTED', $3::jsonb)`,
+    [
+      userId,
+      transaction.id,
+      JSON.stringify({
+        kind: "CARD_PAYMENT",
+        cardAccountId,
+        fundingAccountId: request.fundingAccountId,
+        amountMinor: request.amountMinor,
+      }),
+    ],
+  );
+
+  if (request.statementId) {
+    await client.query(
+      `INSERT INTO card_statement_allocations
+         (user_id, statement_id, transaction_id, amount_minor)
+       VALUES ($1, $2, $3, $4::bigint)`,
+      [userId, request.statementId, transaction.id, request.amountMinor],
+    );
+  }
+
+  return {
+    transaction: mapTransaction(transaction),
+    cardAccount: await readFinancialAccount(client, userId, cardAccountId),
+    fundingAccount: await readFinancialAccount(
+      client,
+      userId,
+      request.fundingAccountId,
+    ),
+  };
+}
+
 export async function editIncomeOrExpense(
   client: PoolClient,
   userId: string,
@@ -990,9 +1177,9 @@ export async function editIncomeOrExpense(
   const oldAccount = accounts.get(oldSourceAccountId)!;
   const newAccount = accounts.get(request.sourceAccountId)!;
   if (newAccount.archivedAt) throw new TransactionNotFoundError();
-  if (newAccount.type === "CREDIT_CARD") {
+  if (newAccount.type === "CREDIT_CARD" && request.kind !== "EXPENSE") {
     throw new TransactionConflictError(
-      "Credit card purchases are not available in this command yet.",
+      "Credit card accounts can only record purchases as expenses.",
     );
   }
   const category = await readOwnedCategoryForPosting(
@@ -1020,7 +1207,7 @@ export async function editIncomeOrExpense(
     request.sourceAccountId,
   );
   let projectedBalance = BigInt(currentNewAccount.balanceMinor);
-  if (request.kind === "EXPENSE") {
+  if (request.kind === "EXPENSE" && newAccount.type !== "CREDIT_CARD") {
     if (oldSourceAccountId === request.sourceAccountId) {
       projectedBalance += oldAmount;
     }
@@ -1091,7 +1278,12 @@ export async function editIncomeOrExpense(
 
   const amountPosting = {
     ledgerAccountId: newAccount.ledgerAccountId,
-    direction: request.kind === "EXPENSE" ? "CREDIT" : "DEBIT",
+    direction:
+      newAccount.type === "CREDIT_CARD"
+        ? "CREDIT"
+        : request.kind === "EXPENSE"
+          ? "CREDIT"
+          : "DEBIT",
     amountMinor: newAmount,
   } as const;
   const categoryPosting = {

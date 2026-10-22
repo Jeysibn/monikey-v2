@@ -5,6 +5,19 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import {
   ApiErrorResponseSchema,
+  BillCreateRequestSchema,
+  BillOccurrenceResponseSchema,
+  BillOccurrencesResponseSchema,
+  BillPatchRequestSchema,
+  BillPayRequestSchema,
+  BillResponseSchema,
+  BillsResponseSchema,
+  CardPaymentCreateRequestSchema,
+  CardPaymentResponseSchema,
+  CardStatementCreateRequestSchema,
+  CardStatementPatchRequestSchema,
+  CardStatementResponseSchema,
+  CardStatementsResponseSchema,
   ChangePasswordRequestSchema,
   CategoriesResponseSchema,
   CategoryCreateRequestSchema,
@@ -49,7 +62,21 @@ import {
   updateCategory,
 } from "./categories.js";
 import {
+  createCardStatement,
+  listCardStatements,
+  updateCardStatement,
+} from "./card-statements.js";
+import {
+  createBill,
+  listBillOccurrences,
+  listBills,
+  payBillOccurrence,
+  skipBillOccurrence,
+  updateBill,
+} from "./bills.js";
+import {
   createAdjustment,
+  createCardPayment,
   createIncomeOrExpense,
   createRefund,
   createTransfer,
@@ -146,6 +173,7 @@ app.addHook("onSend", (request, reply, _payload, done) => {
     request.url.startsWith("/api/v1/auth/") ||
     request.url.startsWith("/api/v1/me") ||
     request.url.startsWith("/api/v1/accounts") ||
+    request.url.startsWith("/api/v1/bills") ||
     request.url.startsWith("/api/v1/transactions")
   ) {
     reply.header("Cache-Control", "no-store");
@@ -1425,6 +1453,462 @@ app.post(
                   serverTodayInManila(),
                 )),
       })),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.post(
+  "/api/v1/credit-cards/:cardAccountId/payments",
+  {
+    schema: {
+      tags: ["credit-cards", "transactions"],
+      summary: "Post a payment from an asset account to a credit card",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(CardPaymentCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(CardPaymentResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const body = CardPaymentCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, ...body },
+        async () => ({
+          ...(await createCardPayment(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            body,
+            serverTodayInManila(),
+          )),
+        }),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.get(
+  "/api/v1/credit-cards/:cardAccountId/statements",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "List owner-scoped card statements",
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CardStatementsResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const statements = await withDatabaseConnection((client) =>
+      listCardStatements(client, ownerUserId(request), cardAccountId),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { statements };
+  },
+);
+
+app.post(
+  "/api/v1/credit-cards/:cardAccountId/statements",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "Record a manually entered card statement",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(CardStatementCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(CardStatementResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const body = CardStatementCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, ...body },
+        async () => ({
+          statement: await createCardStatement(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            body,
+          ),
+        }),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.patch(
+  "/api/v1/credit-cards/:cardAccountId/statements/:statementId",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "Correct a manually entered card statement",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(
+        z.object({
+          cardAccountId: z.string().uuid(),
+          statementId: z.string().uuid(),
+        }),
+        { target: "draft-7" },
+      ),
+      body: z.toJSONSchema(CardStatementPatchRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CardStatementResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId, statementId } = z
+      .object({
+        cardAccountId: z.string().uuid(),
+        statementId: z.string().uuid(),
+      })
+      .parse(request.params);
+    const body = CardStatementPatchRequestSchema.parse(request.body);
+    if (Object.values(body).every((value) => value === undefined)) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a statement field to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, statementId, ...body },
+        async () => ({
+          statement: await updateCardStatement(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            statementId,
+            body,
+          ),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+const BillListQuerySchema = z.object({
+  includeArchived: z.coerce.boolean().optional().default(false),
+});
+
+const BillOccurrenceQuerySchema = z.object({
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+app.get(
+  "/api/v1/bills",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "List this owner's recurring bills",
+      querystring: z.toJSONSchema(BillListQuerySchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillsResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = BillListQuerySchema.parse(request.query);
+    const bills = await withDatabaseConnection((client) =>
+      listBills(client, ownerUserId(request), query.includeArchived),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { bills };
+  },
+);
+
+app.post(
+  "/api/v1/bills",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Create an owner-scoped recurring bill",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(BillCreateRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(BillResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const body = BillCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        bill: await createBill(client, ownerUserId(request), body),
+      })),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.patch(
+  "/api/v1/bills/:billId",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Update an owner-scoped recurring bill",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ billId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(BillPatchRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { billId } = z
+      .object({ billId: z.string().uuid() })
+      .parse(request.params);
+    const body = BillPatchRequestSchema.parse(request.body);
+    if (Object.values(body).every((value) => value === undefined)) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a bill field to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { billId, ...body },
+        async () => ({
+          bill: await updateBill(client, ownerUserId(request), billId, body),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+app.get(
+  "/api/v1/bills/occurrences",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "List recurring bill occurrences for a date window",
+      querystring: z.toJSONSchema(BillOccurrenceQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillOccurrencesResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = BillOccurrenceQuerySchema.parse(request.query);
+    const today = serverTodayInManila();
+    const from = query.from ?? today.slice(0, 8) + "01";
+    const to = query.to ?? `${today.slice(0, 7)}-28`;
+    if (from > to) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "The occurrence date window is invalid.",
+          requestId: request.id,
+        },
+      });
+    }
+    const occurrences = await withDatabaseConnection((client) =>
+      listBillOccurrences(client, ownerUserId(request), from, to, today),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { occurrences, serverToday: today };
+  },
+);
+
+app.post(
+  "/api/v1/bills/occurrences/:occurrenceId/pay",
+  {
+    schema: {
+      tags: ["bills", "transactions"],
+      summary: "Pay one recurring bill occurrence",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ occurrenceId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(BillPayRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(BillOccurrenceResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { occurrenceId } = z
+      .object({ occurrenceId: z.string().uuid() })
+      .parse(request.params);
+    const body = BillPayRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { occurrenceId, ...body },
+        async () =>
+          payBillOccurrence(
+            client,
+            ownerUserId(request),
+            occurrenceId,
+            body.fundingAccountId,
+            body.amountMinor,
+            body.note,
+            body.acknowledgeNegativeBalance,
+            serverTodayInManila(),
+          ),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.post(
+  "/api/v1/bills/occurrences/:occurrenceId/skip",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Skip one recurring bill occurrence",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ occurrenceId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(
+          z.object({
+            occurrence: BillOccurrencesResponseSchema.shape.occurrences.element,
+          }),
+          { target: "draft-7" },
+        ),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { occurrenceId } = z
+      .object({ occurrenceId: z.string().uuid() })
+      .parse(request.params);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { occurrenceId },
+        async () => ({
+          occurrence: await skipBillOccurrence(
+            client,
+            ownerUserId(request),
+            occurrenceId,
+          ),
+        }),
+      ),
     );
     return reply.code(201).send(result.value);
   },

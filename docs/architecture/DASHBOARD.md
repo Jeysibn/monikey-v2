@@ -10,8 +10,8 @@ The dashboard reads one owner-scoped summary from `GET /api/v1/dashboard/summary
 - `incomeMinor` and `spendingMinor` cover the server's current `Asia/Manila` month. They include active income and expense journals, including fee postings, and exclude journals whose active posting was reversed.
 - All values remain PostgreSQL numeric values serialized as decimal minor-unit strings. No JavaScript floating-point arithmetic is used.
 
-The service also returns the active owner-scoped accounts and the five most recent activity records for the home screen. Account balances and activity continue to use the ledger and current transaction revisions as their source of truth.
+The service also returns the active owner-scoped accounts, up to five upcoming or overdue bill occurrences in the next three months, and the five most recent activity records for the home screen. Occurrences are generated through the same deterministic Bills service used by `/bills`; paid and skipped reminders are excluded from the upcoming widget. Account balances, card debt, bill amounts, and activity continue to use owner-scoped API records, with ledger postings as the source of truth for money that has moved.
 
 ## Reconciliation coverage
 
-`apps/api/src/dashboard.integration.test.ts` uses real PostgreSQL and the actual ledger services to verify opening balances, card debt, income, spending, transfer fees, and an edited expense reconcile to the dashboard totals. The browser acceptance suite checks that the authenticated home screen shows those API-backed values and recent activity after a Quick Add expense.
+`apps/api/src/dashboard.integration.test.ts` uses real PostgreSQL and the actual ledger services to verify opening balances, card debt, income, spending, transfer fees, and an edited expense reconcile to the dashboard totals. Local browser acceptance checks the authenticated home screen, card liability hierarchy, upcoming-bill panel, and Bills route against the actual API and PostgreSQL.

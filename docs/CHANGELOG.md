@@ -1,11 +1,8 @@
-# Change log
+# Changelog
 
-## Foundation scaffold
+## 2026-10-22 — Phase 4 cards and recurring bills
 
-- Started a new MoniKey V2 workspace with no V1 application code or financial data.
-- Added shared runtime contracts, a PHP minor-unit package, a Fastify readiness endpoint, and a responsive non-financial empty state.
-- Added Prisma configuration and Docker Compose services for PostgreSQL, API, web, and explicit migrations.
-- Added contributor instructions, issue/PR templates, CI build/typecheck gates, and architecture context.
-- Created the public `Jeysibn/monikey-v2` repository with protected `dev` and `main`, required CI/CodeQL checks, and feature → dev → main pull request flow.
-- Added a standard API error envelope, generated OpenAPI TypeScript client, exact-money unit tests, and a Compose-backed desktop/mobile browser acceptance workflow.
-- Local Docker is unavailable, so the Compose-backed PostgreSQL/API e2e acceptance must run in GitHub Actions.
+- Added credit-card liability purchases, exact card payments, negative funding confirmation, credit utilization, manual statement snapshots, partial allocations, and audit-safe correction.
+- Added monthly recurring bill definitions, deterministic occurrences, February day-31 clamping, fixed/variable payment confirmation, skip actions, and linked ledger expenses.
+- Added upcoming/overdue bill visibility to the dashboard without subtracting unpaid reminders from Available Money.
+- Added PostgreSQL migrations, integration tests, generated OpenAPI types, mobile-first screens, and local Docker-backed Playwright evidence.

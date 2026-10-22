@@ -683,6 +683,143 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     sortOrder: 0,
   });
 
+  const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  const food = (await categories.json()).categories.find(
+    (category: { name: string }) => category.name === "Food",
+  );
+  expect(food?.id).toBeTruthy();
+  const cardPurchase = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": "card-purchase-test-0001",
+    },
+    data: {
+      kind: "EXPENSE",
+      sourceAccountId: cardAccount.id,
+      categoryId: food.id,
+      amountMinor: "80000",
+      occurredOn: "2026-10-22",
+    },
+  });
+  expect(cardPurchase.status()).toBe(201);
+  const statement = await page.request.post(
+    `${api}/credit-cards/${cardAccount.id}/statements`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": "card-statement-test-0001",
+      },
+      data: {
+        statementDate: "2026-10-20",
+        periodStart: "2026-09-20",
+        periodEnd: "2026-10-19",
+        amountDueMinor: "100000",
+        paymentDueDate: "2026-11-02",
+        note: "October statement",
+      },
+    },
+  );
+  expect(statement.status()).toBe(201);
+  const statementRecord = (await statement.json()).statement;
+  const cardPayment = await page.request.post(
+    `${api}/credit-cards/${cardAccount.id}/payments`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": "card-payment-test-0001",
+      },
+      data: {
+        fundingAccountId: bank.id,
+        statementId: statementRecord.id,
+        amountMinor: "30000",
+        occurredOn: "2026-10-22",
+      },
+    },
+  );
+  expect(cardPayment.status()).toBe(201);
+  await expect(cardPayment.json()).resolves.toMatchObject({
+    transaction: { kind: "CARD_PAYMENT" },
+    cardAccount: { balanceMinor: "175000" },
+    fundingAccount: { balanceMinor: "970000" },
+  });
+  const statements = await page.request.get(
+    `${api}/credit-cards/${cardAccount.id}/statements`,
+  );
+  expect(statements.status()).toBe(200);
+  await expect(statements.json()).resolves.toMatchObject({
+    statements: [
+      {
+        id: statementRecord.id,
+        allocatedMinor: "30000",
+        remainingDueMinor: "70000",
+      },
+    ],
+  });
+  const correctedStatement = await page.request.patch(
+    `${api}/credit-cards/${cardAccount.id}/statements/${statementRecord.id}`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": "card-statement-correction-test-0001",
+      },
+      data: { amountDueMinor: "120000" },
+    },
+  );
+  expect(correctedStatement.status()).toBe(200);
+  await expect(correctedStatement.json()).resolves.toMatchObject({
+    statement: { amountDueMinor: "120000", remainingDueMinor: "90000" },
+  });
+
+  const bill = await page.request.post(`${api}/bills`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": "bill-create-financial-test-0001",
+    },
+    data: {
+      name: "Month end food",
+      categoryId: food.id,
+      suggestedAccountId: bank.id,
+      amountMode: "FIXED",
+      defaultAmountMinor: "10000",
+      dueDay: 31,
+      startOn: "2026-01-01",
+    },
+  });
+  expect(bill.status()).toBe(201);
+  const billRecord = (await bill.json()).bill;
+  const billOccurrences = await page.request.get(
+    `${api}/bills/occurrences?from=2026-02-01&to=2026-02-28`,
+  );
+  expect(billOccurrences.status()).toBe(200);
+  const febOccurrence = (await billOccurrences.json()).occurrences[0];
+  expect(febOccurrence).toMatchObject({
+    billId: billRecord.id,
+    dueOn: "2026-02-28",
+    expectedAmountMinor: "10000",
+    status: "OVERDUE",
+  });
+  const paidBill = await page.request.post(
+    `${api}/bills/occurrences/${febOccurrence.id}/pay`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": "bill-pay-financial-test-0001",
+      },
+      data: { fundingAccountId: bank.id },
+    },
+  );
+  expect(paidBill.status()).toBe(201);
+  await expect(paidBill.json()).resolves.toMatchObject({
+    occurrence: { status: "PAID", actualAmountMinor: "10000" },
+    transaction: { kind: "EXPENSE" },
+  });
+
   const profile = await page.request.get(`${api}/me`);
   await expect(profile.json()).resolves.toMatchObject({
     onboardingStatus: "READY",
@@ -701,7 +838,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     account: {
       id: bank.id,
       name: "Daily Bank Renamed",
-      balanceMinor: "1000000",
+      balanceMinor: "960000",
       sortOrder: 20,
     },
   });
@@ -725,7 +862,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   expect(archive.status()).toBe(200);
   const archived = (await archive.json()).account;
   expect(archived.archivedAt).toBeTruthy();
-  expect(archived.balanceMinor).toBe("1000000");
+  expect(archived.balanceMinor).toBe("960000");
 
   const archiveReplay = await page.request.post(
     `${api}/accounts/${bank.id}/archive`,
@@ -749,7 +886,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     historicalAccounts.find(
       (account: { id: string }) => account.id === bank.id,
     ),
-  ).toMatchObject({ archivedAt: archived.archivedAt, balanceMinor: "1000000" });
+  ).toMatchObject({ archivedAt: archived.archivedAt, balanceMinor: "960000" });
 
   const missingAccount = await page.request.get(
     `${api}/accounts/941e4567-e89b-42d3-a456-426614174099`,

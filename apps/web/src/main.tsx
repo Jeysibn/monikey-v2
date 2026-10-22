@@ -520,6 +520,7 @@ type DashboardAccount = {
   type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
   name: string;
   balanceMinor: string;
+  creditLimitMinor?: string | null;
   archivedAt: string | null;
 };
 
@@ -553,6 +554,14 @@ type DashboardSummaryResponse = {
   incomeMinor: string;
   spendingMinor: string;
   accounts: DashboardAccount[];
+  upcomingBills: {
+    id: string;
+    billName: string;
+    expectedAmountMinor: string | null;
+    actualAmountMinor: string | null;
+    dueOn: string;
+    status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
+  }[];
   recentActivity: DashboardActivity[];
   serverToday: string;
 };
@@ -841,6 +850,49 @@ function DashboardHome({ profile }: { profile: Profile }) {
               )}
             </section>
           </div>
+
+          <section
+            className="dashboard-panel dashboard-bills-panel"
+            aria-labelledby="dashboard-bills-heading"
+          >
+            <div className="dashboard-panel-heading">
+              <div>
+                <p className="dashboard-label">Plan ahead</p>
+                <h2 id="dashboard-bills-heading">Upcoming bills</h2>
+              </div>
+              <Link className="quiet-link" to="/app/bills">
+                View bills
+              </Link>
+            </div>
+            {summary.upcomingBills.length ? (
+              <div className="bill-list">
+                {summary.upcomingBills.map((bill) => (
+                  <div className="bill-row" key={bill.id}>
+                    <div>
+                      <strong>{bill.billName}</strong>
+                      <span>
+                        {bill.dueOn} ·{" "}
+                        {bill.status === "OVERDUE" ? "Overdue" : "Upcoming"}
+                      </span>
+                    </div>
+                    <span>
+                      {bill.expectedAmountMinor ? (
+                        <PrivacyMask label={`${bill.billName} expected bill`}>
+                          {formatPhp(moneyMinor(bill.expectedAmountMinor))}
+                        </PrivacyMask>
+                      ) : (
+                        "Variable amount"
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-empty">
+                <p>No upcoming bills.</p>
+              </div>
+            )}
+          </section>
         </>
       ) : null}
     </section>
@@ -1242,6 +1294,21 @@ type AccountRecord = DashboardAccount & {
   dueDay: number | null;
 };
 
+type CardStatementRecord = {
+  id: string;
+  cardAccountId: string;
+  statementDate: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  amountDueMinor: string;
+  allocatedMinor: string;
+  remainingDueMinor: string;
+  paymentDueDate: string;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 function TransactionDetailPage() {
   const { transactionId } = useParams<{ transactionId: string }>();
   const { csrfToken, profile, loading: authLoading } = useAuth();
@@ -1625,6 +1692,18 @@ function accountTypeLabel(type: DashboardAccount["type"]): string {
   return dashboardAccountType(type);
 }
 
+function cardUtilization(account: AccountRecord): string | null {
+  if (!account.creditLimitMinor) return null;
+  const limit = BigInt(account.creditLimitMinor);
+  const debt = BigInt(account.balanceMinor);
+  if (limit <= 0n) return null;
+  const boundedDebt = debt > 0n ? debt : 0n;
+  const basisPoints = (boundedDebt * 10000n) / limit;
+  return `${basisPoints / 100n}.${(basisPoints % 100n)
+    .toString()
+    .padStart(2, "0")}%`;
+}
+
 function AccountsPage() {
   const { profile, loading: authLoading, csrfToken } = useAuth();
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
@@ -1641,7 +1720,10 @@ function AccountsPage() {
   const [success, setSuccess] = useState("");
 
   const load = useCallback(async () => {
-    if (!profile) return;
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -1936,7 +2018,10 @@ function AccountDetailPage() {
   const [success, setSuccess] = useState("");
 
   const load = useCallback(async () => {
-    if (!profile || !accountId) return;
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -2053,6 +2138,8 @@ function AccountDetailPage() {
     );
   }
 
+  const utilization = cardUtilization(account);
+
   return (
     <section
       className="route-page account-detail-page"
@@ -2088,7 +2175,42 @@ function AccountDetailPage() {
           {account.currency} · {activity.length} recorded{" "}
           {activity.length === 1 ? "entry" : "entries"}
         </span>
+        {account.type === "CREDIT_CARD" ? (
+          <div className="card-metrics" aria-label="Credit card metrics">
+            <span>
+              <strong>Limit</strong>{" "}
+              {account.creditLimitMinor
+                ? formatPhp(moneyMinor(account.creditLimitMinor))
+                : "Unavailable"}
+            </span>
+            <span>
+              <strong>Utilization</strong> {utilization ?? "Unavailable"}
+              {utilization &&
+              BigInt(account.balanceMinor) >
+                BigInt(account.creditLimitMinor ?? "0")
+                ? " · Over limit"
+                : ""}
+            </span>
+          </div>
+        ) : null}
       </div>
+
+      {account.type === "CREDIT_CARD" && !account.archivedAt ? (
+        <div className="card-detail-actions">
+          <Link
+            className="dashboard-primary-action card-pay-action"
+            to={`/app/accounts/${account.id}/pay`}
+          >
+            Pay this card
+          </Link>
+          <Link
+            className="quiet-link"
+            to={`/app/accounts/${account.id}/statements`}
+          >
+            View statements
+          </Link>
+        </div>
+      ) : null}
 
       <form className="account-edit-card" onSubmit={saveAccount}>
         <div className="form-heading">
@@ -2217,6 +2339,1177 @@ function AccountDetailPage() {
       <Link className="quiet-link" to="/app/accounts">
         Back to Accounts
       </Link>
+    </section>
+  );
+}
+
+function CardStatementsPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [account, setAccount] = useState<AccountRecord | null>(null);
+  const [statements, setStatements] = useState<CardStatementRecord[]>([]);
+  const [statementDate, setStatementDate] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [amountDue, setAmountDue] = useState("");
+  const [paymentDueDate, setPaymentDueDate] = useState("");
+  const [note, setNote] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const [accountResult, statementResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ statements: CardStatementRecord[] }>(
+          `/credit-cards/${accountId}/statements`,
+        ),
+      ]);
+      setAccount(accountResult.account);
+      setStatements(statementResult.statements);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Card statements could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function resetStatementForm() {
+    setEditingId(null);
+    setStatementDate("");
+    setPeriodStart("");
+    setPeriodEnd("");
+    setAmountDue("");
+    setPaymentDueDate("");
+    setNote("");
+  }
+
+  function editStatement(statement: CardStatementRecord) {
+    setEditingId(statement.id);
+    setStatementDate(statement.statementDate);
+    setPeriodStart(statement.periodStart ?? "");
+    setPeriodEnd(statement.periodEnd ?? "");
+    setAmountDue(phpInputFromMinor(statement.amountDueMinor));
+    setPaymentDueDate(statement.paymentDueDate);
+    setNote(statement.note ?? "");
+  }
+
+  async function saveStatement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!accountId || !csrfToken || !statementDate || !paymentDueDate) {
+      setError("Choose the statement and payment dates.");
+      return;
+    }
+    let amountDueMinor: string;
+    try {
+      amountDueMinor = parsePhpMinor(amountDue || "0").toString();
+    } catch {
+      setError("Enter a valid non-negative PHP amount due.");
+      return;
+    }
+    setPending(true);
+    try {
+      const body = {
+        statementDate,
+        ...(periodStart ? { periodStart } : {}),
+        ...(periodEnd ? { periodEnd } : {}),
+        amountDueMinor,
+        paymentDueDate,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      };
+      await apiRequest(
+        editingId
+          ? `/credit-cards/${accountId}/statements/${editingId}`
+          : `/credit-cards/${accountId}/statements`,
+        {
+          method: editingId ? "PATCH" : "POST",
+          headers: {
+            "x-csrf-token": csrfToken,
+            "idempotency-key": crypto.randomUUID(),
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      setSuccess(editingId ? "Statement corrected." : "Statement recorded.");
+      resetStatementForm();
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The statement could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Credit card statements"
+        title="Statements"
+        description="Statement snapshots and payment allocations are private to the card owner."
+        icon="□"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!account || account.type !== "CREDIT_CARD") {
+    return (
+      <RoutePage
+        eyebrow="Credit card statements"
+        title="Card unavailable."
+        description={
+          error || "The requested card is not available to this owner."
+        }
+        icon="□"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  return (
+    <section
+      className="route-page statements-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Credit cards · Statements</p>
+        <h1 id="page-heading">{account.name} statements.</h1>
+        <p className="page-description">
+          Enter the issuer snapshot manually. Statement amounts stay separate
+          from overall card debt and never create ledger postings.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form
+        className="account-edit-card statement-form"
+        onSubmit={saveStatement}
+      >
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">
+              {editingId ? "CORRECT STATEMENT" : "NEW STATEMENT"}
+            </p>
+            <h2>
+              {editingId
+                ? "Keep the issuer record accurate"
+                : "Record an issuer snapshot"}
+            </h2>
+          </div>
+          {editingId ? (
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={resetStatementForm}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Statement date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={statementDate}
+              onChange={(event) => setStatementDate(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Payment due date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={paymentDueDate}
+              onChange={(event) => setPaymentDueDate(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">
+              Period start <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              type="date"
+              value={periodStart}
+              onChange={(event) => setPeriodStart(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Period end <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              type="date"
+              value={periodEnd}
+              onChange={(event) => setPeriodEnd(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Amount due *</span>
+          <input
+            className="text-input"
+            type="text"
+            inputMode="decimal"
+            value={amountDue}
+            onChange={(event) => setAmountDue(event.currentTarget.value)}
+            placeholder="0.00"
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">
+            Note <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.currentTarget.value)}
+            placeholder="Issuer reference"
+          />
+        </label>
+        <button className="save-button" type="submit" disabled={pending}>
+          {pending
+            ? "Saving…"
+            : editingId
+              ? "Save statement correction"
+              : "Record statement"}
+        </button>
+      </form>
+      <section
+        className="statement-list"
+        aria-labelledby="statement-history-heading"
+      >
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Statement history</p>
+            <h2 id="statement-history-heading">Issuer snapshots</h2>
+          </div>
+        </div>
+        {statements.length ? (
+          statements.map((statement) => (
+            <article className="statement-row" key={statement.id}>
+              <div className="statement-row-main">
+                <strong>{statement.statementDate}</strong>
+                <span>
+                  Due {statement.paymentDueDate}
+                  {statement.note ? ` · ${statement.note}` : ""}
+                </span>
+              </div>
+              <div className="statement-row-amount">
+                <PrivacyMask label="statement amount due">
+                  {dashboardMoney(statement.amountDueMinor)}
+                </PrivacyMask>
+                <span>
+                  {statement.remainingDueMinor === "0" ? (
+                    "Paid or allocated"
+                  ) : (
+                    <PrivacyMask label="statement remaining due">
+                      {`${formatPhp(moneyMinor(statement.remainingDueMinor))} remaining`}
+                    </PrivacyMask>
+                  )}
+                </span>
+              </div>
+              <button
+                className="quiet-button"
+                type="button"
+                onClick={() => editStatement(statement)}
+              >
+                Edit statement
+              </button>
+            </article>
+          ))
+        ) : (
+          <div className="dashboard-empty">
+            <p>No statement snapshots yet.</p>
+            <p>
+              Record the amount shown by your issuer to track payment allocation
+              separately from card debt.
+            </p>
+          </div>
+        )}
+      </section>
+      <Link className="quiet-link" to={`/app/accounts/${account.id}`}>
+        Back to card
+      </Link>
+    </section>
+  );
+}
+
+function CardPaymentPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [card, setCard] = useState<AccountRecord | null>(null);
+  const [fundingAccounts, setFundingAccounts] = useState<AccountRecord[]>([]);
+  const [fundingAccountId, setFundingAccountId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [occurredOn, setOccurredOn] = useState(profile?.serverToday ?? "");
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [confirmNegative, setConfirmNegative] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const isOnline = useOnlineStatus();
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const [cardResult, accountsResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
+      ]);
+      setCard(cardResult.account);
+      const assets = accountsResult.accounts.filter(
+        (account) =>
+          !account.archivedAt &&
+          account.type !== "CREDIT_CARD" &&
+          account.id !== accountId,
+      );
+      setFundingAccounts(assets);
+      setFundingAccountId((current) => current || assets[0]?.id || "");
+      setOccurredOn(profile.serverToday);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The card could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function parsePaymentAmount(): string {
+    try {
+      const parsed = parsePhpMinor(amount);
+      if (parsed <= 0n) throw new Error();
+      return parsed.toString();
+    } catch {
+      throw new Error("Enter a positive PHP payment amount.");
+    }
+  }
+
+  async function submit(
+    event: React.FormEvent<HTMLFormElement>,
+    acknowledge = false,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    setConfirmNegative(false);
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a payment.");
+      return;
+    }
+    if (!accountId || !csrfToken || !fundingAccountId) {
+      setError("Choose a funding account.");
+      return;
+    }
+    let amountMinor: string;
+    try {
+      amountMinor = parsePaymentAmount();
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Enter a valid amount.",
+      );
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/credit-cards/${accountId}/payments`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          fundingAccountId,
+          amountMinor,
+          occurredOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+          ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+        }),
+      });
+      setAmount("");
+      setNote("");
+      setSuccess("Card payment posted. It is not counted as a new expense.");
+      await load();
+    } catch (caught) {
+      const message =
+        caught instanceof Error
+          ? caught.message
+          : "The card payment could not be saved.";
+      if (message.includes("negative")) setConfirmNegative(true);
+      setError(message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Credit card payment"
+        title="Sign in to pay a card."
+        description="Card payments are private ledger actions between your card and a funding account."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!card || card.type !== "CREDIT_CARD") {
+    return (
+      <RoutePage
+        eyebrow="Credit card payment"
+        title="Card unavailable."
+        description={
+          error || "The requested credit card is not available to this owner."
+        }
+        icon="◇"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  return (
+    <section className="route-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Credit card · Payment</p>
+        <h1 id="page-heading">Pay {card.name}.</h1>
+        <p className="page-description">
+          Settle card liability from cash, bank, or e-wallet money. This payment
+          does not create another expense.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form
+        className="quick-add-card card-payment-card"
+        onSubmit={(event) => void submit(event)}
+      >
+        <div className="account-detail-hero compact">
+          <span className="dashboard-label">Outstanding debt</span>
+          <PrivacyMask label={`${card.name} debt`}>
+            {dashboardMoney(card.balanceMinor)}
+          </PrivacyMask>
+          <span className="dashboard-helper">
+            {card.creditLimitMinor
+              ? `Limit ${formatPhp(moneyMinor(card.creditLimitMinor))}`
+              : "Limit unavailable"}
+          </span>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Payment amount *</span>
+          <input
+            className="text-input"
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.currentTarget.value)}
+            placeholder="0.00"
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Funding account *</span>
+          <select
+            className="reference-select"
+            value={fundingAccountId}
+            onChange={(event) => setFundingAccountId(event.currentTarget.value)}
+            disabled={!fundingAccounts.length}
+          >
+            <option value="">Choose a funding account</option>
+            {fundingAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name} · {formatPhp(moneyMinor(account.balanceMinor))}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="reference-grid quick-add-details">
+          <label className="field-group">
+            <span className="field-label">Date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={occurredOn}
+              max={profile.serverToday}
+              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Note <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              value={note}
+              maxLength={500}
+              onChange={(event) => setNote(event.currentTarget.value)}
+              placeholder="Statement payment"
+            />
+          </label>
+        </div>
+        {confirmNegative ? (
+          <div className="confirmation-panel" role="alert">
+            <p>
+              This payment will make the funding account negative. Continue?
+            </p>
+            <button
+              className="save-button"
+              type="button"
+              disabled={pending || !isOnline}
+              onClick={(event) =>
+                void submit(
+                  event as unknown as React.FormEvent<HTMLFormElement>,
+                  true,
+                )
+              }
+            >
+              Confirm and pay
+            </button>
+          </div>
+        ) : (
+          <button
+            className="save-button"
+            type="submit"
+            disabled={pending || !fundingAccounts.length || !isOnline}
+          >
+            {pending ? "Saving…" : "Record card payment"}
+          </button>
+        )}
+      </form>
+      <Link className="quiet-link" to={`/app/accounts/${card.id}`}>
+        Back to card
+      </Link>
+    </section>
+  );
+}
+
+type BillRecord = {
+  id: string;
+  name: string;
+  categoryId: string;
+  suggestedAccountId: string | null;
+  amountMode: "FIXED" | "VARIABLE";
+  defaultAmountMinor: string | null;
+  dueDay: number;
+  startOn: string;
+  endOn: string | null;
+  status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BillOccurrence = {
+  id: string;
+  billId: string;
+  billName: string;
+  categoryId: string;
+  suggestedAccountId: string | null;
+  amountMode: "FIXED" | "VARIABLE";
+  expectedAmountMinor: string | null;
+  actualAmountMinor: string | null;
+  dueOn: string;
+  status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
+  paidTransactionId: string | null;
+  note: string | null;
+};
+
+function billWindow(today: string) {
+  const [year = 1970, month = 1] = today.split("-").slice(0, 2).map(Number);
+  const end = new Date(Date.UTC(year, month - 1 + 3, 0));
+  return {
+    from: `${today.slice(0, 7)}-01`,
+    to: `${end.getUTCFullYear().toString().padStart(4, "0")}-${(end.getUTCMonth() + 1).toString().padStart(2, "0")}-${end.getUTCDate().toString().padStart(2, "0")}`,
+  };
+}
+
+function BillsPage() {
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const isOnline = useOnlineStatus();
+  const [bills, setBills] = useState<BillRecord[]>([]);
+  const [occurrences, setOccurrences] = useState<BillOccurrence[]>([]);
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [suggestedAccountId, setSuggestedAccountId] = useState("");
+  const [amountMode, setAmountMode] =
+    useState<BillRecord["amountMode"]>("FIXED");
+  const [defaultAmount, setDefaultAmount] = useState("");
+  const [dueDay, setDueDay] = useState("1");
+  const [startOn, setStartOn] = useState(profile?.serverToday ?? "");
+  const [note, setNote] = useState("");
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payAccountId, setPayAccountId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const window = billWindow(profile.serverToday);
+      const [billResult, occurrenceResult, accountResult, categoryResult] =
+        await Promise.all([
+          apiRequest<{ bills: BillRecord[] }>("/bills"),
+          apiRequest<{ occurrences: BillOccurrence[] }>(
+            `/bills/occurrences?from=${window.from}&to=${window.to}`,
+          ),
+          apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
+          apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+        ]);
+      setBills(billResult.bills);
+      setOccurrences(occurrenceResult.occurrences);
+      const activeAccounts = accountResult.accounts.filter(
+        (account) => !account.archivedAt && account.type !== "CREDIT_CARD",
+      );
+      const expenseCategories = categoryResult.categories.filter(
+        (category) => !category.archivedAt && category.kind === "EXPENSE",
+      );
+      setAccounts(activeAccounts);
+      setCategories(expenseCategories);
+      setCategoryId((current) => current || expenseCategories[0]?.id || "");
+      setPayAccountId((current) => current || activeAccounts[0]?.id || "");
+      setStartOn((current) => current || profile.serverToday);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Bills could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createBillRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!csrfToken || !name.trim() || !categoryId || !startOn) {
+      setError("Enter a bill name, expense category, and start date.");
+      return;
+    }
+    let amountMinor: string | undefined;
+    if (amountMode === "FIXED") {
+      try {
+        const parsed = parsePhpMinor(defaultAmount);
+        if (parsed <= 0n) throw new Error();
+        amountMinor = parsed.toString();
+      } catch {
+        setError("Fixed bills need a positive PHP amount.");
+        return;
+      }
+    }
+    setPending(true);
+    try {
+      await apiRequest("/bills", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          categoryId,
+          ...(suggestedAccountId ? { suggestedAccountId } : {}),
+          amountMode,
+          ...(amountMinor ? { defaultAmountMinor: amountMinor } : {}),
+          dueDay: Number(dueDay),
+          startOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        }),
+      });
+      setName("");
+      setDefaultAmount("");
+      setNote("");
+      setSuccess("Bill created. Its upcoming occurrences are ready to review.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The bill could not be created.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function payOccurrence(occurrence: BillOccurrence) {
+    if (!csrfToken || !payAccountId || !isOnline) return;
+    let amountMinor: string | undefined;
+    try {
+      if (occurrence.amountMode === "VARIABLE") {
+        const parsed = parsePhpMinor(payAmount);
+        if (parsed <= 0n) throw new Error();
+        amountMinor = parsed.toString();
+      }
+    } catch {
+      setError("Variable bills need a positive payment amount.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/bills/occurrences/${occurrence.id}/pay`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          fundingAccountId: payAccountId,
+          ...(amountMinor ? { amountMinor } : {}),
+        }),
+      });
+      setPayingId(null);
+      setPayAmount("");
+      setSuccess(`${occurrence.billName} marked paid and posted to Activity.`);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The bill could not be paid.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function skipOccurrence(occurrence: BillOccurrence) {
+    if (!csrfToken || !isOnline) return;
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/bills/occurrences/${occurrence.id}/skip`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: "{}",
+      });
+      setSuccess(`${occurrence.billName} occurrence skipped.`);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The occurrence could not be skipped.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Plan ahead"
+        title="Bills"
+        description="Recurring bills and their payment history stay private to your account."
+        icon="□"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  return (
+    <section className="route-page bills-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Plan ahead · Private</p>
+        <h1 id="page-heading">Bills with a clear next step.</h1>
+        <p className="page-description">
+          Keep recurring reminders separate until you confirm a payment. Paid
+          bills post one ordinary expense to the ledger.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form className="account-edit-card bill-form" onSubmit={createBillRecord}>
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">NEW RECURRING BILL</p>
+            <h2>Set up a monthly reminder</h2>
+          </div>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Internet"
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Expense category *</span>
+            <select
+              className="reference-select"
+              value={categoryId}
+              onChange={(event) => setCategoryId(event.currentTarget.value)}
+            >
+              <option value="">Choose a category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Amount type *</span>
+            <select
+              className="reference-select"
+              value={amountMode}
+              onChange={(event) =>
+                setAmountMode(
+                  event.currentTarget.value as BillRecord["amountMode"],
+                )
+              }
+            >
+              <option value="FIXED">Fixed</option>
+              <option value="VARIABLE">Variable</option>
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Default amount{" "}
+              {amountMode === "VARIABLE" ? (
+                <span className="field-optional">Not used</span>
+              ) : (
+                "*"
+              )}
+            </span>
+            <input
+              className="text-input"
+              type="text"
+              inputMode="decimal"
+              value={defaultAmount}
+              disabled={amountMode === "VARIABLE"}
+              onChange={(event) => setDefaultAmount(event.currentTarget.value)}
+              placeholder="0.00"
+            />
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Due day *</span>
+            <input
+              className="text-input"
+              type="number"
+              min="1"
+              max="31"
+              value={dueDay}
+              onChange={(event) => setDueDay(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Start date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={startOn}
+              onChange={(event) => setStartOn(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <label className="field-group">
+          <span className="field-label">
+            Suggested funding account{" "}
+            <span className="field-optional">Optional</span>
+          </span>
+          <select
+            className="reference-select"
+            value={suggestedAccountId}
+            onChange={(event) =>
+              setSuggestedAccountId(event.currentTarget.value)
+            }
+          >
+            <option value="">Choose later</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field-group">
+          <span className="field-label">
+            Note <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.currentTarget.value)}
+            placeholder="Renewal or account reference"
+          />
+        </label>
+        <button
+          className="save-button"
+          type="submit"
+          disabled={pending || !isOnline}
+        >
+          {pending ? "Saving…" : "Create bill"}
+        </button>
+      </form>
+      <section className="bill-section" aria-labelledby="bill-list-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Saved reminders</p>
+            <h2 id="bill-list-heading">Your recurring bills</h2>
+          </div>
+        </div>
+        {bills.length ? (
+          <div className="bill-list">
+            {bills.map((bill) => (
+              <article className="bill-row" key={bill.id}>
+                <div>
+                  <strong>{bill.name}</strong>
+                  <span>
+                    {bill.amountMode === "FIXED" && bill.defaultAmountMinor ? (
+                      <PrivacyMask label={`${bill.name} default amount`}>
+                        {formatPhp(moneyMinor(bill.defaultAmountMinor))}
+                      </PrivacyMask>
+                    ) : (
+                      "Variable amount"
+                    )}{" "}
+                    · Due day {bill.dueDay} · {bill.status.toLowerCase()}
+                  </span>
+                </div>
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled={pending || !isOnline}
+                  onClick={() =>
+                    void apiRequest(`/bills/${bill.id}`, {
+                      method: "PATCH",
+                      headers: {
+                        "x-csrf-token": csrfToken ?? "",
+                        "idempotency-key": crypto.randomUUID(),
+                      },
+                      body: JSON.stringify({
+                        status: bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
+                      }),
+                    }).then(() => load())
+                  }
+                >
+                  {bill.status === "ACTIVE" ? "Pause" : "Resume"}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No recurring bills yet.</p>
+          </div>
+        )}
+      </section>
+      <section className="bill-section" aria-labelledby="occurrence-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Next three months</p>
+            <h2 id="occurrence-heading">Upcoming occurrences</h2>
+          </div>
+        </div>
+        {occurrences.length ? (
+          <div className="bill-list">
+            {occurrences.map((occurrence) => (
+              <article className="bill-row occurrence-row" key={occurrence.id}>
+                <div>
+                  <strong>{occurrence.billName}</strong>
+                  <span>
+                    {occurrence.dueOn} · {occurrence.status.toLowerCase()} ·{" "}
+                    {occurrence.amountMode === "VARIABLE" ? (
+                      "Variable amount"
+                    ) : occurrence.expectedAmountMinor ? (
+                      <PrivacyMask
+                        label={`${occurrence.billName} expected amount`}
+                      >
+                        {formatPhp(moneyMinor(occurrence.expectedAmountMinor))}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </div>
+                {occurrence.status === "UPCOMING" ||
+                occurrence.status === "OVERDUE" ? (
+                  <div className="bill-row-actions">
+                    {payingId === occurrence.id ? (
+                      <>
+                        <select
+                          className="reference-select"
+                          value={payAccountId}
+                          onChange={(event) =>
+                            setPayAccountId(event.currentTarget.value)
+                          }
+                        >
+                          <option value="">Funding account</option>
+                          {accounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name}
+                            </option>
+                          ))}
+                        </select>
+                        {occurrence.amountMode === "VARIABLE" ? (
+                          <input
+                            className="text-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={payAmount}
+                            onChange={(event) =>
+                              setPayAmount(event.currentTarget.value)
+                            }
+                            placeholder="Amount"
+                          />
+                        ) : null}
+                        <button
+                          className="save-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => void payOccurrence(occurrence)}
+                        >
+                          Confirm pay
+                        </button>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          onClick={() => setPayingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => {
+                            setPayingId(occurrence.id);
+                            setPayAmount(
+                              occurrence.expectedAmountMinor
+                                ? phpInputFromMinor(
+                                    occurrence.expectedAmountMinor,
+                                  )
+                                : "",
+                            );
+                          }}
+                        >
+                          Pay
+                        </button>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => void skipOccurrence(occurrence)}
+                        >
+                          Skip
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <span className="bill-status">
+                    {occurrence.status.toLowerCase()}
+                  </span>
+                )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No bill occurrences in the next three months.</p>
+          </div>
+        )}
+      </section>
     </section>
   );
 }
@@ -2605,7 +3898,7 @@ function QuickAddPage() {
     ])
       .then(([accountResult, categoryResult]) => {
         const activeAccounts = accountResult.accounts.filter(
-          (account) => !account.archivedAt && account.type !== "CREDIT_CARD",
+          (account) => !account.archivedAt,
         );
         const activeCategories = categoryResult.categories.filter(
           (category) => !category.archivedAt,
@@ -2630,6 +3923,9 @@ function QuickAddPage() {
 
   const visibleCategories = categories.filter((category) =>
     mode === "TRANSFER" ? category.kind === "EXPENSE" : category.kind === mode,
+  );
+  const visibleAccounts = accounts.filter(
+    (account) => mode !== "TRANSFER" || account.type !== "CREDIT_CARD",
   );
   const expenseCategories = categories.filter(
     (category) => category.kind === "EXPENSE",
@@ -2877,7 +4173,7 @@ function QuickAddPage() {
               <option value="">
                 {loading ? "Loading accounts…" : "Choose an account"}
               </option>
-              {accounts.map((account) => (
+              {visibleAccounts.map((account) => (
                 <option key={account.id} value={account.id}>
                   {account.name} · {formatPhp(moneyMinor(account.balanceMinor))}
                 </option>
@@ -2898,7 +4194,7 @@ function QuickAddPage() {
                 disabled={loading}
               >
                 <option value="">Choose a destination</option>
-                {accounts.map((account) => (
+                {visibleAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
                   </option>
@@ -3143,27 +4439,14 @@ function App() {
             element={<AccountDetailPage />}
           />
           <Route
-            path="app/accounts/:accountId/statements"
-            element={
-              <RoutePage
-                eyebrow="Credit cards"
-                title="Statements"
-                description="Review manually entered statement amounts and due dates."
-                icon="□"
-              />
-            }
+            path="app/accounts/:accountId/pay"
+            element={<CardPaymentPage />}
           />
           <Route
-            path="app/bills"
-            element={
-              <RoutePage
-                eyebrow="Plan ahead"
-                title="Bills"
-                description="Upcoming reminders will stay separate from posted account balances until you confirm a payment."
-                icon="□"
-              />
-            }
+            path="app/accounts/:accountId/statements"
+            element={<CardStatementsPage />}
           />
+          <Route path="app/bills" element={<BillsPage />} />
           <Route
             path="app/reports"
             element={

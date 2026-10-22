@@ -4,7 +4,7 @@ MoniKey V2 is a personal finance tracker being built from scratch. It uses PHP-o
 
 ## Current state
 
-Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 are implemented; P3-01 adds private sign-in and guided first-account setup with a ledger-backed opening balance, P3-02 adds the authenticated Quick Add expense, income, and transfer flow, P3-03 adds the ledger-derived dashboard summary and home screen, P3-04 adds unified filtered Activity with detail edits and reversals, P3-05 adds account management and archived history, P3-06 adds a shell-only installable PWA with explicit offline write blocking, and P3-07 persists theme and privacy defaults. Phase 3 private-alpha vertical slices continue with acceptance work. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+Phase 0 engineering foundation is implemented and promoted to `main`. Phase 1 mobile-first route shell and design primitives remain in progress pending physical-device review. Phase 2 P2-01 through P2-11 and Phase 3 private-alpha slices are implemented. Phase 4 now includes credit-card purchases/payments, manual statements with allocations, recurring bill rules and occurrences, bill payment/skip confirmation, and dashboard bill visibility. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 ## Development
 
@@ -35,16 +35,18 @@ npm run format:check
 npm audit
 ```
 
+PostgreSQL-backed API slices can be run locally with `DATABASE_URL` set to the host-mapped Compose database. The card and bill suites are `npm run test:cards --workspace @monikey/api` and `npm run test:bills --workspace @monikey/api`.
+
 The browser acceptance suite uses a live PostgreSQL-backed Compose stack:
 
 ```sh
 npx playwright install chromium
 docker compose up --build -d --wait --wait-timeout 180 api web
-npm run test:e2e
+npx playwright test --workers=1
 docker compose down --volumes --remove-orphans
 ```
 
-The e2e suite is also run in GitHub Actions. It cannot be run in an environment without Docker.
+Use one Playwright worker for the stateful acceptance fixtures. This local run uses the actual API and PostgreSQL; no GitHub Actions run is needed for routine validation.
 
 The checked-in Compose credentials are for local development only. Production secrets must be managed through the approved GitOps secret path.
 
@@ -55,6 +57,8 @@ The checked-in Compose credentials are for local development only. Production se
 - [`docs/adr/`](docs/adr): material technical decisions.
 - [`docs/RELEASE_FLOW.md`](docs/RELEASE_FLOW.md): protected feature → dev → main workflow.
 - [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md): milestone state and evidence.
+- [`docs/architecture/CARDS.md`](docs/architecture/CARDS.md): credit-card liability, payments, and statements.
+- [`docs/architecture/BILLS.md`](docs/architecture/BILLS.md): recurring bill rules, occurrences, and confirmation flows.
 - [`AGENTS.md`](AGENTS.md): implementation constraints for contributors and coding agents.
 
 V1 is reference-only; no V1 code or financial data is used by this repository.

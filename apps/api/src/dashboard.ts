@@ -1,9 +1,11 @@
 import type { PoolClient } from "pg";
+import type { BillOccurrenceRecord } from "@monikey/contracts";
 import {
   listFinancialAccounts,
   type FinancialAccountRecord,
 } from "./accounts.js";
 import { listTransactions } from "./transactions.js";
+import { listBillOccurrences } from "./bills.js";
 
 type DashboardTotalsRow = {
   availableMoneyMinor: string;
@@ -23,6 +25,7 @@ export type DashboardSummary = {
   incomeMinor: string;
   spendingMinor: string;
   accounts: FinancialAccountRecord[];
+  upcomingBills: BillOccurrenceRecord[];
   recentActivity: Awaited<ReturnType<typeof listTransactions>>["activity"];
   serverToday: string;
 };
@@ -31,6 +34,12 @@ function nextMonthStart(monthStart: string): string {
   const [year, month] = monthStart.split("-").map(Number);
   const next = new Date(Date.UTC(year!, month!, 1));
   return next.toISOString().slice(0, 10);
+}
+
+function dashboardBillsTo(serverToday: string): string {
+  const [year, month] = serverToday.split("-").slice(0, 2).map(Number);
+  const end = new Date(Date.UTC(year!, month! - 1 + 3, 0));
+  return end.toISOString().slice(0, 10);
 }
 
 async function readAccountTotals(
@@ -131,12 +140,20 @@ export async function readDashboardSummary(
 ): Promise<DashboardSummary> {
   const month = serverToday.slice(0, 7);
   const monthStart = `${month}-01`;
-  const [totals, monthTotals, accounts, recent] = await Promise.all([
-    readAccountTotals(client, userId),
-    readMonthTotals(client, userId, monthStart, nextMonthStart(monthStart)),
-    listFinancialAccounts(client, userId),
-    listTransactions(client, userId, { limit: 5 }),
-  ]);
+  const [totals, monthTotals, accounts, recent, upcomingBills] =
+    await Promise.all([
+      readAccountTotals(client, userId),
+      readMonthTotals(client, userId, monthStart, nextMonthStart(monthStart)),
+      listFinancialAccounts(client, userId),
+      listTransactions(client, userId, { limit: 5 }),
+      listBillOccurrences(
+        client,
+        userId,
+        serverToday.slice(0, 7) + "-01",
+        dashboardBillsTo(serverToday),
+        serverToday,
+      ),
+    ]);
   const available = BigInt(totals.availableMoneyMinor);
   const cardDebt = BigInt(totals.cardDebtMinor);
   return {
@@ -147,6 +164,12 @@ export async function readDashboardSummary(
     incomeMinor: monthTotals.incomeMinor,
     spendingMinor: monthTotals.spendingMinor,
     accounts,
+    upcomingBills: upcomingBills
+      .filter(
+        (occurrence) =>
+          occurrence.status === "UPCOMING" || occurrence.status === "OVERDUE",
+      )
+      .slice(0, 5),
     recentActivity: recent.activity,
     serverToday,
   };

@@ -15,6 +15,8 @@
     "test:ledger": "tsx --test src/ledger/integration.test.ts",
     "test:accounts": "tsx --test src/accounts.integration.test.ts",
     "test:categories": "tsx --test src/categories.integration.test.ts",
+    "test:cards": "tsx --test src/card-statements.integration.test.ts",
+    "test:bills": "tsx --test src/bills.integration.test.ts",
     "test:transactions": "tsx --test src/transactions.integration.test.ts src/dashboard.integration.test.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.ts"

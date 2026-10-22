@@ -292,6 +292,261 @@ export const AdjustmentCreateRequestSchema = z
     addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
   });
 
+export const CardPaymentCreateRequestSchema = z
+  .object({
+    fundingAccountId: z.string().uuid(),
+    statementId: z.string().uuid().optional(),
+    amountMinor: MinorUnitsStringSchema,
+    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
+  });
+
+const FinancialDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+export const CardStatementCreateRequestSchema = z
+  .object({
+    statementDate: FinancialDateSchema,
+    periodStart: FinancialDateSchema.optional(),
+    periodEnd: FinancialDateSchema.optional(),
+    amountDueMinor: MinorUnitsStringSchema,
+    paymentDueDate: FinancialDateSchema,
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.periodStart !== undefined &&
+      request.periodEnd !== undefined &&
+      request.periodStart > request.periodEnd
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "The statement period must be ordered.",
+        path: ["periodStart"],
+      });
+    }
+    if (BigInt(request.amountDueMinor) > maxPostgresBigInt) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount exceeds PostgreSQL BIGINT range.",
+        path: ["amountDueMinor"],
+      });
+    }
+  });
+
+export const CardStatementPatchRequestSchema = z
+  .object({
+    statementDate: FinancialDateSchema.optional(),
+    periodStart: FinancialDateSchema.nullable().optional(),
+    periodEnd: FinancialDateSchema.nullable().optional(),
+    amountDueMinor: MinorUnitsStringSchema.optional(),
+    paymentDueDate: FinancialDateSchema.optional(),
+    note: z.string().trim().max(500).nullable().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.periodStart !== undefined &&
+      request.periodEnd !== undefined &&
+      request.periodStart !== null &&
+      request.periodEnd !== null &&
+      request.periodStart > request.periodEnd
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "The statement period must be ordered.",
+        path: ["periodStart"],
+      });
+    }
+    if (
+      request.amountDueMinor !== undefined &&
+      BigInt(request.amountDueMinor) > maxPostgresBigInt
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount exceeds PostgreSQL BIGINT range.",
+        path: ["amountDueMinor"],
+      });
+    }
+  });
+
+export const CardStatementSchema = z.object({
+  id: z.string().uuid(),
+  cardAccountId: z.string().uuid(),
+  statementDate: FinancialDateSchema,
+  periodStart: FinancialDateSchema.nullable(),
+  periodEnd: FinancialDateSchema.nullable(),
+  amountDueMinor: z.string().regex(/^\d+$/),
+  allocatedMinor: z.string().regex(/^\d+$/),
+  remainingDueMinor: z.string().regex(/^\d+$/),
+  paymentDueDate: FinancialDateSchema,
+  note: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const CardStatementsResponseSchema = z.object({
+  statements: z.array(CardStatementSchema),
+});
+
+export const CardStatementResponseSchema = z.object({
+  statement: CardStatementSchema,
+});
+
+export const BillAmountModeSchema = z.enum(["FIXED", "VARIABLE"]);
+export const BillStatusSchema = z.enum(["ACTIVE", "PAUSED", "ARCHIVED"]);
+export const BillOccurrenceStatusSchema = z.enum([
+  "UPCOMING",
+  "OVERDUE",
+  "PAID",
+  "SKIPPED",
+]);
+
+export const BillCreateRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    categoryId: z.string().uuid(),
+    suggestedAccountId: z.string().uuid().optional(),
+    amountMode: BillAmountModeSchema,
+    defaultAmountMinor: MinorUnitsStringSchema.optional(),
+    dueDay: z.number().int().min(1).max(31),
+    startOn: FinancialDateSchema,
+    endOn: FinancialDateSchema.optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  .superRefine((bill, context) => {
+    if (bill.amountMode === "FIXED" && bill.defaultAmountMinor === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Fixed bills require a default amount.",
+        path: ["defaultAmountMinor"],
+      });
+    }
+    if (
+      bill.amountMode === "VARIABLE" &&
+      bill.defaultAmountMinor !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Variable bills cannot have a default amount.",
+        path: ["defaultAmountMinor"],
+      });
+    }
+    if (bill.endOn !== undefined && bill.startOn > bill.endOn) {
+      context.addIssue({
+        code: "custom",
+        message: "The bill end date must be on or after its start date.",
+        path: ["endOn"],
+      });
+    }
+    if (
+      bill.defaultAmountMinor !== undefined &&
+      BigInt(bill.defaultAmountMinor) > maxPostgresBigInt
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount exceeds PostgreSQL BIGINT range.",
+        path: ["defaultAmountMinor"],
+      });
+    }
+    if (
+      bill.defaultAmountMinor !== undefined &&
+      BigInt(bill.defaultAmountMinor) === 0n
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Bill amounts must be positive.",
+        path: ["defaultAmountMinor"],
+      });
+    }
+  });
+
+export const BillPatchRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    categoryId: z.string().uuid().optional(),
+    suggestedAccountId: z.string().uuid().nullable().optional(),
+    amountMode: BillAmountModeSchema.optional(),
+    defaultAmountMinor: MinorUnitsStringSchema.nullable().optional(),
+    dueDay: z.number().int().min(1).max(31).optional(),
+    startOn: FinancialDateSchema.optional(),
+    endOn: FinancialDateSchema.nullable().optional(),
+    status: BillStatusSchema.optional(),
+    note: z.string().trim().max(500).nullable().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.defaultAmountMinor !== undefined &&
+      request.defaultAmountMinor !== null
+    ) {
+      addPositiveMinorUnitIssues(
+        request.defaultAmountMinor,
+        ["defaultAmountMinor"],
+        context,
+      );
+    }
+  });
+
+export const BillSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  categoryId: z.string().uuid(),
+  suggestedAccountId: z.string().uuid().nullable(),
+  amountMode: BillAmountModeSchema,
+  defaultAmountMinor: z.string().regex(/^\d+$/).nullable(),
+  dueDay: z.number().int(),
+  startOn: FinancialDateSchema,
+  endOn: FinancialDateSchema.nullable(),
+  status: BillStatusSchema,
+  note: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const BillsResponseSchema = z.object({ bills: z.array(BillSchema) });
+export const BillResponseSchema = z.object({ bill: BillSchema });
+
+export const BillOccurrenceSchema = z.object({
+  id: z.string().uuid(),
+  billId: z.string().uuid(),
+  billName: z.string(),
+  categoryId: z.string().uuid(),
+  suggestedAccountId: z.string().uuid().nullable(),
+  amountMode: BillAmountModeSchema,
+  expectedAmountMinor: z.string().regex(/^\d+$/).nullable(),
+  actualAmountMinor: z.string().regex(/^\d+$/).nullable(),
+  dueOn: FinancialDateSchema,
+  status: BillOccurrenceStatusSchema,
+  paidTransactionId: z.string().uuid().nullable(),
+  note: z.string().nullable(),
+});
+
+export const BillOccurrencesResponseSchema = z.object({
+  occurrences: z.array(BillOccurrenceSchema),
+  serverToday: FinancialDateSchema,
+});
+
+export const BillPayRequestSchema = z
+  .object({
+    fundingAccountId: z.string().uuid(),
+    amountMinor: MinorUnitsStringSchema.optional(),
+    note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.amountMinor !== undefined) {
+      addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
+    }
+  });
+
 export const TransactionCreateRequestSchema = z
   .object({
     kind: IncomeExpenseKindSchema,
@@ -331,6 +586,11 @@ export const TransactionSchema = z.object({
   note: z.string().nullable(),
 });
 
+export const BillOccurrenceResponseSchema = z.object({
+  occurrence: BillOccurrenceSchema,
+  transaction: TransactionSchema,
+});
+
 export const TransactionCreateResponseSchema = z.object({
   transaction: TransactionSchema,
   account: FinancialAccountSchema,
@@ -340,6 +600,12 @@ export const TransferCreateResponseSchema = z.object({
   transaction: TransactionSchema,
   sourceAccount: FinancialAccountSchema,
   destinationAccount: FinancialAccountSchema,
+});
+
+export const CardPaymentResponseSchema = z.object({
+  transaction: TransactionSchema,
+  cardAccount: FinancialAccountSchema,
+  fundingAccount: FinancialAccountSchema,
 });
 
 export const TransactionRequestSchema = z.union([
@@ -428,6 +694,7 @@ export const DashboardSummarySchema = z.object({
   incomeMinor: z.string().regex(/^-?\d+$/),
   spendingMinor: z.string().regex(/^-?\d+$/),
   accounts: z.array(FinancialAccountSchema),
+  upcomingBills: z.array(BillOccurrenceSchema),
   recentActivity: z.array(TransactionActivityItemSchema),
   serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
@@ -440,6 +707,21 @@ export type RefundCreateRequest = z.infer<typeof RefundCreateRequestSchema>;
 export type AdjustmentCreateRequest = z.infer<
   typeof AdjustmentCreateRequestSchema
 >;
+export type CardPaymentCreateRequest = z.infer<
+  typeof CardPaymentCreateRequestSchema
+>;
+export type CardStatementCreateRequest = z.infer<
+  typeof CardStatementCreateRequestSchema
+>;
+export type CardStatementPatchRequest = z.infer<
+  typeof CardStatementPatchRequestSchema
+>;
+export type CardStatementRecord = z.infer<typeof CardStatementSchema>;
+export type BillCreateRequest = z.infer<typeof BillCreateRequestSchema>;
+export type BillPatchRequest = z.infer<typeof BillPatchRequestSchema>;
+export type BillPayRequest = z.infer<typeof BillPayRequestSchema>;
+export type BillRecord = z.infer<typeof BillSchema>;
+export type BillOccurrenceRecord = z.infer<typeof BillOccurrenceSchema>;
 export type TransactionEditRequest = z.infer<
   typeof TransactionEditRequestSchema
 >;

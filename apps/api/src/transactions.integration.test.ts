@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
 import {
   createAdjustment,
+  createCardPayment,
   deleteTransaction,
   editIncomeOrExpense,
   createIncomeOrExpense,
@@ -429,6 +430,117 @@ test("transfer commands move balances and post optional fees as spending", async
       ),
       /negative/,
     );
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
+test("card purchases increase liability and payments settle it without new spending", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const bank = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "BANK",
+        name: "Card funding bank",
+        openingBalanceMinor: "100000",
+      },
+      "2026-10-22",
+    );
+    const card = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "CREDIT_CARD",
+        name: "Daily card",
+        openingBalanceMinor: "20000",
+        creditLimitMinor: "150000",
+      },
+      "2026-10-22",
+    );
+    const category = await client.query<{ id: string }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Food'`,
+      [userId],
+    );
+    assert.ok(category.rows[0]?.id);
+
+    const purchase = await createIncomeOrExpense(
+      client,
+      userId,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: card.id,
+        categoryId: category.rows[0]!.id,
+        amountMinor: "80000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(purchase.account.balanceMinor, "100000");
+    assert.equal(
+      (await readFinancialAccount(client, userId, bank.id)).balanceMinor,
+      "100000",
+    );
+
+    const payment = await createCardPayment(
+      client,
+      userId,
+      card.id,
+      {
+        fundingAccountId: bank.id,
+        amountMinor: "30000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(payment.cardAccount.balanceMinor, "70000");
+    assert.equal(payment.fundingAccount.balanceMinor, "70000");
+
+    const journal = await client.query<{
+      operation_kind: string;
+      debit_total: string;
+      credit_total: string;
+    }>(
+      `SELECT j.operation_kind,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'DEBIT')::text AS debit_total,
+              sum(p.amount_minor) FILTER (WHERE p.direction = 'CREDIT')::text AS credit_total
+         FROM journals j
+         JOIN postings p ON p.user_id = j.user_id AND p.journal_id = j.id
+        WHERE j.user_id = $1 AND j.transaction_id = $2
+        GROUP BY j.id, j.operation_kind`,
+      [userId, payment.transaction.id],
+    );
+    assert.deepEqual(journal.rows, [
+      {
+        operation_kind: "CARD_PAYMENT",
+        debit_total: "30000",
+        credit_total: "30000",
+      },
+    ]);
+
+    await assert.rejects(
+      createCardPayment(
+        client,
+        userId,
+        card.id,
+        {
+          fundingAccountId: card.id,
+          amountMinor: "1",
+          occurredOn: "2026-10-22",
+        },
+        "2026-10-22",
+      ),
+      TransactionConflictError,
+    );
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
   } finally {
     await client.query("ROLLBACK");
     client.release();
