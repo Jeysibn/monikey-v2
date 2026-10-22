@@ -129,6 +129,7 @@ Phase 1 remains in progress pending physical-device owner review. P2-01 through 
 - Quick Add sheet validation — local Docker PostgreSQL/API/Web acceptance completed with 24 Playwright passes and 8 intentional mobile/desktop skips across the shared one-worker suite. The authenticated Add action opens an accessible sheet with focus trapping, Escape/backdrop close, route return, and unsaved-entry discard protection; the test uses an isolated disposable E2E account so the login throttle remains meaningful. No GitHub Actions run was started.
 - Runtime/focus regression validation — a fresh Node 22.22 Docker rebuild completed without the previous React Router engine warning. The targeted Quick Add focus test passed, then a clean reset-backed full-stack run passed 24 Playwright tests with 8 intentional skips; `npm run review:local` passed all 18 route/viewport combinations with API p95 of 38 ms desktop and 180 ms Pixel 7-sized. No GitHub Actions run was started.
 - Local recovery command validation — `npm run backup:local` created an 89,137-byte custom-format archive outside the worktree, validated its listing, and `npm run restore:local` restored it into an isolated database, checked schema/data presence, and removed the database. Production CronJob, retention, monitoring, and owner acceptance remain pending.
+- Compose manifest validation — `npm run compose:check` passed locally and is now the first step in the existing real-stack CI job; no additional workflow or GitHub Actions trigger was added.
 
 ## Next work
 

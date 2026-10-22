@@ -21,6 +21,7 @@
     "validate": "npm run lint && npm run typecheck && npm run test:finance && npm run format:check && npm run security:secrets && npm audit --audit-level=high",
     "backup:local": "node scripts/local-backup-restore.mjs backup",
     "restore:local": "node scripts/local-backup-restore.mjs restore",
+    "compose:check": "docker compose -f compose.yaml -f compose.local-test.yaml config --quiet",
     "review:local": "node scripts/local-release-review.mjs",
     "security:secrets": "node scripts/secret-scan.mjs",
     "contracts:check": "node scripts/check-openapi.mjs",

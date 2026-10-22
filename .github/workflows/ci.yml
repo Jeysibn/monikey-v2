@@ -31,6 +31,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - run: npm run compose:check
       - run: docker compose up --build -d --wait --wait-timeout 180 api web
       - name: Create isolated E2E owner account
         run: >-

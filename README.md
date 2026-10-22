@@ -35,6 +35,8 @@ npm run test:contracts # requires the local API
 
 `npm run validate` is the static, database-free gate: ESLint, strict TypeScript/builds, exact-money and invariant tests, formatting, the tracked-file secret scan, and the dependency audit. Use the Docker-backed commands below for PostgreSQL integration and Playwright acceptance.
 
+`npm run compose:check` validates the base Compose file plus the disposable local test override without starting services.
+
 PostgreSQL-backed API slices can be run locally with `DATABASE_URL` set to the host-mapped Compose database. The card and bill suites are `npm run test:cards --workspace @monikey/api` and `npm run test:bills --workspace @monikey/api`.
 
 The browser acceptance suite uses a live PostgreSQL-backed Compose stack:

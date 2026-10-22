@@ -25,6 +25,7 @@
 - Added the root `npm run validate` alias so the static lint, type, finance, format, secret, and audit gate can be run as one local command without Docker.
 - Aligned Docker, CI, and local runtime requirements on Node 22.22 for the resolved React Router engine, and made Quick Add sheet focus wait for authenticated content before locking and focusing the dialog.
 - Added local `backup:local` and `restore:local` aliases that validate custom-format PostgreSQL archives and isolated restores without writing backup data into the repository.
+- Added `npm run compose:check` and made the existing real-stack CI job validate both Compose files before starting services.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 

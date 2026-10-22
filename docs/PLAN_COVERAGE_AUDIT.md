@@ -61,6 +61,8 @@ the web container, and Playwright with one worker:
 - `npm run backup:local` and `npm run restore:local` now automate the local
   custom-format backup/listing and isolated restore checks without storing an
   archive in the repository.
+- `npm run compose:check` validates the base Compose topology and disposable
+  local-test override before local or CI service startup.
 
 No GitHub Actions run was started for this evidence. The PR workflow remains
 configured for merge protection and now seeds the dedicated sheet-test user.
