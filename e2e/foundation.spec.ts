@@ -724,6 +724,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   });
 
   const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  expect(categories.headers()["cache-control"]).toBe("no-store");
   const food = (await categories.json()).categories.find(
     (category: { name: string }) => category.name === "Food",
   );
@@ -789,6 +790,7 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     `${api}/credit-cards/${cardAccount.id}/statements`,
   );
   expect(statements.status()).toBe(200);
+  expect(statements.headers()["cache-control"]).toBe("no-store");
   await expect(statements.json()).resolves.toMatchObject({
     statements: [
       {
@@ -813,6 +815,9 @@ test("financial accounts preserve opening balances, history, and owner scope", a
   await expect(correctedStatement.json()).resolves.toMatchObject({
     statement: { amountDueMinor: "120000", remainingDueMinor: "90000" },
   });
+  const dashboard = await page.request.get(`${api}/dashboard/summary`);
+  expect(dashboard.status()).toBe(200);
+  expect(dashboard.headers()["cache-control"]).toBe("no-store");
 
   const bill = await page.request.post(`${api}/bills`, {
     headers: {

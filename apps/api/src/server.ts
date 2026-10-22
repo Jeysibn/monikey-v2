@@ -182,8 +182,13 @@ app.addHook("onSend", (request, reply, _payload, done) => {
     request.url.startsWith("/api/v1/auth/") ||
     request.url.startsWith("/api/v1/me") ||
     request.url.startsWith("/api/v1/accounts") ||
+    request.url.startsWith("/api/v1/categories") ||
     request.url.startsWith("/api/v1/bills") ||
-    request.url.startsWith("/api/v1/transactions")
+    request.url.startsWith("/api/v1/transactions") ||
+    request.url.startsWith("/api/v1/credit-cards") ||
+    request.url.startsWith("/api/v1/dashboard") ||
+    request.url.startsWith("/api/v1/reports") ||
+    request.url.startsWith("/api/v1/exports")
   ) {
     reply.header("Cache-Control", "no-store");
   }

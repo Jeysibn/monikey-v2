@@ -15,7 +15,7 @@ This is a source and local-runtime audit against the approved master plan. It re
 | Contract surface     | Runtime OpenAPI and generated declarations contain the plan’s health, account, transaction, card, bill, report, and `/exports/data.json` routes.                                                                                              | Pass   |
 | Browser/PWA boundary | The service worker caches only the shell; `/api/` and personal responses remain network-only. Playwright covers offline state and disabled writes.                                                                                            | Pass   |
 | Local topology       | Base Compose exposes only web; `compose.local-test.yaml` supplies explicit API/DB mappings for disposable host-driven tests. Both configs render successfully.                                                                                | Pass   |
-| Security guardrails  | Secure sessions, CSRF/origin checks, rate limiting, no-store personal responses, owner-only exports, and `npm run security:secrets` are implemented.                                                                                          | Pass   |
+| Security guardrails  | Secure sessions, CSRF/origin checks, rate limiting, a shared no-store guard for every personal API route family, owner-only exports, and `npm run security:secrets` are implemented.                                                          | Pass   |
 
 ## Local evidence
 
