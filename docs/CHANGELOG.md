@@ -27,6 +27,7 @@
 - Added local `backup:local` and `restore:local` aliases that validate custom-format PostgreSQL archives and isolated restores without writing backup data into the repository.
 - Added `npm run compose:check` and made the existing real-stack CI job validate both Compose files before starting services.
 - Strengthened `npm run validate` with the explicit workspace production build so the unified gate proves a Vite bundle as well as TypeScript correctness.
+- Kept CI limited to pull-request validation, aligned every CI job on Node 22.22, and enabled cancellation of superseded PR runs so local Docker/Playwright validation remains the routine path and redundant action minutes are avoided.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 

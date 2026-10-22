@@ -58,4 +58,4 @@ The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for
 
 ## Environment limitations
 
-The local Docker daemon is available after refreshing the shell's `docker` group membership. The Compose-backed suite was run locally against PostgreSQL, the API, and the web container. GitHub Actions remains a repository protection gate for pull requests, while routine feature validation stays local to preserve the action-minute budget.
+The local Docker daemon is available after refreshing the shell's `docker` group membership. The Compose-backed suite was run locally against PostgreSQL, the API, and the web container. GitHub Actions remains a repository protection gate for pull requests, while routine feature validation stays local to preserve the action-minute budget. The PR workflow runs only for pull requests targeting `dev` or `main`, uses Node 22.22 throughout, and cancels an older in-progress run when a newer commit supersedes it.
