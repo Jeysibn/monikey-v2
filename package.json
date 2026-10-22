@@ -17,6 +17,7 @@
     "test:finance": "npm run test:unit && npm run test:invariants",
     "test:e2e": "playwright test",
     "test:full-stack": "npm run test:e2e -- --workers=1",
+    "lint": "eslint .",
     "review:local": "node scripts/local-release-review.mjs",
     "security:secrets": "node scripts/secret-scan.mjs",
     "contracts:check": "node scripts/check-openapi.mjs",
@@ -28,10 +29,13 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "1.64.1",
+    "eslint": "^10.13.0",
     "openapi-typescript": "7.13.0",
     "prettier": "3.6.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.72.0"
   },
   "engines": {
     "node": ">=22.12.0",

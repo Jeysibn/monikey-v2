@@ -11,7 +11,7 @@ assigns to an owner review or to the live homelab.
 
 | Plan area                        | Current evidence                                                                                                                                                                                                                                        | State                                                                                                                               |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| P0 foundation and guardrails     | Public `Jeysibn/monikey-v2`, npm workspaces, strict TypeScript, Compose PostgreSQL/API/web/migrate, OpenAPI contracts, secret scan, CodeQL workflow, and Obsidian project records.                                                                      | Implemented; image provenance remains a Phase 6 gate.                                                                               |
+| P0 foundation and guardrails     | Public `Jeysibn/monikey-v2`, npm workspaces, strict TypeScript, ESLint, Compose PostgreSQL/API/web/migrate, OpenAPI contracts, secret scan, CodeQL workflow, and Obsidian project records.                                                              | Implemented; image provenance remains a Phase 6 gate.                                                                               |
 | P1 UX and component system       | Blue/navy semantic tokens, light/dark themes, responsive shell, 44px target checks, reduced motion, route skeleton, screenshots, keyboard traversal, and accessible Quick Add sheet.                                                                    | Implemented locally; physical-device, full screen-reader, contrast walkthrough, and owner approval remain.                          |
 | P2 identity and financial domain | Argon2id private bootstrap, secure sessions, CSRF/origin/rate limits, PHT dates, exact bigint minor units, balanced immutable journals, account/category lifecycle, commands, revisions, refunds, adjustments, concurrency locks, and activity queries. | Backend and real-Postgres evidence complete.                                                                                        |
 | P3 private alpha                 | Onboarding, server-backed dashboard, Activity, Accounts, PWA shell, offline write protection, privacy masking, theme persistence, and Quick Add.                                                                                                        | Local alpha evidence complete; owner/device sign-off and backup readiness remain.                                                   |
@@ -44,6 +44,8 @@ The latest clean disposable Docker stack used real PostgreSQL, the actual API,
 the web container, and Playwright with one worker:
 
 - `npm run typecheck` — passed.
+- `npm run lint` — passed with the repository ESLint baseline.
+- `npm ci --ignore-scripts --offline` — clean lockfile install completed with zero vulnerabilities.
 - `npm run build --workspace @monikey/web` — passed.
 - `npm run format:check` and `git diff --check` — passed.
 - `npm run security:secrets` — passed for 119 tracked files.

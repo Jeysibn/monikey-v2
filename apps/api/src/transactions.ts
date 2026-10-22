@@ -1174,7 +1174,6 @@ export async function editIncomeOrExpense(
     oldSourceAccountId,
     request.sourceAccountId,
   ]);
-  const oldAccount = accounts.get(oldSourceAccountId)!;
   const newAccount = accounts.get(request.sourceAccountId)!;
   if (newAccount.archivedAt) throw new TransactionNotFoundError();
   if (newAccount.type === "CREDIT_CARD" && request.kind !== "EXPENSE") {

@@ -21,6 +21,7 @@
 - Verified the V2 migration upgrade path from the prior category-icon schema through the cards/bills migration in an isolated temporary PostgreSQL database.
 - Strengthened the monthly-report integration fixture to verify a January expense refunded in February remains in January and produces negative February net expenses in the original category.
 - Added the authenticated Quick Add contextual sheet with route-aware return navigation, focus trapping, Escape/backdrop close, unsaved-entry protection, and a direct-link full-page fallback; local Playwright covers the interaction.
+- Added the repository ESLint baseline and required it in the existing PR validation job; the local lint pass also removed dead imports/assignments exposed by the new guardrail.
 
 ## 2026-10-22 — Phase 5 reports, exports, and settings administration
 

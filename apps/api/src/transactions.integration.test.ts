@@ -438,9 +438,9 @@ test("transfer commands move balances and post optional fees as spending", async
 
 test("opposite-direction transfers serialize without deadlock or balance drift", async () => {
   const setupClient = await pool.connect();
-  let sourceId = "";
-  let destinationId = "";
-  let userId = "";
+  let sourceId: string;
+  let destinationId: string;
+  let userId: string;
   try {
     await setupClient.query("BEGIN");
     const owner = await setupClient.query<{ id: string }>(
@@ -508,7 +508,7 @@ test("opposite-direction transfers serialize without deadlock or balance drift",
 
   const firstClient = await pool.connect();
   const secondClient = await pool.connect();
-  let successfulTransferIds: string[] = [];
+  let successfulTransferIds: string[];
   try {
     await firstClient.query("BEGIN");
     await secondClient.query("BEGIN");

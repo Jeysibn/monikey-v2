@@ -146,8 +146,11 @@ export function csvCell(
   formulaSafe = true,
 ): string {
   const raw = value === null ? "" : String(value);
+  // Control characters are intentionally included to protect spreadsheet exports.
+  /* eslint-disable no-control-regex */
   const safe =
     formulaSafe && /^[\s\u0000-\u001f]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  /* eslint-enable no-control-regex */
   return `"${safe.replaceAll('"', '""')}"`;
 }
 
