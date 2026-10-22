@@ -35,23 +35,29 @@ const browser = await chromium.launch();
 const reviewResults = [];
 
 try {
+  const loginContext = await browser.newContext();
+  const loginPage = await loginContext.newPage();
+  const login = await loginPage.request.post(`${apiOrigin}/api/v1/auth/login`, {
+    headers: { origin: pageOrigin },
+    data: { email, password },
+  });
+  assert.equal(
+    login.status(),
+    200,
+    "The disposable review user must sign in.",
+  );
+  const storageState = await loginContext.storageState();
+  await loginContext.close();
+
   for (const target of viewports) {
     const context = await browser.newContext({
       viewport: target.viewport,
       isMobile: target.isMobile,
       hasTouch: target.isMobile,
       deviceScaleFactor: target.isMobile ? 2 : 1,
+      storageState,
     });
     const page = await context.newPage();
-    const login = await page.request.post(`${apiOrigin}/api/v1/auth/login`, {
-      headers: { origin: pageOrigin },
-      data: { email, password },
-    });
-    assert.equal(
-      login.status(),
-      200,
-      "The disposable review user must sign in.",
-    );
 
     const apiDurations = [];
     for (let attempt = 0; attempt < 5; attempt += 1) {
