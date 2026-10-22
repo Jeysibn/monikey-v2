@@ -70,7 +70,7 @@ The primary mobile navigation has Home, Activity, Add, and Accounts. Add is an a
 
 - [x] Automated axe WCAG 2A/2AA contrast scan passes on all nine routes at desktop and Pixel 7-sized viewports in both themes; manual visual contrast review remains.
 - [x] Capture and inspect the 360, 390, 768, 1440 and 1920px layouts locally.
-- [ ] Walk through keyboard navigation and visible focus.
+- [x] Automated keyboard traversal visits every visible focusable control with visible focus styling across all nine routes and both review viewports; manual dialog/sheet and screen-reader review remains.
 - [x] Automated reduced-motion emulation passes in both viewports; physical-device motion review remains.
 - [ ] Owner reviews the navigation and visual direction on actual phone and desktop before Phase 1 exit.
 

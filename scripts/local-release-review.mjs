@@ -220,9 +220,97 @@ try {
       await page.evaluate(() => {
         document.documentElement.dataset.theme = "light";
       });
+      const keyboardFocusableCount = await page
+        .locator(
+          'a,button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+        )
+        .evaluateAll(
+          (elements) =>
+            elements.filter((element) => {
+              const rect = element.getBoundingClientRect();
+              const styles = getComputedStyle(element);
+              return (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                !element.hasAttribute("disabled") &&
+                !element.closest("details:not([open])") &&
+                styles.visibility !== "hidden" &&
+                styles.display !== "none"
+              );
+            }).length,
+        );
+      await page.evaluate(() => {
+        document.body.setAttribute("tabindex", "-1");
+        document.body.focus();
+      });
+      const keyboardFocusFailures = [];
+      const visitedKeyboardTargets = new Set();
+      let keyboardTabSteps = 0;
+      while (
+        visitedKeyboardTargets.size < keyboardFocusableCount &&
+        keyboardTabSteps < keyboardFocusableCount * 3
+      ) {
+        keyboardTabSteps += 1;
+        await page.keyboard.press("Tab");
+        const focusState = await page.evaluate(() => {
+          const element = document.activeElement;
+          if (!(element instanceof HTMLElement)) return null;
+          const focusableElements = Array.from(
+            document.querySelectorAll(
+              'a,button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+            ),
+          );
+          const rect = element.getBoundingClientRect();
+          const styles = getComputedStyle(element);
+          const parent = element.parentElement;
+          const parentStyles = parent ? getComputedStyle(parent) : null;
+          const hasFocusStyle =
+            (styles.outlineWidth !== "0px" && styles.outlineStyle !== "none") ||
+            styles.boxShadow !== "none" ||
+            (parent?.classList.contains("amount-control") &&
+              parentStyles?.boxShadow !== "none");
+          return {
+            focusableIndex: focusableElements.indexOf(element),
+            tag: element.tagName,
+            className: element.className,
+            text: element.textContent?.trim().slice(0, 40) ?? "",
+            visible: rect.width > 0 && rect.height > 0,
+            hasFocusStyle,
+          };
+        });
+        if (
+          focusState &&
+          focusState.focusableIndex >= 0 &&
+          !visitedKeyboardTargets.has(focusState.focusableIndex)
+        ) {
+          visitedKeyboardTargets.add(focusState.focusableIndex);
+          if (!focusState.visible || !focusState.hasFocusStyle) {
+            keyboardFocusFailures.push(focusState);
+          }
+        }
+      }
+      if (visitedKeyboardTargets.size !== keyboardFocusableCount) {
+        keyboardFocusFailures.push({
+          reason: "Tab traversal did not visit every visible focusable control",
+          visited: visitedKeyboardTargets.size,
+          expected: keyboardFocusableCount,
+        });
+      }
+      if (keyboardFocusFailures.length) {
+        await page.evaluate(() => document.body.removeAttribute("tabindex"));
+        assert.equal(
+          keyboardFocusFailures.length,
+          0,
+          `${name} has keyboard focus failures: ${JSON.stringify(keyboardFocusFailures)}`,
+        );
+      } else {
+        await page.evaluate(() => document.body.removeAttribute("tabindex"));
+      }
       routeResults.push({
         name,
         ...metrics,
+        keyboardFocusableCount,
+        keyboardFocusFailures: keyboardFocusFailures.length,
         pageErrors: routePageErrors,
         apiErrorResponses: routeApiErrors,
         axeViolations: accessibility.violations.length,
