@@ -7,6 +7,12 @@ export const HealthResponseSchema = z.object({
 
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
+export const HealthLiveResponseSchema = z.object({
+  status: z.literal("ok"),
+});
+
+export type HealthLiveResponse = z.infer<typeof HealthLiveResponseSchema>;
+
 export const LoginRequestSchema = z.object({
   email: z.string().trim().email().max(254),
   password: z.string().min(1).max(128),

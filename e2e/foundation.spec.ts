@@ -123,7 +123,10 @@ test("privacy masking toggles without exposing a sample balance", async ({
 
 test("browser reaches the live API backed by PostgreSQL", async ({ page }) => {
   await page.goto("/");
-  const response = await page.request.get("/api/v1/health");
+  const liveResponse = await page.request.get("/api/v1/health/live");
+  expect(liveResponse.status()).toBe(200);
+  await expect(liveResponse.json()).resolves.toEqual({ status: "ok" });
+  const response = await page.request.get("/api/v1/health/ready");
   expect(response.status()).toBe(200);
   await expect(response).toBeOK();
   await expect(response.json()).resolves.toEqual({
@@ -509,7 +512,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       );
       expect(crossUserRevoke.status()).toBe(404);
       const ownerExport = await page.request.get(
-        "http://localhost:3000/api/v1/exports/json",
+        "http://localhost:3000/api/v1/exports/data.json",
       );
       expect(ownerExport.status()).toBe(200);
       const ownerExportData = await ownerExport.json();
@@ -523,7 +526,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
         ),
       );
       const secondExport = await thirdContext.request.get(
-        "http://localhost:3000/api/v1/exports/json",
+        "http://localhost:3000/api/v1/exports/data.json",
       );
       expect(secondExport.status()).toBe(200);
       const secondExportData = await secondExport.json();
@@ -1394,7 +1397,7 @@ test("reports, exports, security, and categories stay owner-scoped", async ({
     "monikey-transactions.csv",
   );
   const json = await page.request.get(
-    "http://localhost:3000/api/v1/exports/json",
+    "http://localhost:3000/api/v1/exports/data.json",
   );
   expect(json.status()).toBe(200);
   await expect(json.json()).resolves.toMatchObject({

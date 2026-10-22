@@ -31,6 +31,7 @@ import {
   FinancialAccountResponseSchema,
   FinancialAccountsResponseSchema,
   HealthResponseSchema,
+  HealthLiveResponseSchema,
   JsonExportResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
@@ -252,6 +253,50 @@ app.get("/healthz", { schema: { hide: true } }, async () => ({
 
 app.get(
   "/api/v1/health",
+  {
+    schema: {
+      tags: ["system"],
+      summary: "API and database readiness",
+      response: {
+        200: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
+        503: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (_request, reply) => {
+    let database: "connected" | "unconfigured" | "unavailable" = "unconfigured";
+    if (pool) {
+      try {
+        await pool.query("SELECT 1");
+        database = "connected";
+      } catch {
+        database = "unavailable";
+      }
+    }
+
+    if (database === "unavailable") {
+      return reply.code(503).send({ status: "degraded", database });
+    }
+    return { status: "ok", database };
+  },
+);
+
+app.get(
+  "/api/v1/health/live",
+  {
+    schema: {
+      tags: ["system"],
+      summary: "Process liveness without database inspection",
+      response: {
+        200: z.toJSONSchema(HealthLiveResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async () => ({ status: "ok" as const }),
+);
+
+app.get(
+  "/api/v1/health/ready",
   {
     schema: {
       tags: ["system"],
@@ -708,7 +753,7 @@ app.get(
 );
 
 app.get(
-  "/api/v1/exports/json",
+  "/api/v1/exports/data.json",
   {
     schema: {
       tags: ["exports"],

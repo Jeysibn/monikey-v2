@@ -12,4 +12,4 @@ The Reports screen uses a responsive summary-card layout and an accessible categ
 
 ## JSON export
 
-`GET /api/v1/exports/json` returns `monikey-v2.export.v1` with generated timestamp, PHP/Asia-Manila owner metadata, accounts, categories, transactions, recurring bills, and card statements. It deliberately excludes passwords, sessions, CSRF tokens, and other identity secrets. Exports are portable data snapshots; they are not restore commands and never import V1 data.
+`GET /api/v1/exports/data.json` returns `monikey-v2.export.v1` with generated timestamp, PHP/Asia-Manila owner metadata, accounts, categories, transactions, recurring bills, and card statements. It deliberately excludes passwords, sessions, CSRF tokens, and other identity secrets. Exports are portable data snapshots; they are not restore commands and never import V1 data.

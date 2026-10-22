@@ -4526,7 +4526,7 @@ function ReportsPage() {
           >
             Download CSV
           </a>
-          <a className="quiet-button" href="/api/v1/exports/json">
+          <a className="quiet-button" href="/api/v1/exports/data.json">
             Download JSON
           </a>
         </div>

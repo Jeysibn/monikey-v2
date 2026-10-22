@@ -18,7 +18,7 @@ docker compose up --build
 
 Web: `http://localhost:5173`
 
-API readiness: `http://localhost:3000/api/v1/health`
+API readiness: `http://localhost:3000/api/v1/health/ready` (liveness: `/api/v1/health/live`)
 
 OpenAPI: `http://localhost:3000/openapi.json`
 
