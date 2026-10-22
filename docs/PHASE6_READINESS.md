@@ -11,6 +11,11 @@ Phase 6 is a controlled homelab replacement, not a local application task. This 
 - `kubectl`, `argocd`, `helm`, and `kustomize` are not installed in this environment, so no live cluster or Argo state was inspected.
 - The Homelab `Three-Tier Application` note describes an older Node worker, Nginx frontend, receipt PVC, and plain out-of-band Secret design. MoniKey V2 explicitly excludes a worker, receipt storage, and guessed production reuse. That note is reference evidence only and must not be copied into V2 deployment manifests.
 
+## Local recovery evidence
+
+- `docs/runbooks/restore.md` now documents custom-format PostgreSQL backup validation and isolated restore commands.
+- A disposable Docker Compose restore drill succeeded on 2026-10-22. The archive passed `pg_restore --list`, restored into a new database with `--exit-on-error`, returned expected user/journal/revision counts, and the isolated database was removed. This is local readiness evidence only; it does not satisfy the production CronJob, retention, monitoring, or owner-approval gates below.
+
 ## Required before authoring Phase 6 manifests
 
 1. Make the authoritative `/home/jeysi/homelab-gitops` checkout available, or provide its approved replacement path and branch.
