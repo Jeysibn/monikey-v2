@@ -41,11 +41,7 @@ try {
     headers: { origin: pageOrigin },
     data: { email, password },
   });
-  assert.equal(
-    login.status(),
-    200,
-    "The disposable review user must sign in.",
-  );
+  assert.equal(login.status(), 200, "The disposable review user must sign in.");
   const storageState = await loginContext.storageState();
   await loginContext.close();
 
@@ -57,7 +53,40 @@ try {
       deviceScaleFactor: target.isMobile ? 2 : 1,
       storageState,
     });
+    await context.addInitScript(() => {
+      window.__monikeyReviewVitals = { lcpMs: 0, cumulativeLayoutShift: 0 };
+      try {
+        new PerformanceObserver((list) => {
+          const latest = list.getEntries().at(-1);
+          if (latest) window.__monikeyReviewVitals.lcpMs = latest.startTime;
+        }).observe({ type: "largest-contentful-paint", buffered: true });
+      } catch {
+        // LCP is optional on browsers without support.
+      }
+      try {
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (!("hadRecentInput" in entry) || !entry.hadRecentInput) {
+              window.__monikeyReviewVitals.cumulativeLayoutShift +=
+                entry.value ?? 0;
+            }
+          }
+        }).observe({ type: "layout-shift", buffered: true });
+      } catch {
+        // Layout shift is optional on browsers without support.
+      }
+    });
     const page = await context.newPage();
+    let pageErrorCount = 0;
+    let apiErrorCount = 0;
+    page.on("pageerror", () => {
+      pageErrorCount += 1;
+    });
+    page.on("response", (response) => {
+      if (response.url().includes("/api/") && response.status() >= 400) {
+        apiErrorCount += 1;
+      }
+    });
 
     const apiDurations = [];
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -77,6 +106,9 @@ try {
       await page.getByRole("heading", { name: heading }).waitFor({
         state: "visible",
       });
+      await page.waitForTimeout(100);
+      const pageErrorsBefore = pageErrorCount;
+      const apiErrorsBefore = apiErrorCount;
       const metrics = await page.evaluate(() => {
         const interactive = Array.from(
           document.querySelectorAll("a,button,input,select,textarea"),
@@ -103,6 +135,22 @@ try {
           );
         });
         const navigation = performance.getEntriesByType("navigation")[0];
+        const firstContentfulPaint = performance
+          .getEntriesByType("paint")
+          .find((entry) => entry.name === "first-contentful-paint");
+        const largestContentfulPaint = performance
+          .getEntriesByType("largest-contentful-paint")
+          .at(-1);
+        const cumulativeLayoutShift = performance
+          .getEntriesByType("layout-shift")
+          .reduce(
+            (total, entry) =>
+              total +
+              ("hadRecentInput" in entry && entry.hadRecentInput
+                ? 0
+                : Number(entry.value ?? 0)),
+            0,
+          );
         return {
           overflowPx:
             document.documentElement.scrollWidth -
@@ -113,11 +161,29 @@ try {
           domContentLoadedMs: Math.round(
             navigation?.domContentLoadedEventEnd ?? 0,
           ),
+          firstContentfulPaintMs: Math.round(
+            firstContentfulPaint?.startTime ?? 0,
+          ),
+          largestContentfulPaintMs: Math.round(
+            window.__monikeyReviewVitals?.lcpMs ??
+              largestContentfulPaint?.startTime ??
+              0,
+          ),
+          cumulativeLayoutShift: Number(
+            (
+              window.__monikeyReviewVitals?.cumulativeLayoutShift ??
+              cumulativeLayoutShift
+            ).toFixed(3),
+          ),
         };
       });
+      const routePageErrors = pageErrorCount - pageErrorsBefore;
+      const routeApiErrors = apiErrorCount - apiErrorsBefore;
       assert.ok(metrics.overflowPx <= 0, `${name} has horizontal overflow.`);
       assert.equal(metrics.unnamed, 0, `${name} has unnamed controls.`);
       assert.equal(metrics.undersized, 0, `${name} has undersized controls.`);
+      assert.equal(routePageErrors, 0, `${name} has page errors.`);
+      assert.equal(routeApiErrors, 0, `${name} has API error responses.`);
       const accessibility = await new AxeBuilder({ page })
         .withTags(["wcag2a", "wcag2aa"])
         .analyze();
@@ -129,6 +195,8 @@ try {
       routeResults.push({
         name,
         ...metrics,
+        pageErrors: routePageErrors,
+        apiErrorResponses: routeApiErrors,
         axeViolations: accessibility.violations.length,
       });
     }
@@ -144,6 +212,8 @@ try {
     assert.ok(
       ["0s", "0.01ms", "1e-05s"].includes(reducedMotion.bodyTransition),
     );
+    assert.equal(pageErrorCount, 0, `${target.name} has page errors.`);
+    assert.equal(apiErrorCount, 0, `${target.name} has API error responses.`);
     reviewResults.push({
       target: target.name,
       routes: routeResults,
