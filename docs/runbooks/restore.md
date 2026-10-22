@@ -23,6 +23,25 @@ docker compose exec -T db pg_restore --list < "$BACKUP_FILE" | sed -n '1,12p'
 
 The dump command must exit successfully and the archive listing must contain the expected schema/data table-of-contents entries. A failed dump is not a backup and must not trigger rotation of the last known-good archive.
 
+The repository also provides local-only aliases that enforce the same safety
+checks without placing an archive in the worktree:
+
+```sh
+BACKUP_FILE=/secure/local/path/monikey-$(date +%Y%m%d-%H%M%S).dump \
+  npm run backup:local
+BACKUP_FILE=/secure/local/path/monikey-20261022-120000.dump \
+RESTORE_DB=monikey_restore_check_local \
+  npm run restore:local
+```
+
+`backup:local` refuses relative paths and repository paths, creates a new
+custom-format archive with restrictive permissions, and validates its listing.
+`restore:local` validates the archive, creates the named isolated database,
+restores with `--exit-on-error`, checks that the restored schema has users,
+journals, and revision tables, and removes the isolated database in a cleanup
+step. The commands log status and archive size only; they never print rows or
+financial values.
+
 ## Isolated restore drill
 
 Always restore into a newly created isolated database first. Never use `--clean` against the running V2 database and never overwrite a V1 database or PVC.
@@ -48,4 +67,4 @@ The production CronJob, retention path, credentials, monitoring, and restore tar
 
 ## Local drill evidence
 
-On 2026-10-22, a disposable Compose custom-format archive was created, validated with `pg_restore --list`, restored into an isolated `monikey_restore_check` database with `--exit-on-error`, and queried successfully (`2` users, `20` journals, `18` transaction revisions). The isolated database was dropped afterward. The archive was kept only in `/tmp` for the drill and is not repository data.
+On 2026-10-22, a disposable Compose custom-format archive was created, validated with `pg_restore --list`, restored into an isolated `monikey_restore_check` database with `--exit-on-error`, and queried successfully (`2` users, `20` journals, `18` transaction revisions). The isolated database was dropped afterward. The archive was kept only in `/tmp` for the drill and is not repository data. The new aliases were rerun against the current Node 22.22 Compose stack: an 89,137-byte archive passed listing validation and isolated restore validation, then cleanup completed; the temporary archive was removed.

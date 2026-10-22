@@ -58,6 +58,9 @@ the web container, and Playwright with one worker:
 - PostgreSQL integration, migration-upgrade, backup/isolated-restore,
   contracts, exact-money/property, and cache-header checks are recorded in
   `docs/TESTING.md`, `docs/RELEASE_REVIEW.md`, and the architecture audit.
+- `npm run backup:local` and `npm run restore:local` now automate the local
+  custom-format backup/listing and isolated restore checks without storing an
+  archive in the repository.
 
 No GitHub Actions run was started for this evidence. The PR workflow remains
 configured for merge protection and now seeds the dedicated sheet-test user.
