@@ -21,4 +21,4 @@ The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for
 
 ## Environment limitations
 
-The Docker daemon is installed locally, but this agent shell may need a refreshed `docker` group membership before it can access the socket. Do not claim a local Compose run unless the command succeeds. GitHub Actions remains the authoritative execution environment for the full-stack gate when local socket access is unavailable.
+The local Docker daemon is available after refreshing the shell's `docker` group membership. The Compose-backed suite was run locally against PostgreSQL, the API, and the web container; GitHub Actions remains the required pull-request gate.

@@ -107,6 +107,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => {
     try {
       const result = await apiRequest<Profile>("/me");
+      const csrf = await apiRequest<{ csrfToken: string }>("/auth/csrf");
+      setCsrfToken(csrf.csrfToken);
       setProfile(result);
       return result;
     } catch {
