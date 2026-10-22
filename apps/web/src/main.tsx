@@ -24,6 +24,7 @@ import {
   AmountEntry,
   MoneyValue,
   PrivacyMask,
+  PrivacyPreferenceProvider,
   ReferenceSelect,
 } from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
@@ -199,6 +200,7 @@ function useOnlineStatus(): boolean {
 }
 
 function useTheme(): [Theme, () => void] {
+  const { profile, csrfToken } = useAuth();
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem("monikey-theme");
     if (stored === "light" || stored === "dark") return stored;
@@ -206,6 +208,12 @@ function useTheme(): [Theme, () => void] {
       ? "dark"
       : "light";
   });
+
+  useEffect(() => {
+    if (profile?.user.theme === "light" || profile?.user.theme === "dark") {
+      setTheme(profile.user.theme);
+    }
+  }, [profile?.user.theme]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -220,7 +228,18 @@ function useTheme(): [Theme, () => void] {
 
   return [
     theme,
-    () => setTheme((current) => (current === "light" ? "dark" : "light")),
+    () => {
+      const next = theme === "light" ? "dark" : "light";
+      setTheme(next);
+      window.localStorage.setItem("monikey-theme", next);
+      if (profile && csrfToken) {
+        void apiRequest("/me/preferences", {
+          method: "PATCH",
+          headers: { "x-csrf-token": csrfToken },
+          body: JSON.stringify({ theme: next }),
+        }).catch(() => undefined);
+      }
+    },
   ];
 }
 
@@ -3010,6 +3029,37 @@ function QuickAddPage() {
 }
 
 function SettingsPage() {
+  const { profile, csrfToken, refreshProfile } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function toggleBalancePrivacy() {
+    if (!profile || !csrfToken) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await apiRequest("/me/preferences", {
+        method: "PATCH",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify({ hideBalances: !profile.user.hideBalances }),
+      });
+      await refreshProfile();
+      setMessage(
+        profile.user.hideBalances
+          ? "Balances will be visible by default."
+          : "Balances will be hidden by default.",
+      );
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "Your privacy preference could not be saved.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="route-page" aria-labelledby="page-heading">
       <div className="page-intro">
@@ -3031,6 +3081,33 @@ function SettingsPage() {
           <span className="preview-private-value">Private value</span>
         </PrivacyMask>
       </div>
+      {profile ? (
+        <div className="settings-preference-card">
+          <div>
+            <p className="empty-title">Privacy default</p>
+            <p className="field-hint">
+              Mask financial amounts when your private session opens.
+            </p>
+          </div>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void toggleBalancePrivacy()}
+            disabled={saving}
+          >
+            {saving
+              ? "Saving…"
+              : profile.user.hideBalances
+                ? "Show balances by default"
+                : "Hide balances by default"}
+          </button>
+        </div>
+      ) : null}
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -3120,6 +3197,15 @@ function App() {
   );
 }
 
+function AuthenticatedApp() {
+  const { profile } = useAuth();
+  return (
+    <PrivacyPreferenceProvider hidden={profile?.user.hideBalances ?? false}>
+      <App />
+    </PrivacyPreferenceProvider>
+  );
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js", { scope: "/" });
@@ -3129,7 +3215,7 @@ if ("serviceWorker" in navigator) {
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      <App />
+      <AuthenticatedApp />
     </AuthProvider>
   </React.StrictMode>,
 );

@@ -21,7 +21,7 @@ The transaction command includes `dashboard.integration.test.ts`, which checks t
 
 ## PostgreSQL-backed browser acceptance
 
-The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state. The Quick Add path covers authenticated account/category loading, expense creation, exact amount validation, transfer mode, and saved-state feedback while the signed-out route remains an honest no-save preview. The PWA path covers manifest metadata, shell-only service-worker behavior, an explicit offline state, and disabled transaction submission while offline.
+The browser suite must use the real API and real PostgreSQL; do not replace it with a mock finance adapter. The first-account acceptance path covers login, owner-scoped onboarding, opening-balance persistence, idempotent replay, duplicate prevention, and the READY profile state. The Quick Add path covers authenticated account/category loading, expense creation, exact amount validation, transfer mode, and saved-state feedback while the signed-out route remains an honest no-save preview. The PWA path covers manifest metadata, shell-only service-worker behavior, an explicit offline state, and disabled transaction submission while offline. Preference acceptance covers persisted dark theme and privacy-default masking after an authenticated profile update; reduced-motion CSS is exercised by the existing accessibility-safe shell styles.
 
 ```sh
 npx playwright install chromium

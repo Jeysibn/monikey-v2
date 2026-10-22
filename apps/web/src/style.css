@@ -1645,6 +1645,26 @@ h1 {
   background: var(--surface-card);
 }
 
+.settings-preference-card {
+  display: flex;
+  width: min(100%, 650px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 13px;
+  background: var(--surface-card);
+}
+
+@media (max-width: 560px) {
+  .settings-preference-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .privacy-control-preview .empty-title {
   margin: 0 0 4px;
   color: var(--text-primary);

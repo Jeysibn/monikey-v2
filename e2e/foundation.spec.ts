@@ -443,6 +443,11 @@ test("private login, session recovery, CSRF protection, and logout work", async 
       hideBalances: true,
     },
   });
+  await page.goto("/app");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(
+    page.getByRole("button", { name: "Reveal available money" }),
+  ).toBeVisible();
 
   await page.clock.install({ time: new Date("2001-01-01T12:00:00.000Z") });
   await page.goto("/");
