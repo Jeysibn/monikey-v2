@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { AxeBuilder } from "@axe-core/playwright";
 import { chromium } from "@playwright/test";
 
 const pageOrigin =
@@ -111,7 +112,19 @@ try {
       assert.ok(metrics.overflowPx <= 0, `${name} has horizontal overflow.`);
       assert.equal(metrics.unnamed, 0, `${name} has unnamed controls.`);
       assert.equal(metrics.undersized, 0, `${name} has undersized controls.`);
-      routeResults.push({ name, ...metrics });
+      const accessibility = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa"])
+        .analyze();
+      assert.equal(
+        accessibility.violations.length,
+        0,
+        `${name} has WCAG violations: ${JSON.stringify(accessibility.violations)}`,
+      );
+      routeResults.push({
+        name,
+        ...metrics,
+        axeViolations: accessibility.violations.length,
+      });
     }
 
     await page.emulateMedia({ reducedMotion: "reduce" });
