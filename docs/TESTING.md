@@ -4,8 +4,9 @@
 
 - Rebuilt the isolated `monikey-e2e` stack from this worktree. Its database uses
   tmpfs, with API/web on loopback ports 13000/18080; persistent development
-  services were not stopped or written to. The four documented disposable
-  users were bootstrapped in this database.
+  services were not stopped or written to. The disposable PostgreSQL service uses
+  trust authentication only on its isolated Docker network, and the host database
+  port is loopback-bound. The four documented disposable users were bootstrapped.
 - `npm run test:integration` passed all nine PostgreSQL suites and 18 tests.
   This includes current export paging/formula-safety coverage, owner isolation,
   concurrent idempotency, and killing the actual API during a transfer to verify
