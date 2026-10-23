@@ -961,6 +961,16 @@ h1 {
   gap: 12px;
 }
 
+.activity-filter-toggle {
+  display: none;
+}
+.activity-filter-content {
+  display: contents;
+}
+.mobile-menu-sign-out {
+  display: none;
+}
+
 .activity-filter-grid .field-label {
   margin-bottom: 6px;
   font-size: 11px;
@@ -1389,7 +1399,7 @@ h1 {
 }
 
 .topbar-sign-out {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 12px;
   border: 0;
   border-radius: 8px;
@@ -1438,7 +1448,7 @@ h1 {
 }
 
 .dashboard-primary-action {
-  min-height: 42px;
+  min-height: 44px;
   border-radius: 9px;
   font-size: 12px;
 }
@@ -1585,7 +1595,7 @@ h1 {
 }
 
 .dashboard-panel-heading .quiet-link {
-  min-height: 36px;
+  min-height: 44px;
   font-size: 11px;
 }
 
@@ -1751,6 +1761,17 @@ h1 {
     font-size: clamp(2rem, 10vw, 3rem);
   }
 
+  .dashboard-summary-card .dashboard-balance .privacy-value {
+    width: 100%;
+    justify-content: space-between;
+    gap: 2px;
+  }
+
+  .dashboard-summary-card .dashboard-balance .privacy-value > span:first-child {
+    min-width: 0;
+    font-size: clamp(1.75rem, 9vw, 2.35rem);
+  }
+
   .dashboard-stat-grid {
     margin-top: 13px;
     border-top: 1px solid var(--border-default);
@@ -1813,6 +1834,7 @@ h1 {
 
 .report-export-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 9px;
 }
@@ -2784,6 +2806,19 @@ h1 {
     box-shadow: var(--shadow-overlay);
   }
 
+  .mobile-menu-sign-out {
+    display: block;
+    min-height: 44px;
+    padding: 0 10px;
+    border: 0;
+    border-top: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-secondary);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+  }
+
   .mobile-more-menu nav .nav-link {
     min-height: 44px;
   }
@@ -2805,7 +2840,24 @@ h1 {
 
   .route-page,
   .home-page {
-    padding-top: 35px;
+    padding-top: 18px;
+  }
+  .route-page h1 {
+    font-size: clamp(1.8rem, 8vw, 2.5rem);
+    line-height: 1.08;
+  }
+  .route-page .eyebrow {
+    margin-bottom: 7px;
+  }
+  .route-page .page-description {
+    margin-top: 8px;
+  }
+  .activity-page {
+    padding-top: 9px;
+  }
+  .activity-page .page-description {
+    max-width: 48ch;
+    font-size: 12px;
   }
 
   .eyebrow {
@@ -2893,8 +2945,38 @@ h1 {
   }
 
   .activity-filter-panel {
-    margin-top: 25px;
-    padding: 16px 15px 14px;
+    margin-top: 15px;
+    padding: 10px 12px;
+  }
+
+  .activity-filter-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+  }
+  .activity-filter-toggle span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .activity-filter-content {
+    display: none;
+  }
+  .activity-filter-content.is-expanded {
+    display: block;
+    padding-top: 9px;
+  }
+  .activity-filter-content .activity-filter-grid {
+    grid-template-columns: 1fr;
   }
 
   .accounts-heading .dashboard-primary-action {
@@ -3070,9 +3152,29 @@ h1 {
   }
 
   .quick-add-card {
-    margin-top: 25px;
-    padding: 21px 17px 18px;
+    margin-top: 10px;
+    padding: 15px 14px 16px;
     border-radius: 13px;
+  }
+
+  .quick-add-page {
+    padding-top: 7px;
+  }
+  .quick-add-page > .page-intro {
+    display: none;
+  }
+  .quick-add-card .mode-tabs {
+    margin-bottom: 12px;
+  }
+  .quick-add-card .form-heading {
+    margin-bottom: 12px;
+  }
+  .quick-add-card .field-group:has(#quick-add-amount) .field-hint {
+    margin-top: 4px;
+  }
+  .quick-add-card #quick-add-amount {
+    min-height: 52px;
+    font-size: 25px;
   }
 
   .reference-grid {
@@ -3118,6 +3220,33 @@ h1 {
     border-top: 1px solid var(--border-default);
     background: color-mix(in srgb, var(--surface-card), transparent 3%);
     backdrop-filter: blur(16px);
+  }
+
+  .report-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 15px;
+  }
+  .report-toolbar .field-group {
+    width: min(100%, 190px);
+  }
+  .report-stat-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .report-stat-grid .dashboard-stat {
+    padding: 12px 14px;
+  }
+  .report-category-panel {
+    margin-top: 15px;
+    padding: 15px 13px;
+  }
+  .report-explanation {
+    margin-top: 18px;
+  }
+  .report-loading {
+    margin-top: 14px;
   }
 
   .mobile-nav .nav-link {

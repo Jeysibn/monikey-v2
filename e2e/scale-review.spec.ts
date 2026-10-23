@@ -70,8 +70,59 @@ test("10,000 transaction pages stay owner-scoped and render incrementally", asyn
   await page.goto("/app/activity");
   await expect(page.locator(".activity-feed-row")).toHaveCount(25);
   await expect(page.getByRole("button", { name: "Load more" })).toBeVisible();
+  let injectedDuplicate = false;
+  await page.route("**/api/v1/transactions?**cursor=**", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      activity: Array<{ transaction: { id: string } }>;
+    };
+    if (!injectedDuplicate && body.activity.length) {
+      body.activity.push(body.activity[0]!);
+      injectedDuplicate = true;
+    }
+    await route.fulfill({ response, json: body });
+  });
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(page.locator(".activity-feed-row")).toHaveCount(50);
+  expect(injectedDuplicate).toBeTruthy();
+  await page.unroute("**/api/v1/transactions?**cursor=**");
+
+  await page.getByLabel("Type").selectOption("EXPENSE");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page).toHaveURL(/kind=EXPENSE/);
+  await expect(page.locator(".activity-feed-row")).toHaveCount(25);
+  await page.getByLabel("Type").selectOption("INCOME");
+  let paginationQuery = "";
+  page.on("request", (request) => {
+    if (
+      request.url().includes("/api/v1/transactions?") &&
+      request.url().includes("cursor=")
+    )
+      paginationQuery = request.url();
+  });
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect.poll(() => paginationQuery).toContain("kind=EXPENSE");
+  const rowHrefs = await page
+    .locator(".activity-feed-row")
+    .evaluateAll((rows) =>
+      rows.map((row) => (row as HTMLAnchorElement).getAttribute("href")),
+    );
+  expect(new Set(rowHrefs).size).toBe(rowHrefs.length);
+
+  await page.getByLabel("Type").selectOption("EXPENSE");
+  await page.getByLabel("From").fill("2026-10-10");
+  let failFilteredRequest = true;
+  await page.route("**/api/v1/transactions?**kind=EXPENSE**", async (route) => {
+    if (failFilteredRequest) {
+      failFilteredRequest = false;
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page.getByRole("alert")).toContainText("Activity unavailable");
+  await expect(page.locator(".activity-feed-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator(".activity-feed-row")).toHaveCount(25);
 
   const secondaryLogin = await page.request.post(`${apiBaseUrl}/auth/login`, {
     headers: {

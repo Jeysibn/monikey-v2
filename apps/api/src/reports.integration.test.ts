@@ -3,6 +3,7 @@ import test, { after } from "node:test";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { createFinancialAccount } from "./accounts.js";
+import { withReadOnlyRepeatableReadTransaction } from "./database.js";
 import {
   csvCell,
   readMonthlyReport,
@@ -12,7 +13,11 @@ import {
   streamTransactionsJsonArray,
   transactionsCsv,
 } from "./reports.js";
-import { createIncomeOrExpense, createRefund } from "./transactions.js";
+import {
+  createIncomeOrExpense,
+  createRefund,
+  deleteTransaction,
+} from "./transactions.js";
 import { requireDatabaseUrl } from "./test-support/database-url.js";
 
 const pool = new Pool({ connectionString: requireDatabaseUrl() });
@@ -215,4 +220,155 @@ test("monthly report nets refunds and exports owner-scoped exact minor units", a
     await client.query("ROLLBACK");
     client.release();
   }
+});
+
+test("monthly report totals and categories use one repeatable-read snapshot", async () => {
+  const setupClient = await pool.connect();
+  let userId: string;
+  let accountId: string;
+  let foodCategoryId: string;
+  const probeNote = "Repeatable report snapshot probe";
+  try {
+    await setupClient.query("BEGIN");
+    const owner = await setupClient.query<{ id: string }>(
+      `SELECT id FROM users
+        WHERE email_normalized = 'reports-snapshot@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    userId = owner.rows[0]!.id;
+    const staleProbes = await setupClient.query<{ id: string }>(
+      `SELECT id FROM transactions
+        WHERE user_id = $1 AND note = $2 AND status = 'POSTED'`,
+      [userId, probeNote],
+    );
+    for (const staleProbe of staleProbes.rows) {
+      await deleteTransaction(setupClient, userId, staleProbe.id, {
+        reason: "Clean up a prior report snapshot test run.",
+      });
+    }
+    const existingAccount = await setupClient.query<{ id: string }>(
+      `SELECT id FROM financial_accounts
+        WHERE user_id = $1 AND name = 'Repeatable report test bank'`,
+      [userId],
+    );
+    if (existingAccount.rows[0]) {
+      accountId = existingAccount.rows[0].id;
+    } else {
+      const account = await createFinancialAccount(
+        setupClient,
+        userId,
+        {
+          type: "BANK",
+          name: "Repeatable report test bank",
+          openingBalanceMinor: "100000",
+        },
+        "2026-10-22",
+      );
+      accountId = account.id;
+    }
+    const categories = await setupClient.query<{ id: string }>(
+      `SELECT id FROM categories
+        WHERE user_id = $1 AND name = 'Food' AND kind = 'EXPENSE'`,
+      [userId],
+    );
+    assert.ok(categories.rows[0]?.id);
+    foodCategoryId = categories.rows[0]!.id;
+    await setupClient.query("COMMIT");
+  } catch (error) {
+    await setupClient.query("ROLLBACK");
+    throw error;
+  } finally {
+    setupClient.release();
+  }
+
+  let injectedPosting = false;
+  let probeTransactionId: string | undefined;
+  const cleanupProbe = async () => {
+    if (!probeTransactionId) return;
+    const cleanupClient = await pool.connect();
+    try {
+      await cleanupClient.query("BEGIN");
+      await deleteTransaction(cleanupClient, userId, probeTransactionId, {
+        reason: "Clean up the report snapshot integration probe.",
+      });
+      await cleanupClient.query("COMMIT");
+    } catch (error) {
+      await cleanupClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      cleanupClient.release();
+    }
+  };
+  try {
+    const report = await withReadOnlyRepeatableReadTransaction(
+      pool,
+      async (client) => {
+        const wrappedClient = new Proxy(client, {
+          get(target, property) {
+            if (property === "query") {
+              return async (queryText: string, values?: unknown[]) => {
+                const result = await target.query(queryText, values as never[]);
+                if (
+                  !injectedPosting &&
+                  queryText.includes('AS "incomeMinor"')
+                ) {
+                  injectedPosting = true;
+                  const writer = await pool.connect();
+                  try {
+                    await writer.query("BEGIN");
+                    const probe = await createIncomeOrExpense(
+                      writer,
+                      userId,
+                      {
+                        kind: "EXPENSE",
+                        sourceAccountId: accountId,
+                        categoryId: foodCategoryId,
+                        amountMinor: "1200",
+                        occurredOn: "1901-06-15",
+                        note: probeNote,
+                      },
+                      "2026-10-22",
+                    );
+                    probeTransactionId = probe.transaction.id;
+                    await writer.query("COMMIT");
+                  } catch (error) {
+                    await writer.query("ROLLBACK");
+                    throw error;
+                  } finally {
+                    writer.release();
+                  }
+                }
+                return result;
+              };
+            }
+            const value = Reflect.get(target, property, target) as unknown;
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }) as PoolClient;
+
+        return readMonthlyReport(wrappedClient, userId, "1901-06");
+      },
+    );
+
+    assert.equal(injectedPosting, true);
+    assert.equal(report.netExpensesMinor, "0");
+    assert.deepEqual(report.categories, []);
+
+    const refreshed = await withReadOnlyRepeatableReadTransaction(
+      pool,
+      (client) => readMonthlyReport(client, userId, "1901-06"),
+    );
+    assert.equal(refreshed.netExpensesMinor, "1200");
+    assert.equal(refreshed.categories[0]?.categoryId, foodCategoryId);
+    assert.equal(refreshed.categories[0]?.amountMinor, "1200");
+  } catch (error) {
+    await cleanupProbe().catch((cleanupError: unknown) => {
+      console.error(
+        "Failed to clean up the report snapshot probe.",
+        cleanupError,
+      );
+    });
+    throw error;
+  }
+  await cleanupProbe();
 });
