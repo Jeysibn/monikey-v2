@@ -5,8 +5,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-monikey}
       POSTGRES_USER: ${POSTGRES_USER:-monikey}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -36,8 +34,6 @@ services:
       NODE_ENV: development
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
       DATABASE_URL: postgresql://${POSTGRES_USER:-monikey}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-monikey}?schema=public
-    ports:
-      - "3000:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -47,7 +43,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s

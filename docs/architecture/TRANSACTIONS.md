@@ -32,11 +32,11 @@ P2-08 adds owner-scoped transfers, linked refunds, and explicit adjustments to t
 ### Refund
 
 - `kind`: `REFUND`.
-- `sourceAccountId`: the owned active account receiving the refund (asset) or crediting a card liability.
+- `sourceAccountId`: the owned active bank/cash/e-wallet account receiving the refund, or the credit-card account whose liability is reduced.
 - `refundedTransactionId`: an owned, posted `EXPENSE` transaction with remaining refundable amount.
 - `amountMinor`, `occurredOn`, and `note`: positive amount, server-valid date, and optional note.
 
-The refund inherits the original expense category and is separately dated. It credits that category, reducing net spending in the refund period without creating income.
+The refund inherits the original expense category and is separately dated. It debits the receiving asset account or card liability and credits the original expense category, reducing net spending in the refund period without creating income.
 
 ### Adjustment
 
@@ -47,7 +47,7 @@ The refund inherits the original expense category and is separately dated. It cr
 
 Adjustments post against a per-owner `ADJUSTMENT` equity ledger account and never affect income or spending.
 
-Writes require same-origin checks, an authenticated session, CSRF, and a user-scoped `Idempotency-Key`. A replay with the same payload returns the original transaction and account balance; a changed payload returns `409`.
+Writes require same-origin checks, an authenticated session, CSRF, and a user-scoped `Idempotency-Key`. A replay with the same payload returns the original transaction and account balance; a changed payload returns `409`. Successful transaction create, transfer, and edit responses include the current HTTP request's `requestId` alongside the journal-backed result, including an idempotent replay.
 
 ## Revisions and logical deletion
 
@@ -73,10 +73,15 @@ Account filtering checks all command-specific account fields in the current revi
 | Income               | Asset account ledger account                   | Income category ledger account |
 | Transfer without fee | Destination asset account                      | Source asset account           |
 | Transfer with fee    | Destination asset account and expense category | Source asset account           |
-| Refund               | Receiving asset account                        | Original expense category      |
+| Refund to asset      | Receiving asset account                        | Original expense category      |
+| Refund to card       | Credit card liability                          | Original expense category      |
 | Adjustment increase  | Adjusted account                               | Adjustment equity              |
 | Adjustment decrease  | Adjustment equity                              | Adjusted account               |
 
 Transfers lock both accounts in deterministic ID order before checking the source balance. A fee is posted as an expense category debit in the same balanced transfer journal, so it appears in spending without becoming income. The ledger service validates ownership and inserts the immutable journal/postings. Account balances are read from the posted ledger after commit work completes; no independent balance counter is maintained.
 
-Credit card purchases remain a later vertical slice. Archived accounts/categories and cross-owner IDs return a non-enumerating not-found response. All command retries use the same owner-scoped idempotency behavior.
+Credit card purchases use the same owner-scoped transaction command and ledger service, with liability postings and exact account-balance responses. Archived accounts/categories and cross-owner IDs return a non-enumerating not-found response. All command retries use the same owner-scoped idempotency behavior.
+
+## Linked refund protection
+
+A posted refund is constrained by the active original expense. The original cannot be reduced below the sum of its still-posted refunds, recategorized while linked refunds remain posted, or voided while any linked refund remains posted. These mutations return a conflict without changing the original revision, refund, journal, or postings. The owner can void or correct the linked refunds first; the refund totals are then recalculated from active ledger postings before a later edit or void. The original transaction row is locked for these checks, serializing them with concurrent refund creation.

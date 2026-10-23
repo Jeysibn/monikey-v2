@@ -31,7 +31,6 @@
 The V1 repository currently documents React/Vite, Fastify, Prisma, PostgreSQL, a separate worker, in-memory mock mode, and backend mode with differing capabilities. Its CI documentation says fast validation includes mock-mode Playwright while full-stack backend-connected tests are in a distinct workflow. The homelab repository documents k3s, Argo CD, Traefik, MetalLB, Longhorn, Pi-hole, and `monikey.homelab.local` in namespace `monikey`. These are verified **reference facts**, not a license to copy files or assume that deployed cluster state perfectly matches Git.
 
 **References (checked 2026-10-22):**
-
 - [MoniKey V1 README](https://github.com/Jeysibn/monikey/blob/main/README.md)
 - [MoniKey V1 architecture](https://github.com/Jeysibn/monikey/blob/main/docs/ARCHITECTURE.md)
 - [MoniKey V1 CI/CD operations](https://github.com/Jeysibn/monikey/blob/main/docs/CI-CD-Operations.md)
@@ -42,17 +41,17 @@ The V1 repository currently documents React/Vite, Fastify, Prisma, PostgreSQL, a
 
 The product is successful when its owner can use it daily without needing an auxiliary spreadsheet and without doubting the account balances. Success does **not** mean feature parity with V1.
 
-| Metric / experience | Acceptance target                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| First use           | Login, guided first-account setup, and functional dashboard in one short flow                 |
-| Daily transaction   | Normal expense entered from mobile quick-add with amount, account, category, today as default |
-| Accounting          | No duplicate revenue/expense from transfers or card payments; journal stays balanced          |
-| Persistence         | Records survive reloads, logout/login, process restarts, and redeploys                        |
-| Navigation          | Four primary mobile actions; secondary details accessed contextually                          |
-| Testing             | All merge-blocking checks use real PostgreSQL and a real API for financial E2E paths          |
-| Design              | Premium minimal royal-blue/deep-navy UI, functional light/dark modes, accessible motion       |
-| Deployment          | Approved image digests deployed by existing Argo CD via GitOps; controlled V1 replacement     |
-| Isolation           | No user can access another user's financial information, even by guessing IDs                 |
+| Metric / experience | Acceptance target |
+|---|---|
+| First use | Login, guided first-account setup, and functional dashboard in one short flow |
+| Daily transaction | Normal expense entered from mobile quick-add with amount, account, category, today as default |
+| Accounting | No duplicate revenue/expense from transfers or card payments; journal stays balanced |
+| Persistence | Records survive reloads, logout/login, process restarts, and redeploys |
+| Navigation | Four primary mobile actions; secondary details accessed contextually |
+| Testing | All merge-blocking checks use real PostgreSQL and a real API for financial E2E paths |
+| Design | Premium minimal royal-blue/deep-navy UI, functional light/dark modes, accessible motion |
+| Deployment | Approved image digests deployed by existing Argo CD via GitOps; controlled V1 replacement |
+| Isolation | No user can access another user's financial information, even by guessing IDs |
 
 ---
 
@@ -63,7 +62,6 @@ The product is successful when its owner can use it daily without needing an aux
 **Primary user:** a single individual tracking personal cash, banks, e-wallets, and credit card liabilities. Private family accounts can be added later with **independent, non-shared financial data**, not a collaborative household wallet.
 
 **Top daily jobs:**
-
 1. Open the phone and see recorded **Available Money**.
 2. Add an expense/income in seconds, using the correct account.
 3. Check a bank/e-wallet/card balance and chronological transaction history.
@@ -120,26 +118,25 @@ Future flexibility is good; speculative tables, screens, infrastructure, or adap
 
 Use React Router with one authenticated application shell. **Primary mobile navigation** is Home, Activity, **Add**, Accounts; Add is an action, not another full information page. Side destinations (Bills, Reports, Settings) are discoverable from Home and the account/menu area. Desktop may use the same information groups in a rail/sidebar, not a different route taxonomy.
 
-| Route                                 | Owner        | Intended behavior                                                                                  |
-| ------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------- |
-| `/login`                              | Identity     | Private sign-in, validation, rate-limit/error feedback                                             |
-| `/onboarding`                         | Accounts     | Guided first account + opening balance; skip extra accounts                                        |
-| `/app`                                | Home         | Dashboard; default authenticated landing page                                                      |
-| `/app/activity`                       | Transactions | Chronological feed, search, filters, visible clear-all, URL-preserved filter state                 |
-| `/app/transactions/new?kind=expense`  | Transactions | Mobile bottom sheet when navigated contextually; direct link renders accessible full-page fallback |
-| `/app/transactions/:transactionId`    | Transactions | Details and edit/reverse actions; audit summary                                                    |
-| `/app/accounts`                       | Accounts     | Unified cash, bank, wallet, card overview                                                          |
-| `/app/accounts/:accountId`            | Accounts     | Account balance, filtered history, actions                                                         |
-| `/app/accounts/:accountId/statements` | Cards        | Only for credit card accounts; statement/payment review                                            |
-| `/app/bills`                          | Bills        | Upcoming, overdue, paid, skipped, add/edit recurring rules                                         |
-| `/app/reports`                        | Insights     | Month selector, summary cards, category/chart breakdown                                            |
-| `/app/settings`                       | Settings     | Profile, theme, category link, export, security                                                    |
-| `/app/settings/categories`            | Categories   | Add/rename/archive categories                                                                      |
-| `/app/settings/security`              | Identity     | Password, sessions, revoke/logout                                                                  |
-| `*`                                   | Router       | Helpful 404 within correct authentication state                                                    |
+| Route | Owner | Intended behavior |
+|---|---|---|
+| `/login` | Identity | Private sign-in, validation, rate-limit/error feedback |
+| `/onboarding` | Accounts | Guided first account + opening balance; skip extra accounts |
+| `/app` | Home | Dashboard; default authenticated landing page |
+| `/app/activity` | Transactions | Chronological feed, search, filters, visible clear-all, URL-preserved filter state |
+| `/app/transactions/new?kind=expense` | Transactions | Mobile bottom sheet when navigated contextually; direct link renders accessible full-page fallback |
+| `/app/transactions/:transactionId` | Transactions | Details and edit/reverse actions; audit summary |
+| `/app/accounts` | Accounts | Unified cash, bank, wallet, card overview |
+| `/app/accounts/:accountId` | Accounts | Account balance, filtered history, actions |
+| `/app/accounts/:accountId/statements` | Cards | Only for credit card accounts; statement/payment review |
+| `/app/bills` | Bills | Upcoming, overdue, paid, skipped, add/edit recurring rules |
+| `/app/reports` | Insights | Month selector, summary cards, category/chart breakdown |
+| `/app/settings` | Settings | Profile, theme, category link, export, security |
+| `/app/settings/categories` | Categories | Add/rename/archive categories |
+| `/app/settings/security` | Identity | Password, sessions, revoke/logout |
+| `*` | Router | Helpful 404 within correct authentication state |
 
 **Route behavior constraints:**
-
 - A browser reload or copied deep link MUST render the same logical screen after session recovery.
 - Back/forward MUST restore the right detail view, filter and modal state without duplicate mutations.
 - Deleted/archived/mismatched user IDs MUST return a safe 404/403 boundary; no data leak.
@@ -165,20 +162,20 @@ Use React Router with one authenticated application shell. **Primary mobile navi
 
 ### 3.1 Initial token proposal (subject to contrast testing)
 
-| Token              | Light               | Dark                | Meaning                     |
-| ------------------ | ------------------- | ------------------- | --------------------------- |
-| `brand.primary`    | `#1D4ED8`           | `#60A5FA`           | Main action/selection       |
-| `brand.deep`       | `#122343`           | `#DBEAFE`           | Identity/headings           |
-| `brand.accent`     | `#38BDF8`           | `#38BDF8`           | Limited data/motion accents |
-| `surface.page`     | `#F7F9FC`           | `#0B1220`           | App background              |
-| `surface.card`     | `#FFFFFF`           | `#142036`           | Cards/sheets                |
-| `surface.muted`    | `#ECF2FA`           | `#1C2B44`           | Secondary groupings         |
-| `text.primary`     | `#10213D`           | `#F3F7FF`           | Primary content             |
-| `text.secondary`   | `#53657E`           | `#A9BAD2`           | Captions/metadata           |
-| `border.default`   | `#DCE5F2`           | `#2D405D`           | Separators                  |
-| `semantic.income`  | accessible green    | accessible green    | Positive cash flow          |
-| `semantic.expense` | accessible warm/red | accessible warm/red | Expenses/negative context   |
-| `semantic.warning` | accessible amber    | accessible amber    | Negative balance/overdue    |
+| Token | Light | Dark | Meaning |
+|---|---|---|---|
+| `brand.primary` | `#1D4ED8` | `#60A5FA` | Main action/selection |
+| `brand.deep` | `#122343` | `#DBEAFE` | Identity/headings |
+| `brand.accent` | `#38BDF8` | `#38BDF8` | Limited data/motion accents |
+| `surface.page` | `#F7F9FC` | `#0B1220` | App background |
+| `surface.card` | `#FFFFFF` | `#142036` | Cards/sheets |
+| `surface.muted` | `#ECF2FA` | `#1C2B44` | Secondary groupings |
+| `text.primary` | `#10213D` | `#F3F7FF` | Primary content |
+| `text.secondary` | `#53657E` | `#A9BAD2` | Captions/metadata |
+| `border.default` | `#DCE5F2` | `#2D405D` | Separators |
+| `semantic.income` | accessible green | accessible green | Positive cash flow |
+| `semantic.expense` | accessible warm/red | accessible warm/red | Expenses/negative context |
+| `semantic.warning` | accessible amber | accessible amber | Negative balance/overdue |
 
 **Acceptance:** WCAG AA contrast for body text and essential indicators. Never rely on color alone; positive/negative values include labels/signs and accessible screen-reader descriptions. Test both themes with real charts and screenshots.
 
@@ -214,7 +211,7 @@ Prefer native semantics and a small, accessible component primitive library over
 
 - `MoneyMinor`: signed PostgreSQL `BIGINT`, serialized through JSON **only as a base-10 string**, e.g. `"125050"` = ₱1,250.50. No IEEE-754 floating point for stored calculations, API totals or reporting sums.
 - User input like `1,250.50` is parsed at the UI boundary to precisely `125050` minor units, rejecting more than two fractional digits, invalid formatting, NaN and overflows. Never use `parseFloat(value) * 100`.
-- Implement exact `bigint`/decimal-string helper methods in `packages/money` and centralize formatting with `Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' })` _only for display_; choose a safe formatter conversion for large values without losing precision.
+- Implement exact `bigint`/decimal-string helper methods in `packages/money` and centralize formatting with `Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' })` *only for display*; choose a safe formatter conversion for large values without losing precision.
 - Financial date is an ISO `DATE` (`YYYY-MM-DD`) in Philippine Time (`Asia/Manila`); technical `created_at`/`updated_at`/audit events are UTC-aware `TIMESTAMPTZ`.
 - The application allows **backdated** financial transactions but not future-dated posted transactions; future bills remain unpaid reminders, not balance-changing postings.
 - Monthly periods: inclusive start date, exclusive next-month start date, evaluated as PHT business dates.
@@ -223,24 +220,23 @@ Prefer native semantics and a small, accessible component primitive library over
 
 Every posted user financial action creates a balanced journal: **sum of debits = sum of credits**. Account types are assets, liabilities, income, expenses and internal equity/adjustment. The financial model includes only what V2 actually tracks.
 
-| Action                               | Debit (+)                               | Credit (-)          | Reporting consequence                 |
-| ------------------------------------ | --------------------------------------- | ------------------- | ------------------------------------- |
-| Opening cash/bank/e-wallet balance   | Asset                                   | Opening Equity      | No income                             |
-| Opening card outstanding debt        | Opening Equity                          | Card Liability      | No expense                            |
-| Salary/income received               | Asset                                   | Income              | Income increases                      |
-| Expense paid from bank/cash/e-wallet | Expense                                 | Asset               | Spending increases                    |
-| Move money bank → GCash              | GCash Asset                             | Bank Asset          | No income/expense                     |
-| Transfer with fee                    | GCash Asset + Fee Expense               | Bank Asset          | Fee only is spending                  |
-| Card purchase                        | Expense                                 | Card Liability      | Spending increases, debt increases    |
-| Credit card payment                  | Card Liability                          | Bank/E-wallet Asset | No new expense                        |
-| Expense refund to bank               | Bank Asset                              | Expense             | Reduces net spending; linked original |
-| Card-purchase refund on same card    | Card Liability                          | Expense             | Reduces debt and net spending         |
-| Correct an overstated asset balance  | Adjustment Equity                       | Asset               | No income/expense                     |
-| Correct an understated asset balance | Asset                                   | Adjustment Equity   | No income/expense                     |
-| Correct card liability               | Liability / Adjustment Equity as needed | Counterpart         | No artificial expense/income          |
+| Action | Debit (+) | Credit (-) | Reporting consequence |
+|---|---|---|---|
+| Opening cash/bank/e-wallet balance | Asset | Opening Equity | No income |
+| Opening card outstanding debt | Opening Equity | Card Liability | No expense |
+| Salary/income received | Asset | Income | Income increases |
+| Expense paid from bank/cash/e-wallet | Expense | Asset | Spending increases |
+| Move money bank → GCash | GCash Asset | Bank Asset | No income/expense |
+| Transfer with fee | GCash Asset + Fee Expense | Bank Asset | Fee only is spending |
+| Card purchase | Expense | Card Liability | Spending increases, debt increases |
+| Credit card payment | Card Liability | Bank/E-wallet Asset | No new expense |
+| Expense refund to bank | Bank Asset | Expense | Reduces net spending; linked original |
+| Card-purchase refund on same card | Card Liability | Expense | Reduces debt and net spending |
+| Correct an overstated asset balance | Adjustment Equity | Asset | No income/expense |
+| Correct an understated asset balance | Asset | Adjustment Equity | No income/expense |
+| Correct card liability | Liability / Adjustment Equity as needed | Counterpart | No artificial expense/income |
 
 Notes:
-
 - The `+/-` notation in this table is illustrative; actual journal posting records carry **debit/credit direction** and positive absolute minor units. Asset balances are debits minus credits; liability balances are credits minus debits.
 - A refund is a **separately dated** action; a refund received in November against an October purchase reduces November net expenses in the original expense category, not October's original history. Reports can show negative category net-spend for a month if refunds exceed that month's purchases.
 - A transfer fee amount is optional, nonnegative, explicitly visible and tied to a transfer. For ₱1,000 transferred and ₱15 fee, source decreases ₱1,015, destination increases ₱1,000, spending increases ₱15.
@@ -302,28 +298,28 @@ Period Net Expenses           = gross expenses - linked refund credits
 
 ### 4.8 Essential financial test examples
 
-| ID      | Scenario                                  | Expected invariant                                                      |
-| ------- | ----------------------------------------- | ----------------------------------------------------------------------- |
-| FIN-001 | Opening Bank ₱10,000                      | Available=₱10,000; income=0                                             |
-| FIN-002 | Spend ₱250 from bank                      | Bank=₱9,750; expenses=₱250                                              |
-| FIN-003 | Receive ₱4,000 salary                     | Bank+=₱4,000; income+=₱4,000                                            |
-| FIN-004 | Bank→GCash ₱1,000                         | Bank−₱1,000; GCash+₱1,000; both report totals unchanged                 |
-| FIN-005 | Transfer ₱1,000 plus ₱15 fee              | Funding −₱1,015; receiving +₱1,000; expense +₱15                        |
-| FIN-006 | Card purchase ₱800                        | Card debt+₱800; expense+₱800; liquid cash unchanged                     |
-| FIN-007 | Pay card ₱300 via bank                    | Card debt−₱300; bank−₱300; no new expense                               |
-| FIN-008 | Refund ₱100 to bank                       | Bank+₱100; linked category net spend−₱100; income unchanged             |
-| FIN-009 | Correct an expense ₱250→₱200              | Account increases by ₱50 vs prior state; expense exactly ₱200           |
-| FIN-010 | Delete posted expense                     | Original effect reverses once; retained audit/history                   |
-| FIN-011 | Two simultaneous identical create retries | One financial posting, one canonical result                             |
-| FIN-012 | Different payload reusing idempotency key | 409 conflict; no second journal                                         |
-| FIN-013 | User B requests User A's account ID       | No data or existence details disclosed                                  |
-| FIN-014 | Negative account after payment            | Warning shown, confirm allows; journals balanced                        |
-| FIN-015 | Variable bill payment retry               | Exactly one linked expense, occurrence Paid once                        |
-| FIN-016 | Card statement paid partially             | Due remainder decreases by payment allocation, not by newer purchases   |
-| FIN-017 | Month boundary refund                     | Original month purchase remains; refund affects month actually received |
-| FIN-018 | Day 31 monthly bill during February       | One occurrence due last day of February                                 |
-| FIN-019 | App crashes during multi-leg transfer     | Transaction fully commits or fully rolls back                           |
-| FIN-020 | Repeated reversal attempt                 | No double refund/double ledger reversal                                 |
+| ID | Scenario | Expected invariant |
+|---|---|---|
+| FIN-001 | Opening Bank ₱10,000 | Available=₱10,000; income=0 |
+| FIN-002 | Spend ₱250 from bank | Bank=₱9,750; expenses=₱250 |
+| FIN-003 | Receive ₱4,000 salary | Bank+=₱4,000; income+=₱4,000 |
+| FIN-004 | Bank→GCash ₱1,000 | Bank−₱1,000; GCash+₱1,000; both report totals unchanged |
+| FIN-005 | Transfer ₱1,000 plus ₱15 fee | Funding −₱1,015; receiving +₱1,000; expense +₱15 |
+| FIN-006 | Card purchase ₱800 | Card debt+₱800; expense+₱800; liquid cash unchanged |
+| FIN-007 | Pay card ₱300 via bank | Card debt−₱300; bank−₱300; no new expense |
+| FIN-008 | Refund ₱100 to bank | Bank+₱100; linked category net spend−₱100; income unchanged |
+| FIN-009 | Correct an expense ₱250→₱200 | Account increases by ₱50 vs prior state; expense exactly ₱200 |
+| FIN-010 | Delete posted expense | Original effect reverses once; retained audit/history |
+| FIN-011 | Two simultaneous identical create retries | One financial posting, one canonical result |
+| FIN-012 | Different payload reusing idempotency key | 409 conflict; no second journal |
+| FIN-013 | User B requests User A's account ID | No data or existence details disclosed |
+| FIN-014 | Negative account after payment | Warning shown, confirm allows; journals balanced |
+| FIN-015 | Variable bill payment retry | Exactly one linked expense, occurrence Paid once |
+| FIN-016 | Card statement paid partially | Due remainder decreases by payment allocation, not by newer purchases |
+| FIN-017 | Month boundary refund | Original month purchase remains; refund affects month actually received |
+| FIN-018 | Day 31 monthly bill during February | One occurrence due last day of February |
+| FIN-019 | App crashes during multi-leg transfer | Transaction fully commits or fully rolls back |
+| FIN-020 | Repeated reversal attempt | No double refund/double ledger reversal |
 
 ---
 
@@ -351,24 +347,24 @@ flowchart TD
   Insights --> PG
 ```
 
-| Module         | Owns                                                                               | Must not own                    |
-| -------------- | ---------------------------------------------------------------------------------- | ------------------------------- |
-| `identity`     | Credentials, sessions, users, access and session policy                            | Account balances                |
-| `accounts`     | Financial account lifecycle, card profile, credit card statements                  | Arbitrary journal writes        |
-| `categories`   | Customizable defaults and archived categories                                      | Transaction balances            |
-| `ledger`       | Journal, balanced postings, reversal, audit-linked commit, derived balance queries | HTTP handlers or UI layout      |
-| `transactions` | Commands and lifecycle; orchestrates ledger                                        | Independent balance counters    |
-| `bills`        | Recurrence definitions, due occurrences, manual payment orchestration              | Background payment execution    |
-| `insights`     | Read-only summary and report projections                                           | Any writes to financial state   |
-| `exports`      | Authorized CSV/JSON streaming                                                      | Financial posting logic         |
-| `shared`       | Typed errors, money parsing, clock and authorization primitives                    | Cross-module business mutations |
+| Module | Owns | Must not own |
+|---|---|---|
+| `identity` | Credentials, sessions, users, access and session policy | Account balances |
+| `accounts` | Financial account lifecycle, card profile, credit card statements | Arbitrary journal writes |
+| `categories` | Customizable defaults and archived categories | Transaction balances |
+| `ledger` | Journal, balanced postings, reversal, audit-linked commit, derived balance queries | HTTP handlers or UI layout |
+| `transactions` | Commands and lifecycle; orchestrates ledger | Independent balance counters |
+| `bills` | Recurrence definitions, due occurrences, manual payment orchestration | Background payment execution |
+| `insights` | Read-only summary and report projections | Any writes to financial state |
+| `exports` | Authorized CSV/JSON streaming | Financial posting logic |
+| `shared` | Typed errors, money parsing, clock and authorization primitives | Cross-module business mutations |
 
 ### 5.1 Deep-module interface examples
 
 ```ts
 // Conceptual public domain ports, not finished source files.
-type MinorString = string & { readonly __brand: "MinorString" };
-type FinancialDate = string & { readonly __brand: "FinancialDate" };
+type MinorString = string & { readonly __brand: 'MinorString' };
+type FinancialDate = string & { readonly __brand: 'FinancialDate' };
 type UserContext = { userId: string; requestId: string };
 
 type PostExpense = {
@@ -390,38 +386,15 @@ type TransferMoney = {
 };
 
 interface TransactionCommands {
-  createExpense(
-    ctx: UserContext,
-    cmd: PostExpense,
-    idempotencyKey: string,
-  ): Promise<PostedTransaction>;
-  transfer(
-    ctx: UserContext,
-    cmd: TransferMoney,
-    idempotencyKey: string,
-  ): Promise<PostedTransaction>;
-  reverse(
-    ctx: UserContext,
-    transactionId: string,
-    reason: string,
-  ): Promise<PostedTransaction>;
+  createExpense(ctx: UserContext, cmd: PostExpense, idempotencyKey: string): Promise<PostedTransaction>;
+  transfer(ctx: UserContext, cmd: TransferMoney, idempotencyKey: string): Promise<PostedTransaction>;
+  reverse(ctx: UserContext, transactionId: string, reason: string): Promise<PostedTransaction>;
 }
 
 interface LedgerPort {
-  postBalancedJournal(
-    tx: DatabaseTransaction,
-    userId: string,
-    postings: Posting[],
-  ): Promise<JournalId>;
-  reverseJournal(
-    tx: DatabaseTransaction,
-    userId: string,
-    sourceJournalId: string,
-  ): Promise<JournalId>;
-  getBalances(
-    userId: string,
-    accountIds?: string[],
-  ): Promise<BalanceSnapshot[]>;
+  postBalancedJournal(tx: DatabaseTransaction, userId: string, postings: Posting[]): Promise<JournalId>;
+  reverseJournal(tx: DatabaseTransaction, userId: string, sourceJournalId: string): Promise<JournalId>;
+  getBalances(userId: string, accountIds?: string[]): Promise<BalanceSnapshot[]>;
 }
 ```
 
@@ -458,24 +431,24 @@ erDiagram
 
 ### 6.2 Proposed logical tables
 
-| Table                    | Core fields (not full DDL)                                                                                                              | Important constraints                                            |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `users`                  | `id`, `email_normalized`, `password_hash`, `status`, `created_at`                                                                       | Unique normalized email; Argon2id hash                           |
-| `user_preferences`       | `user_id`, `timezone`, `currency`, `theme`, `hide_balances`                                                                             | Default Asia/Manila, PHP; 1:1 user                               |
-| `auth_sessions`          | `id`, `user_id`, `token_hash`, `expires_at`, `revoked_at`, `last_seen_at`                                                               | Unique token hash; expiry/revocation                             |
-| `financial_accounts`     | `id`, `user_id`, `type`, `name`, `institution`, `archived_at`, `sort_order`, `credit_limit_minor`, `statement_day`, `due_day`           | User-scoped; PHP only; card-only columns checked                 |
-| `categories`             | `id`, `user_id`, `kind`, `name`, `sort_order`, `archived_at`                                                                            | Kind INCOME/EXPENSE; stable ID                                   |
-| `ledger_accounts`        | `id`, `user_id`, `type`, `financial_account_id?`, `category_id?`, `internal_code?`                                                      | Asset/liability/income/expense/equity; unique backing mapping    |
-| `transactions`           | `id`, `user_id`, `kind`, `status`, `current_revision`, `occurred_on`, `category_id?`, `note`, `refunded_transaction_id?`, `created_at`  | Stable public ID; active/void state; owner-scoped linked records |
-| `transaction_revisions`  | `id`, `transaction_id`, `version`, `before_json`, `after_json`, `actor_id`, `reason`, `created_at`                                      | Unique(transaction,version); immutable                           |
-| `journals`               | `id`, `user_id`, `transaction_id`, `reversal_of?`, `occurred_on`, `created_at`, `operation_kind`                                        | No direct UPDATE/DELETE after posting; linked audit              |
-| `postings`               | `id`, `journal_id`, `ledger_account_id`, `direction`, `amount_minor`                                                                    | amount >0; debit=credit per journal                              |
-| `credit_card_statements` | `id`, `user_id`, `card_account_id`, `statement_on`, `due_on`, `amount_due_minor`, `reference`, `created_at`                             | Card-only; nonnegative statement amount; dates valid             |
-| `statement_allocations`  | `id`, `user_id`, `statement_id`, `payment_transaction_id`, `allocated_minor`                                                            | Positive allocation; no duplicate allocation/over-allocation     |
-| `recurring_bills`        | `id`, `user_id`, `name`, `category_id`, `account_id?`, `amount_mode`, `default_minor?`, `due_day`, `start_on`, `end_on?`, `archived_at` | Monthly V2; `due_day` in 1..31                                   |
-| `bill_occurrences`       | `id`, `user_id`, `bill_id`, `due_on`, `status`, `paid_transaction_id?`, `paid_on?`, `amount_paid_minor?`                                | UNIQUE (bill_id,due_on); payment once                            |
-| `idempotency_keys`       | `id`, `user_id`, `key_hash`, `request_hash`, `status`, `response_json`, `created_at`, `expires_at`                                      | UNIQUE (user_id,key_hash); no duplicate money write              |
-| `audit_events`           | `id`, `user_id`, `actor_id`, `entity_type`, `entity_id`, `action`, `safe_metadata_json`, `occurred_at`                                  | Append-only; no secrets in metadata                              |
+| Table | Core fields (not full DDL) | Important constraints |
+|---|---|---|
+| `users` | `id`, `email_normalized`, `password_hash`, `status`, `created_at` | Unique normalized email; Argon2id hash |
+| `user_preferences` | `user_id`, `timezone`, `currency`, `theme`, `hide_balances` | Default Asia/Manila, PHP; 1:1 user |
+| `auth_sessions` | `id`, `user_id`, `token_hash`, `expires_at`, `revoked_at`, `last_seen_at` | Unique token hash; expiry/revocation |
+| `financial_accounts` | `id`, `user_id`, `type`, `name`, `institution`, `archived_at`, `sort_order`, `credit_limit_minor`, `statement_day`, `due_day` | User-scoped; PHP only; card-only columns checked |
+| `categories` | `id`, `user_id`, `kind`, `name`, `sort_order`, `archived_at` | Kind INCOME/EXPENSE; stable ID |
+| `ledger_accounts` | `id`, `user_id`, `type`, `financial_account_id?`, `category_id?`, `internal_code?` | Asset/liability/income/expense/equity; unique backing mapping |
+| `transactions` | `id`, `user_id`, `kind`, `status`, `current_revision`, `occurred_on`, `category_id?`, `note`, `refunded_transaction_id?`, `created_at` | Stable public ID; active/void state; owner-scoped linked records |
+| `transaction_revisions` | `id`, `transaction_id`, `version`, `before_json`, `after_json`, `actor_id`, `reason`, `created_at` | Unique(transaction,version); immutable |
+| `journals` | `id`, `user_id`, `transaction_id`, `reversal_of?`, `occurred_on`, `created_at`, `operation_kind` | No direct UPDATE/DELETE after posting; linked audit |
+| `postings` | `id`, `journal_id`, `ledger_account_id`, `direction`, `amount_minor` | amount >0; debit=credit per journal |
+| `credit_card_statements` | `id`, `user_id`, `card_account_id`, `statement_on`, `due_on`, `amount_due_minor`, `reference`, `created_at` | Card-only; nonnegative statement amount; dates valid |
+| `statement_allocations` | `id`, `user_id`, `statement_id`, `payment_transaction_id`, `allocated_minor` | Positive allocation; no duplicate allocation/over-allocation |
+| `recurring_bills` | `id`, `user_id`, `name`, `category_id`, `account_id?`, `amount_mode`, `default_minor?`, `due_day`, `start_on`, `end_on?`, `archived_at` | Monthly V2; `due_day` in 1..31 |
+| `bill_occurrences` | `id`, `user_id`, `bill_id`, `due_on`, `status`, `paid_transaction_id?`, `paid_on?`, `amount_paid_minor?` | UNIQUE (bill_id,due_on); payment once |
+| `idempotency_keys` | `id`, `user_id`, `key_hash`, `request_hash`, `status`, `response_json`, `created_at`, `expires_at` | UNIQUE (user_id,key_hash); no duplicate money write |
+| `audit_events` | `id`, `user_id`, `actor_id`, `entity_type`, `entity_id`, `action`, `safe_metadata_json`, `occurred_at` | Append-only; no secrets in metadata |
 
 **Design nuance:** `transaction_revisions` describes user-facing changes; append-only `journals` and `postings` remain the financial source of truth. `transaction.current_revision` is a projection pointer, not a second ledger.
 
@@ -520,40 +493,40 @@ erDiagram
 
 ### 7.2 Endpoint inventory
 
-| Method      | Endpoint                                           | Behavior and constraints                                      |
-| ----------- | -------------------------------------------------- | ------------------------------------------------------------- |
-| `GET`       | `/api/v1/health/live`                              | Process liveness; no sensitive info                           |
-| `GET`       | `/api/v1/health/ready`                             | Readiness incl. DB; short response                            |
-| `POST`      | `/api/v1/auth/login`                               | Sign in, rotate session, rate limit                           |
-| `POST`      | `/api/v1/auth/logout`                              | Revoke current session                                        |
-| `GET`       | `/api/v1/auth/sessions`                            | Current user's active sessions                                |
-| `DELETE`    | `/api/v1/auth/sessions/:id`                        | Revoke owned session                                          |
-| `POST`      | `/api/v1/auth/change-password`                     | Verify old password, revoke others                            |
-| `GET`       | `/api/v1/me`                                       | User profile, preferences, `serverToday`, onboarding status   |
-| `PATCH`     | `/api/v1/me/preferences`                           | Theme, privacy toggle, never currency switching               |
-| `POST`      | `/api/v1/onboarding/first-account`                 | First account + opening journal, one transaction              |
-| `GET/POST`  | `/api/v1/accounts`                                 | List/create cash/bank/wallet/card                             |
-| `GET/PATCH` | `/api/v1/accounts/:id`                             | Details and permitted metadata edits                          |
-| `POST`      | `/api/v1/accounts/:id/archive`                     | Archive; future posting no longer allowed                     |
-| `GET`       | `/api/v1/accounts/:id/activity`                    | Account-scoped ledger/transaction history                     |
-| `GET/POST`  | `/api/v1/categories`                               | List/create editable user categories                          |
-| `PATCH`     | `/api/v1/categories/:id`                           | Rename, icon, order, archive                                  |
-| `GET/POST`  | `/api/v1/transactions`                             | List/filter; create income/expense/transfer/refund/adjustment |
-| `GET/PATCH` | `/api/v1/transactions/:id`                         | Details and atomic revise/repost                              |
-| `DELETE`    | `/api/v1/transactions/:id`                         | Logical void with reversed postings                           |
-| `GET`       | `/api/v1/transactions/:id/audit`                   | Safe revision history                                         |
-| `POST`      | `/api/v1/credit-cards/:id/payments`                | Specialized card payment UI command                           |
-| `GET/POST`  | `/api/v1/credit-cards/:id/statements`              | List and manually record statements                           |
-| `PATCH`     | `/api/v1/credit-cards/:id/statements/:statementId` | Audit-safe statement correction                               |
-| `GET/POST`  | `/api/v1/bills`                                    | List/create recurring bill rules                              |
-| `PATCH`     | `/api/v1/bills/:id`                                | Edit/pause/archive rule                                       |
-| `GET`       | `/api/v1/bills/occurrences?from=&to=`              | Deterministic upcoming/overdue/paid occurrences               |
-| `POST`      | `/api/v1/bills/occurrences/:id/pay`                | Confirm amount/account, create transaction once               |
-| `POST`      | `/api/v1/bills/occurrences/:id/skip`               | Mark explicitly skipped; no posting                           |
-| `GET`       | `/api/v1/dashboard/summary`                        | Available Money, debt, net position, this month, bills        |
-| `GET`       | `/api/v1/reports/monthly?month=YYYY-MM`            | Income, spending, cash flow, category breakdown               |
-| `GET`       | `/api/v1/exports/transactions.csv`                 | Authorized, escaped CSV streaming                             |
-| `GET`       | `/api/v1/exports/data.json`                        | Structured owned data and schema version                      |
+| Method | Endpoint | Behavior and constraints |
+|---|---|---|
+| `GET` | `/api/v1/health/live` | Process liveness; no sensitive info |
+| `GET` | `/api/v1/health/ready` | Readiness incl. DB; short response |
+| `POST` | `/api/v1/auth/login` | Sign in, rotate session, rate limit |
+| `POST` | `/api/v1/auth/logout` | Revoke current session |
+| `GET` | `/api/v1/auth/sessions` | Current user's active sessions |
+| `DELETE` | `/api/v1/auth/sessions/:id` | Revoke owned session |
+| `POST` | `/api/v1/auth/change-password` | Verify old password, revoke others |
+| `GET` | `/api/v1/me` | User profile, preferences, `serverToday`, onboarding status |
+| `PATCH` | `/api/v1/me/preferences` | Theme, privacy toggle, never currency switching |
+| `POST` | `/api/v1/onboarding/first-account` | First account + opening journal, one transaction |
+| `GET/POST` | `/api/v1/accounts` | List/create cash/bank/wallet/card |
+| `GET/PATCH` | `/api/v1/accounts/:id` | Details and permitted metadata edits |
+| `POST` | `/api/v1/accounts/:id/archive` | Archive; future posting no longer allowed |
+| `GET` | `/api/v1/accounts/:id/activity` | Account-scoped ledger/transaction history |
+| `GET/POST` | `/api/v1/categories` | List/create editable user categories |
+| `PATCH` | `/api/v1/categories/:id` | Rename, icon, order, archive |
+| `GET/POST` | `/api/v1/transactions` | List/filter; create income/expense/transfer/refund/adjustment |
+| `GET/PATCH` | `/api/v1/transactions/:id` | Details and atomic revise/repost |
+| `DELETE` | `/api/v1/transactions/:id` | Logical void with reversed postings |
+| `GET` | `/api/v1/transactions/:id/audit` | Safe revision history |
+| `POST` | `/api/v1/credit-cards/:id/payments` | Specialized card payment UI command |
+| `GET/POST` | `/api/v1/credit-cards/:id/statements` | List and manually record statements |
+| `PATCH` | `/api/v1/credit-cards/:id/statements/:statementId` | Audit-safe statement correction |
+| `GET/POST` | `/api/v1/bills` | List/create recurring bill rules |
+| `PATCH` | `/api/v1/bills/:id` | Edit/pause/archive rule |
+| `GET` | `/api/v1/bills/occurrences?from=&to=` | Deterministic upcoming/overdue/paid occurrences |
+| `POST` | `/api/v1/bills/occurrences/:id/pay` | Confirm amount/account, create transaction once |
+| `POST` | `/api/v1/bills/occurrences/:id/skip` | Mark explicitly skipped; no posting |
+| `GET` | `/api/v1/dashboard/summary` | Available Money, debt, net position, this month, bills |
+| `GET` | `/api/v1/reports/monthly?month=YYYY-MM` | Income, spending, cash flow, category breakdown |
+| `GET` | `/api/v1/exports/transactions.csv` | Authorized, escaped CSV streaming |
+| `GET` | `/api/v1/exports/data.json` | Structured owned data and schema version |
 
 The API list is the **target contract**, not a claim endpoints exist. New routes require contract docs, permission rules, and tests. Avoid adding endpoints for out-of-scope V1 features.
 
@@ -653,7 +626,6 @@ Successful response should contain transaction ID, revision, effective date, the
 The selected production hostname remains `monikey.homelab.local`; no public domain is available. A normal public CA certificate cannot be issued for this local-only name. Integrate cert-manager with a **private CA issuer** (or reuse an already correctly provisioned private issuer) and have Traefik serve a cert with SAN `monikey.homelab.local`.
 
 **Required validation:**
-
 1. Confirm Pi-hole resolves hostname to internal Traefik endpoint over LAN and via Tailscale DNS forwarding.
 2. Confirm certificate SAN, validity, renewal and full chain.
 3. Securely distribute and trust the **CA public certificate** on authorized desktop/phone devices; never distribute the CA **private key**.
@@ -782,7 +754,7 @@ flowchart TB
 
 ## 10. CI/CD, security scanning and image publication
 
-**Primary requirement:** Unlike V1's standard validation pipeline, V2's merge-required validation MUST include real API + PostgreSQL financial browser workflows. Fast test stages may run in parallel, but a required aggregate gate fails when the real stack is unverified or skipped unexpectedly.
+**Primary requirement:** Financial acceptance MUST use the actual API and PostgreSQL; no mock finance adapter may replace it. To conserve the repository's GitHub Actions allowance, PR CI is intentionally one `validate` job. The owner runs the real PostgreSQL integration and Playwright full-stack suites locally before merging financial or API changes. Record the local result and commit SHA in the project journal/release evidence. Do not claim acceptance if the real stack was skipped or unavailable.
 
 ### 10.1 Branch and promotion strategy (approved)
 
@@ -807,15 +779,12 @@ feature/<ticket> ──PR──> dev ──release PR──> main
 
 ### 10.2 Required PR checks
 
-| Job                    | Minimum check                                                                                            | Must block merge?                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `quality`              | npm clean install, formatting, oxlint/ESLint, TypeScript strict typecheck, unit tests, production build  | Yes                               |
-| `contracts`            | Runtime schema validation, OpenAPI generation, client type drift check, unauth/error contract tests      | Yes                               |
-| `finance-invariants`   | Exact-money/property-based ledger tests, audit/reversal/idempotency/concurrency rules                    | Yes                               |
-| `postgres-integration` | Real PostgreSQL service, fresh migrations, data isolation, DB constraints and transaction rollback tests | Yes                               |
-| `e2e-real-stack`       | Build app, run disposable Postgres/API/web, Playwright on real backend; mobile + key desktop journeys    | Yes                               |
-| `security`             | TruffleHog verified secret scan, dependency audit and CodeQL as available, CI permissions checks         | Yes on configured severe failures |
-| `manifest-validation`  | Compose config, deployment manifests Helm/Kustomize render, schema/policy checks when changed            | Yes                               |
+| Job | Minimum check | Must block merge? |
+|---|---|---|
+| `validate` | One PR job: npm clean install, formatting, ESLint, strict TypeScript/build, finance/invariant and repository guard tests, dependency audit, and TruffleHog verified secret scan | Yes |
+| Local financial acceptance | Real PostgreSQL migrations/constraints, all API integration suites, and API-backed Playwright mobile + desktop journeys, run from the isolated Docker Compose stack | Required local pre-merge check for financial/API changes; record evidence |
+
+CodeQL and per-PR full-stack Compose jobs are omitted from GitHub Actions to conserve Actions minutes. This is a deliberate operating-policy change from the original multi-job CI proposal. Local financial acceptance remains mandatory and must never silently skip PostgreSQL or substitute a mock finance adapter.
 
 **No hidden skips:** if Postgres is absent or required E2E cannot connect, CI must **fail** (not silently report “0 tests” or “DB tests skipped”). No test profile may use V1's in-memory finance repository as a replacement for real API verification. Mock UI fixtures may exist only in isolated component tests/Storybook-like previews and must never be a selectable production runtime.
 
@@ -865,7 +834,6 @@ Use disposable fixture users and money data; tests must not access the productio
 Before creating manifests, inspect the current `/kubernetes` directory and active k3s cluster; discover the **real** MoniKey Argo CD Application definition, namespace, chart/Kustomize location, TLS issuer, storage class, ingress and secret conventions. The public service catalog documents Traefik/Pi-hole and V1 MoniKey at `monikey.homelab.local`, but file paths and live manifests can change. Do not invent them.
 
 Application desired state SHOULD include:
-
 - Namespace or existing `monikey` namespace usage.
 - Web Deployment and internal Service.
 - API Deployment and internal Service.
@@ -882,7 +850,6 @@ Application desired state SHOULD include:
 **Chosen policy (owner-approved): automated PostgreSQL backups stored on the SAME host / failure domain. No mandatory off-host copy at launch.**
 
 Proposed minimal implementation:
-
 - Daily `pg_dump` custom-format backups of V2 PostgreSQL into a dedicated protected storage path/volume on the homelab host; ensure they are not inside ephemeral containers.
 - Suggested retention: last 7 daily + 4 weekly dumps, subject to available disk space. A retention/rotation job must not delete the newest known-good backup solely because a newer dump failed.
 - CronJob is idempotent and logs backup **status/size/timestamp**, never confidential rows; monitor last success and volume utilization.
@@ -968,16 +935,16 @@ Proposed minimal implementation:
 
 **Goal:** a new, runnable, reviewed monorepo with real Postgres and contract scaffolding; zero copied V1 modules.
 
-| ID      | Task                                                                                                    | Dependencies | Evidence / acceptance                                                        |
-| ------- | ------------------------------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------- |
-| `P0-01` | Create new `monikey-v2` repo, protected `main` + `dev`, PR policy and `.gitignore`                      | None         | Empty new history; V1 untouched; no credentials                              |
-| `P0-02` | Create npm workspaces for `apps/web`, `apps/api`, `packages/contracts`, `packages/money`                | P0-01        | Root install/build/typecheck scripts succeed from clean checkout             |
-| `P0-03` | Add architecture context, this master plan, ADR template, code owner/team and issue/PR templates        | P0-01        | docs explain source of truth, non-goals and change control                   |
-| `P0-04` | Stand up Compose Postgres+API+web+migrate, separate disposable test profile                             | P0-02        | Fresh `docker compose up` → web, API and database ready; no worker           |
-| `P0-05` | Establish shared schema validation, API error format, OpenAPI output and typed client generation        | P0-02        | Sample endpoint + invalid-request contract tests pass                        |
-| `P0-06` | Configure lint, formatting, strict TS, unit/integration/E2E scaffolding and Playwright mobile projects  | P0-02,P0-04  | CI runs valid smoke tests against real stack                                 |
-| `P0-07` | Replicate/improve V1 GitHub Actions quality/security/publish approach without copy-pasting stale config | P0-04,P0-06  | All required checks configured to fail on skipped DB/E2E; CodeQL/secret scan |
-| `P0-08` | Establish Obsidian `~/main-brain` project page, decision log and per-PR change record convention        | P0-03        | Example ADR and issue handoff notes verified                                 |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P0-01` | Create new `monikey-v2` repo, protected `main` + `dev`, PR policy and `.gitignore` | None | Empty new history; V1 untouched; no credentials |
+| `P0-02` | Create npm workspaces for `apps/web`, `apps/api`, `packages/contracts`, `packages/money` | P0-01 | Root install/build/typecheck scripts succeed from clean checkout |
+| `P0-03` | Add architecture context, this master plan, ADR template, code owner/team and issue/PR templates | P0-01 | docs explain source of truth, non-goals and change control |
+| `P0-04` | Stand up Compose Postgres+API+web+migrate, separate disposable test profile | P0-02 | Fresh `docker compose up` → web, API and database ready; no worker |
+| `P0-05` | Establish shared schema validation, API error format, OpenAPI output and typed client generation | P0-02 | Sample endpoint + invalid-request contract tests pass |
+| `P0-06` | Configure lint, formatting, strict TS, unit/integration/E2E scaffolding and Playwright mobile projects | P0-02,P0-04 | CI runs valid smoke tests against real stack |
+| `P0-07` | Configure one Actions validation job and guarded release publication without copying stale config | P0-04,P0-06 | Required `validate` check; TruffleHog, npm audit, finance/unit/repository guards; real PostgreSQL/API acceptance recorded from local pre-merge runs |
+| `P0-08` | Establish Obsidian `~/main-brain` project page, decision log and per-PR change record convention | P0-03 | Example ADR and issue handoff notes verified |
 
 **Phase 0 exit gate:** a clean clone can launch and test a tiny real web→API→Postgres vertical slice, CI catches intentional failures, and docs state that V1 is read-only reference. No financial UI yet.
 
@@ -985,34 +952,34 @@ Proposed minimal implementation:
 
 **Goal:** a distinctive, accessible, blue-toned finance interface with agreed flows before building many pages.
 
-| ID      | Task                                                                                                               | Dependencies | Evidence / acceptance                                                 |
-| ------- | ------------------------------------------------------------------------------------------------------------------ | ------------ | --------------------------------------------------------------------- |
-| `P1-01` | Confirm typography scale, blue/navy tokens, light/dark surfaces, semantic data colors                              | P0-02        | Token table and theme snapshots; contrast tests                       |
-| `P1-02` | Produce low-fidelity mobile+desktop flows for Home, Activity, Quick Add, Accounts, Cards, Bills, Reports, Settings | P1-01        | Route/interaction reviews; no unnecessary tabs                        |
-| `P1-03` | Implement design primitives, focus/keyboard behavior, dialogs, sheets and global app shell                         | P1-01        | Component tests in both themes; 44px touch and focus checks           |
-| `P1-04` | Build real responsive route skeleton + nested/direct-link rendering, 404/unauthorized/error boundaries             | P1-02,P1-03  | Deep link/refresh/back navigation Playwright passes                   |
-| `P1-05` | Build `MoneyValue`, amount input parser, category/account selector visuals and privacy mask (no business writes)   | P1-03        | Exact parse/format unit tests; accessible disabled/error/empty states |
-| `P1-06` | Add reduced-motion variants, mobile/desktop screenshots and design review acceptance                               | P1-03,P1-04  | 360/390/768/1440/1920 screenshots and keyboard walkthrough approved   |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P1-01` | Confirm typography scale, blue/navy tokens, light/dark surfaces, semantic data colors | P0-02 | Token table and theme snapshots; contrast tests |
+| `P1-02` | Produce low-fidelity mobile+desktop flows for Home, Activity, Quick Add, Accounts, Cards, Bills, Reports, Settings | P1-01 | Route/interaction reviews; no unnecessary tabs |
+| `P1-03` | Implement design primitives, focus/keyboard behavior, dialogs, sheets and global app shell | P1-01 | Component tests in both themes; 44px touch and focus checks |
+| `P1-04` | Build real responsive route skeleton + nested/direct-link rendering, 404/unauthorized/error boundaries | P1-02,P1-03 | Deep link/refresh/back navigation Playwright passes |
+| `P1-05` | Build `MoneyValue`, amount input parser, category/account selector visuals and privacy mask (no business writes) | P1-03 | Exact parse/format unit tests; accessible disabled/error/empty states |
+| `P1-06` | Add reduced-motion variants, mobile/desktop screenshots and design review acceptance | P1-03,P1-04 | 360/390/768/1440/1920 screenshots and keyboard walkthrough approved |
 
-**Phase 1 exit gate:** owner approves the navigation and visual direction on actual phone and desktop viewports; component previews may use _clearly labeled_ fixtures, but no fake finance behavior is presented as working product functionality.
+**Phase 1 exit gate:** owner approves the navigation and visual direction on actual phone and desktop viewports; component previews may use *clearly labeled* fixtures, but no fake finance behavior is presented as working product functionality.
 
 ### Phase 2 — Identity and financially correct ledger
 
 **Goal:** secure user session, accounts, categories and mathematical source of truth.
 
-| ID      | Task                                                                                                                  | Dependencies      | Evidence / acceptance                                                   |
-| ------- | --------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
-| `P2-01` | Users, bootstrapped private signup, Argon2id login, secure DB sessions, CSRF/origin and rate limits                   | P0-04,P0-05       | Cookie, login, logout, session revocation, 401/429/CSRF tests           |
-| `P2-02` | User preferences, PHT server date, PHP-only policy, ownership authorization helpers                                   | P2-01             | Device clock skew and wrong-user negative tests                         |
-| `P2-03` | PostgreSQL migrations for financial accounts, categories, ledger accounts, journals, postings, revisions, idempotency | P2-01             | Fresh migrate; constraints and composite ownership tests                |
-| `P2-04` | Exact-money library, balanced debit/credit service, append-only posting enforcement and audit                         | P2-03             | FIN-001 onward plus invalid journal DB tests                            |
-| `P2-05` | Account lifecycle: create/opening balance, rename, archive, balance read                                              | P2-04             | Opening balance is equity-backed, not income; archived history retained |
-| `P2-06` | Default/custom categories, rename, archive, ownership validation                                                      | P2-03             | Historical category references remain stable                            |
-| `P2-07` | Expense and income commands with date validation, warning confirmation, idempotency                                   | P2-04,P2-05,P2-06 | FIN-002/003/011/012; atomic update and exact reports                    |
-| `P2-08` | Transfer, fee, refund and explicit adjustment commands                                                                | P2-07             | FIN-004/005/008; no double-count; ownership of original refund          |
-| `P2-09` | Edit, reversal, logical delete, audit revisions and concurrency locks                                                 | P2-07,P2-08       | FIN-009/010/019/020; no direct journal rewrite                          |
-| `P2-10` | Unified activity list/read, cursor pagination, account scoped query and filters                                       | P2-09             | Sorted feed, filtering and access controls all correct                  |
-| `P2-11` | Financial domain property-based tests and fail-closed repository tests                                                | P2-09             | Random operation sequences preserve balanced journal/invariants         |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P2-01` | Users, bootstrapped private signup, Argon2id login, secure DB sessions, CSRF/origin and rate limits | P0-04,P0-05 | Cookie, login, logout, session revocation, 401/429/CSRF tests |
+| `P2-02` | User preferences, PHT server date, PHP-only policy, ownership authorization helpers | P2-01 | Device clock skew and wrong-user negative tests |
+| `P2-03` | PostgreSQL migrations for financial accounts, categories, ledger accounts, journals, postings, revisions, idempotency | P2-01 | Fresh migrate; constraints and composite ownership tests |
+| `P2-04` | Exact-money library, balanced debit/credit service, append-only posting enforcement and audit | P2-03 | FIN-001 onward plus invalid journal DB tests |
+| `P2-05` | Account lifecycle: create/opening balance, rename, archive, balance read | P2-04 | Opening balance is equity-backed, not income; archived history retained |
+| `P2-06` | Default/custom categories, rename, archive, ownership validation | P2-03 | Historical category references remain stable |
+| `P2-07` | Expense and income commands with date validation, warning confirmation, idempotency | P2-04,P2-05,P2-06 | FIN-002/003/011/012; atomic update and exact reports |
+| `P2-08` | Transfer, fee, refund and explicit adjustment commands | P2-07 | FIN-004/005/008; no double-count; ownership of original refund |
+| `P2-09` | Edit, reversal, logical delete, audit revisions and concurrency locks | P2-07,P2-08 | FIN-009/010/019/020; no direct journal rewrite |
+| `P2-10` | Unified activity list/read, cursor pagination, account scoped query and filters | P2-09 | Sorted feed, filtering and access controls all correct |
+| `P2-11` | Financial domain property-based tests and fail-closed repository tests | P2-09 | Random operation sequences preserve balanced journal/invariants |
 
 **Phase 2 exit gate:** backend-only test suite proves the money is correct. Reviewers can inspect ledger legs and reproduce calculations; frontend components have no alternative financial-state implementation.
 
@@ -1020,16 +987,16 @@ Proposed minimal implementation:
 
 **Goal:** use MoniKey for daily cash/wallet/bank expense and income tracking on phone without misrepresenting unfinished capabilities.
 
-| ID      | Task                                                                                         | Dependencies      | Evidence / acceptance                                               |
-| ------- | -------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------- |
-| `P3-01` | Guided first-run setup with first account + opening balance                                  | P1-04,P2-05       | New user can reach true, persisted dashboard without demo data      |
-| `P3-02` | Quick Add sheet for expense/income/transfer with full validation and pending/error states    | P1-05,P2-07,P2-08 | Normal mobile entry fast; retry never duplicates                    |
-| `P3-03` | Home summary endpoint and blue dashboard with correct liquid totals                          | P2-10,P1-06       | Account/Home/Activity values reconcile under edits and transfers    |
-| `P3-04` | Unified Activity with search/date/category/account/type filters and detail-edit/reverse      | P2-09,P2-10       | Reload/deep-link preserved; accurate historical reports             |
-| `P3-05` | Unified Accounts screen and account-specific detail with archive management                  | P2-05,P2-10       | Existing archived account records accessible as history             |
-| `P3-06` | Private PWA shell, trusted HTTPS dev strategy, connection/offline state (online-only writes) | P1-04,P3-02       | Installable on test device where supported; no offline ledger cache |
-| `P3-07` | Light/dark theme switch, privacy mask and reduced-motion acceptance                          | P1-06,P3-03       | Theme persistent; readable charts/cards and secure states           |
-| `P3-08` | Full end-to-end alpha QA; fix ledger/UI discrepancies before real usage                      | P3-01..P3-07      | Real Postgres Playwright and sign-off; app survives restart         |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P3-01` | Guided first-run setup with first account + opening balance | P1-04,P2-05 | New user can reach true, persisted dashboard without demo data |
+| `P3-02` | Quick Add sheet for expense/income/transfer with full validation and pending/error states | P1-05,P2-07,P2-08 | Normal mobile entry fast; retry never duplicates |
+| `P3-03` | Home summary endpoint and blue dashboard with correct liquid totals | P2-10,P1-06 | Account/Home/Activity values reconcile under edits and transfers |
+| `P3-04` | Unified Activity with search/date/category/account/type filters and detail-edit/reverse | P2-09,P2-10 | Reload/deep-link preserved; accurate historical reports |
+| `P3-05` | Unified Accounts screen and account-specific detail with archive management | P2-05,P2-10 | Existing archived account records accessible as history |
+| `P3-06` | Private PWA shell, trusted HTTPS dev strategy, connection/offline state (online-only writes) | P1-04,P3-02 | Installable on test device where supported; no offline ledger cache |
+| `P3-07` | Light/dark theme switch, privacy mask and reduced-motion acceptance | P1-06,P3-03 | Theme persistent; readable charts/cards and secure states |
+| `P3-08` | Full end-to-end alpha QA; fix ledger/UI discrepancies before real usage | P3-01..P3-07 | Real Postgres Playwright and sign-off; app survives restart |
 
 **Alpha release gate:** owner can track **cash, banks, e-wallets**, income/expense/transfers accurately with genuinely usable mobile UX. Credit card/bill screens remain absent or clearly unavailable until the next phase; no “coming soon” navigation clutter. Before entering real financial data, backup and basic restoration instructions must already exist, even if full GitOps production is later.
 
@@ -1037,16 +1004,16 @@ Proposed minimal implementation:
 
 **Goal:** finish liabilities and reminders without building a worker or automated finance actions.
 
-| ID      | Task                                                                                  | Dependencies | Evidence / acceptance                                              |
-| ------- | ------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------ |
-| `P4-01` | Credit card account type, limit, outstanding debt and utilization                     | P2-05,P3-05  | Card purchase increases debt+expense; credit limit not liquid cash |
-| `P4-02` | Dedicated Pay Credit Card user flow using shared ledger                               | P4-01,P2-08  | No duplicate expense; fee if supported follows explicit logic      |
-| `P4-03` | Manual statements, due dates, full/partial allocation, safe edits                     | P4-02        | Statement balance vs total card outstanding remain distinct        |
-| `P4-04` | Credit card account detail visual polish and overdue displays                         | P4-03,P1-06  | Actual statement amounts labeled; no guessed bank figures          |
-| `P4-05` | Recurring bill rule and occurrence schema, monthly date rules, fixed/variable amounts | P2-07        | Unique occurrence/day, February handling, no worker needed         |
-| `P4-06` | Upcoming/overdue Bills UI, pay/skip confirmation, link actual transaction             | P4-05,P3-02  | FIN-015/018; no auto-posting or duplicate clicks                   |
-| `P4-07` | Home upcoming bills and card liability widgets with clear hierarchy                   | P4-04,P4-06  | Available Money unchanged by unpaid bills                          |
-| `P4-08` | Credit/bill independent QA, concurrency/retry negative paths                          | P4-07        | Real API E2E and audit tests pass                                  |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P4-01` | Credit card account type, limit, outstanding debt and utilization | P2-05,P3-05 | Card purchase increases debt+expense; credit limit not liquid cash |
+| `P4-02` | Dedicated Pay Credit Card user flow using shared ledger | P4-01,P2-08 | No duplicate expense; fee if supported follows explicit logic |
+| `P4-03` | Manual statements, due dates, full/partial allocation, safe edits | P4-02 | Statement balance vs total card outstanding remain distinct |
+| `P4-04` | Credit card account detail visual polish and overdue displays | P4-03,P1-06 | Actual statement amounts labeled; no guessed bank figures |
+| `P4-05` | Recurring bill rule and occurrence schema, monthly date rules, fixed/variable amounts | P2-07 | Unique occurrence/day, February handling, no worker needed |
+| `P4-06` | Upcoming/overdue Bills UI, pay/skip confirmation, link actual transaction | P4-05,P3-02 | FIN-015/018; no auto-posting or duplicate clicks |
+| `P4-07` | Home upcoming bills and card liability widgets with clear hierarchy | P4-04,P4-06 | Available Money unchanged by unpaid bills |
+| `P4-08` | Credit/bill independent QA, concurrency/retry negative paths | P4-07 | Real API E2E and audit tests pass |
 
 **Phase 4 exit gate:** manually entered statements and reminders work in real life and use the same journal source of truth. All critical interactions have an owner-reviewed design and QA evidence.
 
@@ -1054,15 +1021,15 @@ Proposed minimal implementation:
 
 **Goal:** small but excellent reporting and complete customer-facing product quality.
 
-| ID      | Task                                                                                      | Dependencies | Evidence / acceptance                                           |
-| ------- | ----------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------- |
-| `P5-01` | Monthly insights aggregation with income, net expenses, net cash flow, category breakdown | P2-09,P4-08  | Transfers/payments excluded, refunds deducted in correct month  |
-| `P5-02` | Responsive report cards/charts + accessible table equivalent                              | P5-01,P1-06  | Charts readable in both themes and mobile; values match DB      |
-| `P5-03` | CSV transactions export with proper quoting, dates and formula-injection mitigation       | P2-10        | File content verified; correct user, no truncated minor amounts |
-| `P5-04` | Structured JSON export with schema version and owner-only scoped data                     | P5-03        | Export validated against test fixture and access isolation      |
-| `P5-05` | Security page: active sessions, revoke, password update; settings categories/preferences  | P2-01,P2-06  | End-to-end flows; rotate/revoke securely                        |
-| `P5-06` | Comprehensive accessibility/responsiveness/performance review and UX cleanup              | P5-02..P5-05 | WCAG AA review, mobile interaction reliability, perf baseline   |
-| `P5-07` | Product acceptance suite, architecture audit and independent QA regression                | P5-06        | Zero known blocker defects; all agreed V2 functions complete    |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P5-01` | Monthly insights aggregation with income, net expenses, net cash flow, category breakdown | P2-09,P4-08 | Transfers/payments excluded, refunds deducted in correct month |
+| `P5-02` | Responsive report cards/charts + accessible table equivalent | P5-01,P1-06 | Charts readable in both themes and mobile; values match DB |
+| `P5-03` | CSV transactions export with proper quoting, dates and formula-injection mitigation | P2-10 | File content verified; correct user, no truncated minor amounts |
+| `P5-04` | Structured JSON export with schema version and owner-only scoped data | P5-03 | Export validated against test fixture and access isolation |
+| `P5-05` | Security page: active sessions, revoke, password update; settings categories/preferences | P2-01,P2-06 | End-to-end flows; rotate/revoke securely |
+| `P5-06` | Comprehensive accessibility/responsiveness/performance review and UX cleanup | P5-02..P5-05 | WCAG AA review, mobile interaction reliability, perf baseline |
+| `P5-07` | Product acceptance suite, architecture audit and independent QA regression | P5-06 | Zero known blocker defects; all agreed V2 functions complete |
 
 **Phase 5 exit gate:** V2 is feature-complete against the approved scope. Export and restore concepts are not conflated; user-owned data stays portable without reintroducing V1 imports.
 
@@ -1070,19 +1037,19 @@ Proposed minimal implementation:
 
 **Goal:** replace V1 in your existing homelab without data corruption, secret exposure, accidental deletion or uncontrolled deployment.
 
-| ID      | Task                                                                                    | Dependencies | Evidence / acceptance                                                 |
-| ------- | --------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------- |
-| `P6-01` | Audit actual homelab Argo app/manifests/issuer/Longhorn/Tailscale/Pi-hole configuration | P5-07        | Written inventory, no guessed file paths or reused V1 DB              |
-| `P6-02` | Private CA trust and cert-manager/Traefik hostname TLS                                  | P6-01        | Device trust and PWA work at intended hostname                        |
-| `P6-03` | SOPS + age GitOps integration and secret bootstrap/recovery notes                       | P6-01        | Decrypted only in authorized cluster path; public Git safe            |
-| `P6-04` | Kubernetes API/web/DB manifests, new PVC, probes, NetworkPolicies, resource budgets     | P6-01,P6-03  | Helm/Kustomize render + validation; rollout health                    |
-| `P6-05` | Dedicated migration image/Job, compatibility tests and fail-closed gate                 | P6-04        | Failed migration prevents API rollout; exact schema versions recorded |
-| `P6-06` | Same-host PostgreSQL backup CronJob, retention and isolated restore check               | P6-04        | Latest backup verifiable; known failure-domain risk documented        |
-| `P6-07` | Reuse Grafana/Loki/Prometheus monitoring and minimal alert rules                        | P6-04        | Health, storage, backup/migration failure detectable                  |
-| `P6-08` | Finalize GHCR digest publish and manually reviewed GitOps promotion PR                  | P6-05,P6-07  | SHA, digests and GitOps commit matched; test evidence attached        |
-| `P6-09` | Capture V1 baseline, preserve V1 PVC/manifest, prepare cutover/rollback runbook         | P6-01,P6-08  | No V1 destructive prune; final V1 snapshot                            |
-| `P6-10` | Carry out controlled switch to `monikey.homelab.local` and production smoke test        | P6-09        | Real device access; owner signoff; Argo Healthy                       |
-| `P6-11` | Post-cutover verification and old-resource retention/documentation                      | P6-10        | Monitoring normal; V1 data retained pending separate approval         |
+| ID | Task | Dependencies | Evidence / acceptance |
+|---|---|---|---|
+| `P6-01` | Audit actual homelab Argo app/manifests/issuer/Longhorn/Tailscale/Pi-hole configuration | P5-07 | Written inventory, no guessed file paths or reused V1 DB |
+| `P6-02` | Private CA trust and cert-manager/Traefik hostname TLS | P6-01 | Device trust and PWA work at intended hostname |
+| `P6-03` | SOPS + age GitOps integration and secret bootstrap/recovery notes | P6-01 | Decrypted only in authorized cluster path; public Git safe |
+| `P6-04` | Kubernetes API/web/DB manifests, new PVC, probes, NetworkPolicies, resource budgets | P6-01,P6-03 | Helm/Kustomize render + validation; rollout health |
+| `P6-05` | Dedicated migration image/Job, compatibility tests and fail-closed gate | P6-04 | Failed migration prevents API rollout; exact schema versions recorded |
+| `P6-06` | Same-host PostgreSQL backup CronJob, retention and isolated restore check | P6-04 | Latest backup verifiable; known failure-domain risk documented |
+| `P6-07` | Reuse Grafana/Loki/Prometheus monitoring and minimal alert rules | P6-04 | Health, storage, backup/migration failure detectable |
+| `P6-08` | Finalize GHCR digest publish and manually reviewed GitOps promotion PR | P6-05,P6-07 | SHA, digests and GitOps commit matched; test evidence attached |
+| `P6-09` | Capture V1 baseline, preserve V1 PVC/manifest, prepare cutover/rollback runbook | P6-01,P6-08 | No V1 destructive prune; final V1 snapshot |
+| `P6-10` | Carry out controlled switch to `monikey.homelab.local` and production smoke test | P6-09 | Real device access; owner signoff; Argo Healthy |
+| `P6-11` | Post-cutover verification and old-resource retention/documentation | P6-10 | Monitoring normal; V1 data retained pending separate approval |
 
 **Phase 6 exit gate:** owner signs off MoniKey V2 as the daily-use replacement, with working HTTPS, GitOps, recovery procedure, CI traceability and explicit same-host backup risk acceptance.
 
@@ -1111,16 +1078,16 @@ P0 foundation ──> P1 design system
 
 ### 14.1 Required test layers
 
-| Layer                | Test subject                                                                        | Core tools / practice                            |
-| -------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Unit                 | Exact cents, PHT date rules, categories, field validators, chart grouping           | Vitest / Node test runner                        |
-| Domain/property      | Double-entry balance, reversals, refund/fee/card identities, idempotency behavior   | Property-based generated sequences               |
-| DB integration       | PostgreSQL migrations, deferred constraints, transaction rollback/locks, ownership  | Real ephemeral PostgreSQL                        |
-| Contract             | Fastify request/response schema and typed frontend client                           | OpenAPI + schema checks                          |
-| Browser E2E          | Real login + create/edit/pay/report flows through live API+DB                       | Playwright in Compose/CI                         |
-| Visual/accessibility | Both themes, responsive screens, keyboard and reduced motion                        | Playwright screenshots + axe/accessibility audit |
-| Security             | Sessions, CSRF, rate limits, cross-user IDOR, exports, injection, secrets           | Automated negatives + review                     |
-| Release              | New images, Helm/Kustomize config, TLS, migration Job, backup, rollout and rollback | CI + manual documented smoke                     |
+| Layer | Test subject | Core tools / practice |
+|---|---|---|
+| Unit | Exact cents, PHT date rules, categories, field validators, chart grouping | Vitest / Node test runner |
+| Domain/property | Double-entry balance, reversals, refund/fee/card identities, idempotency behavior | Property-based generated sequences |
+| DB integration | PostgreSQL migrations, deferred constraints, transaction rollback/locks, ownership | Real ephemeral PostgreSQL |
+| Contract | Fastify request/response schema and typed frontend client | OpenAPI + schema checks |
+| Browser E2E | Real login + create/edit/pay/report flows through live API+DB | Playwright in Compose/CI |
+| Visual/accessibility | Both themes, responsive screens, keyboard and reduced motion | Playwright screenshots + axe/accessibility audit |
+| Security | Sessions, CSRF, rate limits, cross-user IDOR, exports, injection, secrets | Automated negatives + review |
+| Release | New images, Helm/Kustomize config, TLS, migration Job, backup, rollout and rollback | CI + manual documented smoke |
 
 ### 14.2 Financial property tests that must pass
 
@@ -1138,7 +1105,6 @@ P0 foundation ──> P1 design system
 ### 14.3 Performance and reliability targets
 
 Establish a documented baseline on real homelab hardware and a midrange phone; do **not** hardcode aspirational scores as evidence of current performance. Initial engineering budgets:
-
 - Normal quick-add should feel interactive without an unnecessary second screen; keep tap-to-submit states visible and button disabled while an in-flight request is pending.
 - Common authenticated reads should load with a skeleton and converge to server truth; avoid fetching every transaction for a dashboard total.
 - Lists should remain responsive at 10,000+ transactions (server pagination, indexed queries).
@@ -1161,12 +1127,12 @@ Establish a documented baseline on real homelab hardware and a midrange phone; d
 
 ### 14.5 Release blocker severity guide
 
-| Severity      | Examples                                                                                                                   | Gate                                              |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `P0` Critical | Unauthorized cross-user access, lost money posting, unbalanced journal, plaintext secrets, irreversible migration failure  | Stop all promotion                                |
-| `P1` High     | Duplicate expense on retry, missing statement payment, no backup output, broken phone onboarding, major accessible blocker | Must fix before phase release                     |
-| `P2` Medium   | Cosmetic issues, secondary chart misalignment, uncommon responsive breakpoint defects                                      | Triage; owner may defer if not misleading finance |
-| `P3` Low      | Minor animation polish, noncritical copy refinements                                                                       | Backlog; never obscure essential information      |
+| Severity | Examples | Gate |
+|---|---|---|
+| `P0` Critical | Unauthorized cross-user access, lost money posting, unbalanced journal, plaintext secrets, irreversible migration failure | Stop all promotion |
+| `P1` High | Duplicate expense on retry, missing statement payment, no backup output, broken phone onboarding, major accessible blocker | Must fix before phase release |
+| `P2` Medium | Cosmetic issues, secondary chart misalignment, uncommon responsive breakpoint defects | Triage; owner may defer if not misleading finance |
+| `P3` Low | Minor animation polish, noncritical copy refinements | Backlog; never obscure essential information |
 
 ---
 
@@ -1196,7 +1162,6 @@ Agents may run in parallel **only** when their file/module dependencies do not c
 
 ```markdown
 ## MoniKey V2 Feature Handoff
-
 - Issue / phase ID:
 - Base branch / commit SHA:
 - User-visible behavior delivered:
@@ -1240,20 +1205,20 @@ Record architecture changes in repo docs/ADRs and the Obsidian project vault.
 
 ## 16. Risks, assumptions and decisions that must not be reopened casually
 
-| Risk / assumption                     | Impact                                                                      | Decision / response                                                                     |
-| ------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **Same-host-only backups**            | Disk/host loss may destroy production DB and backups                        | **Accepted owner risk.** Automatic same-host dumps + monitoring; off-host copy deferred |
-| **Single-node k3s + Longhorn**        | Node failure causes outage and may affect PVC                               | Accept topology; avoid claiming HA; test restore                                        |
-| **`.homelab.local` and private CA**   | Browser/mobile trust + `.local` resolution issues                           | Verify Pi-hole/Tailscale name resolution, CA trust, HTTPS and PWA per device            |
-| **Replace V1 with no data migration** | V1 data not visible in V2; rollback can lose visibility into new V2 entries | New V2 DB; preserve V1 PVC, explicit rollback warning                                   |
-| **GitOps pruning**                    | Deleting V1 StatefulSet/PVC or wrong secret unintentionally                 | Review diff, protect PVC, explicit controlled cutover                                   |
-| **Finance feature creep**             | Repeat V1's unwieldy IA and incomplete pages                                | Enforce frozen launch scope and owner-approved ADRs                                     |
-| **Manual data entry**                 | Real account balance can diverge from recorded balance                      | Explicit adjustments; no false claim of bank-verified amounts                           |
-| **Credit statement entered manually** | Due may differ from issuer if user mistypes                                 | Label as user-entered; edit with audit; no automated sync claims                        |
-| **Deferred offline operation**        | Cannot record expense without network                                       | Online-only PWA, clear offline state, no fake queue                                     |
-| **Family support later**              | Data security if later accounts added                                       | Per-user ownership in schema now; sharing/register flows later                          |
-| **AI-agent scope drift**              | Unfinished features, unverified tests                                       | Small tasks, independent QA, real-stack gate, owner merge approval                      |
-| **Schema migration incompatibility**  | App rollback doesn't undo schema                                            | Expand/contract schema, migrations tested, pre-change backups                           |
+| Risk / assumption | Impact | Decision / response |
+|---|---|---|
+| **Same-host-only backups** | Disk/host loss may destroy production DB and backups | **Accepted owner risk.** Automatic same-host dumps + monitoring; off-host copy deferred |
+| **Single-node k3s + Longhorn** | Node failure causes outage and may affect PVC | Accept topology; avoid claiming HA; test restore |
+| **`.homelab.local` and private CA** | Browser/mobile trust + `.local` resolution issues | Verify Pi-hole/Tailscale name resolution, CA trust, HTTPS and PWA per device |
+| **Replace V1 with no data migration** | V1 data not visible in V2; rollback can lose visibility into new V2 entries | New V2 DB; preserve V1 PVC, explicit rollback warning |
+| **GitOps pruning** | Deleting V1 StatefulSet/PVC or wrong secret unintentionally | Review diff, protect PVC, explicit controlled cutover |
+| **Finance feature creep** | Repeat V1's unwieldy IA and incomplete pages | Enforce frozen launch scope and owner-approved ADRs |
+| **Manual data entry** | Real account balance can diverge from recorded balance | Explicit adjustments; no false claim of bank-verified amounts |
+| **Credit statement entered manually** | Due may differ from issuer if user mistypes | Label as user-entered; edit with audit; no automated sync claims |
+| **Deferred offline operation** | Cannot record expense without network | Online-only PWA, clear offline state, no fake queue |
+| **Family support later** | Data security if later accounts added | Per-user ownership in schema now; sharing/register flows later |
+| **AI-agent scope drift** | Unfinished features, unverified tests | Small tasks, independent QA, real-stack gate, owner merge approval |
+| **Schema migration incompatibility** | App rollback doesn't undo schema | Expand/contract schema, migrations tested, pre-change backups |
 
 ### 16.1 Implementer choices still requiring ordinary ADRs (not new product scope)
 

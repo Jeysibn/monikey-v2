@@ -17,7 +17,7 @@ The approved source is [`MONIKEY_V2_MASTER_PLAN.md`](../../MONIKEY_V2_MASTER_PLA
 - Docker Compose for local development; k3s + Argo CD GitOps for production.
 - No worker, Redis, mock finance runtime, or V1 data migration.
 
-## Initial repository boundaries
+## Repository boundaries
 
 ```text
 apps/web        React client and PWA surface
@@ -25,14 +25,20 @@ apps/api        Fastify API and module composition
 packages/money  Exact amount parsing, arithmetic, and formatting
 packages/contracts Shared runtime API contracts
 prisma/         Prisma schema and versioned SQL migrations
+e2e/            Browser journeys against the actual API and PostgreSQL
+deploy/         Kubernetes/Kustomize templates and release boundaries
+monitoring/     Prometheus rules and Grafana dashboard source
+scripts/        Local validation, backup, release, and secret-bootstrap tooling
 docs/           Portable architecture, ADRs, runbooks, and QA evidence
 ```
 
 The ledger module will own journal writes. Transactions and bills will orchestrate domain operations through it; routes and frontend code must not write postings or independently calculate balances.
 
-## Foundation status
+## Current implementation state
 
-The repository currently contains an npm workspace scaffold, a readiness endpoint, OpenAPI output, a non-financial empty-state web shell, shared money and health-contract packages, and Compose definitions. This is an in-progress P0 foundation, not a completed vertical slice. Docker, PostgreSQL CLI utilities, and a container runtime were unavailable when setup began, so Compose and database behavior have not been validated here.
+The repository now contains the authenticated React/Vite PWA, Fastify API, PostgreSQL schema and migrations, exact-money and API-contract packages, ledger-backed account/transaction/card/bill/report flows, owner-scoped exports and settings, and Docker Compose environments. Local validation covers strict typing/builds, PostgreSQL integration, and desktop/mobile Playwright journeys against the actual API. Phase 6 also has Kubernetes, backup, monitoring, and release templates with local validation.
+
+The roadmap and remaining acceptance gates are tracked in `docs/IMPLEMENTATION_STATUS.md` and `docs/PLAN_COVERAGE_AUDIT.md`. Physical-device and owner acceptance, independent QA, image publication, owner-managed secrets/device trust, live cluster checks, and approved cutover remain open. No V1 code or financial data has been imported.
 
 ## Change control
 

@@ -1,0 +1,145 @@
+groups:
+  - name: monikey-v2
+    rules:
+      - alert: MoniKeyAPIScrapeUnavailable
+        expr: up{job="monikey-v2-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey API scrape target is unavailable
+          description: Prometheus has been unable to scrape the MoniKey API for five minutes.
+
+      - alert: MoniKeyDatabaseUnavailable
+        expr: monikey_database_connected{job="monikey-v2-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey API cannot query PostgreSQL
+          description: The API reports PostgreSQL unavailable for two minutes.
+
+      - alert: MoniKeyLedgerInvariantFailure
+        expr: increase(monikey_ledger_invariant_failures_total{job="monikey-v2-api"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey rejected or detected an unbalanced journal
+          description: A journal balance invariant failed in the last ten minutes; inspect redacted API logs and transaction traces.
+
+      - alert: MoniKeyAPIErrorRateHigh
+        expr: |
+          (
+            sum(rate(monikey_api_requests_total{job="monikey-v2-api",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(monikey_api_requests_total{job="monikey-v2-api"}[5m])), 0.1)
+            > 0.05
+          )
+          and sum(increase(monikey_api_requests_total{job="monikey-v2-api"}[10m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: monikey-v2
+        annotations:
+          summary: MoniKey API server error rate is elevated
+          description: More than five percent of API requests returned server errors for ten minutes.
+
+      - alert: MoniKeyAPIHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(monikey_api_request_duration_seconds_bucket{job="monikey-v2-api"}[5m]))
+          ) > 1
+          and sum(increase(monikey_api_requests_total{job="monikey-v2-api"}[10m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: monikey-v2
+        annotations:
+          summary: MoniKey API request latency is elevated
+          description: API request p95 exceeded one second for ten minutes.
+
+      - alert: MoniKeyBackupMissing
+        expr: |
+          (time() - monikey_backup_last_success_timestamp_seconds{job="monikey-v2-backup"} > 93600)
+          or absent(monikey_backup_last_success_timestamp_seconds{job="monikey-v2-backup"})
+        for: 15m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey PostgreSQL backup is overdue
+          description: No successful MoniKey backup has been reported for 26 hours.
+
+      - alert: MoniKeyBackupFailed
+        expr: monikey_backup_last_run_success{job="monikey-v2-backup"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey PostgreSQL backup failed
+          description: The latest MoniKey backup attempt failed validation.
+
+      - alert: MoniKeyBackupMetricsInvalid
+        expr: monikey_backup_metrics_file_valid{job="monikey-v2-backup"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey backup metrics file is missing or invalid
+          description: Check the backup PVC mount, file permissions, and backup exporter logs.
+
+      - alert: MoniKeyBackupVolumeNearlyFull
+        expr: |
+          (
+            monikey_backup_volume_available_bytes{job="monikey-v2-backup"}
+            / clamp_min(monikey_backup_volume_size_bytes{job="monikey-v2-backup"}, 1)
+            < 0.1
+          )
+          or
+          (
+            monikey_backup_volume_available_bytes{job="monikey-v2-backup"}
+            < monikey_backup_last_archive_size_bytes{job="monikey-v2-backup"}
+          )
+        for: 15m
+        labels:
+          severity: warning
+          service: monikey-v2
+        annotations:
+          summary: MoniKey backup volume may not fit the next archive
+          description: Free space is below ten percent or smaller than the last successful archive. Check backup retention and host storage capacity.
+
+      - alert: MoniKeyBackupJobFailed
+        expr: kube_job_status_failed{namespace="monikey-v2",job_name=~"monikey-v2-(postgres-backup|pre-migration-backup)(-[a-z0-9]+)?"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey PostgreSQL backup Job failed
+          description: Review the scheduled or pre-migration backup Job logs; a migration must not proceed without a validated archive.
+
+      - alert: MoniKeyMigrationJobFailed
+        expr: kube_job_status_failed{namespace="monikey-v2",job_name=~"monikey-v2-migrate.*"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: monikey-v2
+        annotations:
+          summary: MoniKey migration Job failed
+          description: Review migration Job logs and keep the application rollout gated.
+
+      - alert: MoniKeyTLSCertificateExpiring
+        expr: (certmanager_certificate_expiration_timestamp_seconds{namespace="monikey-v2",name=~"monikey-v2.*"} - time()) < 1209600
+        for: 1h
+        labels:
+          severity: warning
+          service: monikey-v2
+        annotations:
+          summary: MoniKey TLS certificate expires within fourteen days
+          description: Verify cert-manager renewal and trusted-device access.

@@ -1,0 +1,26 @@
+FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS build
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/money/package.json packages/money/package.json
+RUN npm ci
+COPY . .
+RUN npm run build --workspace @monikey/contracts \
+  && npm run build --workspace @monikey/money \
+  && npm run build --workspace @monikey/web
+
+FROM nginx:1.29.3-alpine@sha256:b3c656d55d7ad751196f21b7fd2e8d4da9cb430e32f646adcf92441b72f82b14 AS runtime
+RUN apk update && apk upgrade --no-cache
+COPY apps/web/nginx.production.conf /etc/nginx/nginx.conf
+COPY apps/web/nginx.security-headers.conf /etc/nginx/security-headers.conf
+COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
+RUN mkdir -p /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp \
+  && chown -R 101:101 /tmp /usr/share/nginx/html
+USER 101:101
+EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]

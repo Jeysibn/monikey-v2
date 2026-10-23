@@ -93,7 +93,12 @@ test("default and custom categories remain owner-scoped and history-safe", async
       updateCategory(client, otherOwnerId, custom.id, { name: "Other owner" }),
       CategoryNotFoundError,
     );
-    assert.equal((await listCategories(client, otherOwnerId)).length, 0);
+    assert.equal(
+      (await listCategories(client, otherOwnerId)).some(
+        (category) => category.id === custom.id,
+      ),
+      false,
+    );
 
     const archived = await updateCategory(client, ownerId, custom.id, {
       name: "Pets",

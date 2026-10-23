@@ -5,24 +5,42 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import {
   ApiErrorResponseSchema,
+  BillCreateRequestSchema,
+  BillOccurrenceResponseSchema,
+  BillOccurrencesResponseSchema,
+  BillPatchRequestSchema,
+  BillPayRequestSchema,
+  BillResponseSchema,
+  BillsResponseSchema,
+  CardPaymentCreateRequestSchema,
+  CardPaymentResponseSchema,
+  CardStatementCreateRequestSchema,
+  CardStatementPatchRequestSchema,
+  CardStatementResponseSchema,
+  CardStatementsResponseSchema,
   ChangePasswordRequestSchema,
   CategoriesResponseSchema,
   CategoryCreateRequestSchema,
   CategoryPatchRequestSchema,
   CategoryResponseSchema,
   CsrfResponseSchema,
+  DashboardSummarySchema,
   FinancialAccountCreateRequestBaseSchema,
   FinancialAccountCreateRequestSchema,
   FinancialAccountPatchRequestSchema,
   FinancialAccountResponseSchema,
   FinancialAccountsResponseSchema,
   HealthResponseSchema,
+  HealthLiveResponseSchema,
+  JsonExportResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
   MeResponseSchema,
   OnboardingFirstAccountResponseSchema,
   PreferencesPatchRequestSchema,
   PreferencesResponseSchema,
+  MonthlyReportResponseSchema,
+  ReportMonthQuerySchema,
   SessionsResponseSchema,
   TransactionAuditResponseSchema,
   TransactionActivityQuerySchema,
@@ -48,7 +66,21 @@ import {
   updateCategory,
 } from "./categories.js";
 import {
+  createCardStatement,
+  listCardStatements,
+  updateCardStatement,
+} from "./card-statements.js";
+import {
+  createBill,
+  listBillOccurrences,
+  listBills,
+  payBillOccurrence,
+  skipBillOccurrence,
+  updateBill,
+} from "./bills.js";
+import {
   createAdjustment,
+  createCardPayment,
   createIncomeOrExpense,
   createRefund,
   createTransfer,
@@ -58,20 +90,34 @@ import {
   readTransaction,
   readTransactionAudit,
 } from "./transactions.js";
+import { readDashboardSummary } from "./dashboard.js";
+import {
+  readMonthlyReport,
+  streamTransactionsCsv,
+  streamTransactionsJsonArray,
+} from "./reports.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { z } from "zod";
+import { registerMetrics } from "./metrics.js";
+import { recordDatabaseLedgerInvariantFailure } from "./ledger/invariant-metrics.js";
 
 const port = Number(process.env.API_PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
 const pool = databaseUrl
   ? new Pool({ connectionString: databaseUrl })
   : undefined;
-const app = Fastify({ logger: true, trustProxy: false });
+const app = Fastify({
+  logger: {
+    redact: { paths: ["req.url"], censor: "[redacted]" },
+  },
+  trustProxy: false,
+});
 const sessionCookie = "__Host-mk_session";
 const csrfCookie = "__Host-mk_csrf";
 const sessionMaxAgeSeconds = 60 * 60 * 24 * 14;
@@ -144,9 +190,17 @@ app.addHook("onSend", (request, reply, _payload, done) => {
     request.url.startsWith("/api/v1/auth/") ||
     request.url.startsWith("/api/v1/me") ||
     request.url.startsWith("/api/v1/accounts") ||
-    request.url.startsWith("/api/v1/transactions")
+    request.url.startsWith("/api/v1/categories") ||
+    request.url.startsWith("/api/v1/bills") ||
+    request.url.startsWith("/api/v1/transactions") ||
+    request.url.startsWith("/api/v1/credit-cards") ||
+    request.url.startsWith("/api/v1/dashboard") ||
+    request.url.startsWith("/api/v1/reports") ||
+    request.url.startsWith("/api/v1/exports")
   ) {
-    reply.header("Cache-Control", "no-store");
+    if (!reply.getHeader("Cache-Control")) {
+      reply.header("Cache-Control", "private, no-store");
+    }
   }
   done();
 });
@@ -208,12 +262,57 @@ app.setNotFoundHandler((request, reply) =>
     },
   }),
 );
+registerMetrics(app, pool);
 app.get("/healthz", { schema: { hide: true } }, async () => ({
   status: "ok",
 }));
 
 app.get(
   "/api/v1/health",
+  {
+    schema: {
+      tags: ["system"],
+      summary: "API and database readiness",
+      response: {
+        200: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
+        503: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (_request, reply) => {
+    let database: "connected" | "unconfigured" | "unavailable" = "unconfigured";
+    if (pool) {
+      try {
+        await pool.query("SELECT 1");
+        database = "connected";
+      } catch {
+        database = "unavailable";
+      }
+    }
+
+    if (database === "unavailable") {
+      return reply.code(503).send({ status: "degraded", database });
+    }
+    return { status: "ok", database };
+  },
+);
+
+app.get(
+  "/api/v1/health/live",
+  {
+    schema: {
+      tags: ["system"],
+      summary: "Process liveness without database inspection",
+      response: {
+        200: z.toJSONSchema(HealthLiveResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async () => ({ status: "ok" as const }),
+);
+
+app.get(
+  "/api/v1/health/ready",
   {
     schema: {
       tags: ["system"],
@@ -278,6 +377,7 @@ async function withDatabaseTransaction<T>(
     await client.query("COMMIT");
     return result;
   } catch (error) {
+    recordDatabaseLedgerInvariantFailure(error);
     await client.query("ROLLBACK");
     throw error;
   } finally {
@@ -295,6 +395,38 @@ async function withDatabaseConnection<T>(
   } finally {
     client.release();
   }
+}
+
+function databaseReadStream(
+  produce: (client: PoolClient) => AsyncIterable<string>,
+): Readable {
+  const configuredPool = pool;
+  if (!configuredPool) throw new Error("Database is not configured.");
+
+  const body = (async function* () {
+    const client = await configuredPool.connect();
+    let transactionOpen = false;
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      transactionOpen = true;
+      yield* produce(client);
+      await client.query("COMMIT");
+      transactionOpen = false;
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        transactionOpen = false;
+      }
+      throw error;
+    } finally {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+      client.release();
+    }
+  })();
+
+  return Readable.from(body, { objectMode: false });
 }
 
 function safeHashEqual(actual: string, expected: string): boolean {
@@ -519,7 +651,7 @@ app.post(
       sameSite: "lax",
       maxAge: sessionMaxAgeSeconds,
     });
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return reply.code(200).send({ csrfToken });
   },
 );
@@ -565,6 +697,162 @@ app.get(
     },
   },
   readTransactionActivity,
+);
+
+app.get(
+  "/api/v1/dashboard/summary",
+  {
+    schema: {
+      tags: ["dashboard"],
+      summary: "Read the signed-in owner's ledger-derived dashboard summary",
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(DashboardSummarySchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const serverToday = serverTodayInManila();
+    return withDatabaseConnection((client) =>
+      readDashboardSummary(client, ownerUserId(request), serverToday),
+    );
+  },
+);
+
+app.get(
+  "/api/v1/reports/monthly",
+  {
+    schema: {
+      tags: ["reports"],
+      summary:
+        "Read owner-scoped monthly income, expenses, cash flow and categories",
+      querystring: z.toJSONSchema(ReportMonthQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(MonthlyReportResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { month } = ReportMonthQuerySchema.parse(request.query);
+    const report = await withDatabaseConnection((client) =>
+      readMonthlyReport(client, ownerUserId(request), month),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { report };
+  },
+);
+
+const ExportQuerySchema = z
+  .object({
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (query.from && query.to && query.from > query.to) {
+      context.addIssue({
+        code: "custom",
+        message: "The from date must be on or before the to date.",
+        path: ["from"],
+      });
+    }
+  });
+
+app.get(
+  "/api/v1/exports/transactions.csv",
+  {
+    schema: {
+      tags: ["exports"],
+      summary: "Download owner-scoped transactions as formula-safe CSV",
+      querystring: z.toJSONSchema(ExportQuerySchema, { target: "draft-7" }),
+      response: { ...authErrorResponses(), 200: { type: "string" } },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = ExportQuerySchema.parse(request.query);
+    const userId = ownerUserId(request);
+    const csv = databaseReadStream((client) =>
+      streamTransactionsCsv(client, userId, query.from, query.to),
+    );
+    reply
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Type", "text/csv; charset=utf-8")
+      .header(
+        "Content-Disposition",
+        'attachment; filename="monikey-transactions.csv"',
+      );
+    return reply.send(csv);
+  },
+);
+
+app.get(
+  "/api/v1/exports/data.json",
+  {
+    schema: {
+      tags: ["exports"],
+      summary: "Download owner-scoped structured JSON export",
+      querystring: z.toJSONSchema(ExportQuerySchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(JsonExportResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = ExportQuerySchema.parse(request.query);
+    const userId = ownerUserId(request);
+    const exported = databaseReadStream(async function* (client) {
+      const [user, accounts, categories, bills] = await Promise.all([
+        client.query<{ timezone: string; currency: string }>(
+          `SELECT timezone, currency FROM user_preferences WHERE user_id = $1`,
+          [userId],
+        ),
+        listFinancialAccounts(client, userId, true),
+        listCategories(client, userId, {
+          includeArchived: true,
+        }),
+        listBills(client, userId, true),
+      ]);
+      const statements = (
+        await Promise.all(
+          accounts
+            .filter((account) => account.type === "CREDIT_CARD")
+            .map((account) =>
+              listCardStatements(client, userId, account.id, true),
+            ),
+        )
+      ).flat();
+      yield `{"schemaVersion":"monikey-v2.export.v1","generatedAt":${JSON.stringify(new Date().toISOString())},"owner":${JSON.stringify(
+        {
+          timezone: user.rows[0]?.timezone ?? "Asia/Manila",
+          currency: user.rows[0]?.currency ?? "PHP",
+        },
+      )},"accounts":${JSON.stringify(accounts)},"categories":${JSON.stringify(categories)},"transactions":[`;
+      yield* streamTransactionsJsonArray(client, userId, query.from, query.to);
+      yield `],"bills":${JSON.stringify(bills)},"cardStatements":${JSON.stringify(statements)}}`;
+    });
+    reply
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Type", "application/json; charset=utf-8")
+      .header(
+        "Content-Disposition",
+        'attachment; filename="monikey-export.json"',
+      );
+    return reply.send(exported);
+  },
 );
 
 app.get(
@@ -683,7 +971,7 @@ app.patch(
           ),
       ),
     );
-    return reply.send(result.value);
+    return reply.send({ ...result.value, requestId: request.id });
   },
 );
 
@@ -764,7 +1052,7 @@ app.get(
         maxAge: sessionMaxAgeSeconds,
       });
     }
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { csrfToken };
   },
 );
@@ -854,7 +1142,7 @@ app.post(
       sameSite: "lax",
       maxAge: sessionMaxAgeSeconds,
     });
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { csrfToken };
   },
 );
@@ -889,7 +1177,7 @@ app.get(
         WHERE u.id = $1`,
       [ownerUserId(request)],
     );
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return {
       user: result.rows[0],
       serverToday: serverTodayInManila(),
@@ -1403,6 +1691,462 @@ app.post(
                 )),
       })),
     );
+    return reply.code(201).send({ ...result.value, requestId: request.id });
+  },
+);
+
+app.post(
+  "/api/v1/credit-cards/:cardAccountId/payments",
+  {
+    schema: {
+      tags: ["credit-cards", "transactions"],
+      summary: "Post a payment from an asset account to a credit card",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(CardPaymentCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(CardPaymentResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const body = CardPaymentCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, ...body },
+        async () => ({
+          ...(await createCardPayment(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            body,
+            serverTodayInManila(),
+          )),
+        }),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.get(
+  "/api/v1/credit-cards/:cardAccountId/statements",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "List owner-scoped card statements",
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CardStatementsResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const statements = await withDatabaseConnection((client) =>
+      listCardStatements(client, ownerUserId(request), cardAccountId),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { statements };
+  },
+);
+
+app.post(
+  "/api/v1/credit-cards/:cardAccountId/statements",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "Record a manually entered card statement",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ cardAccountId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(CardStatementCreateRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(CardStatementResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId } = z
+      .object({ cardAccountId: z.string().uuid() })
+      .parse(request.params);
+    const body = CardStatementCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, ...body },
+        async () => ({
+          statement: await createCardStatement(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            body,
+          ),
+        }),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.patch(
+  "/api/v1/credit-cards/:cardAccountId/statements/:statementId",
+  {
+    schema: {
+      tags: ["credit-cards", "statements"],
+      summary: "Correct a manually entered card statement",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(
+        z.object({
+          cardAccountId: z.string().uuid(),
+          statementId: z.string().uuid(),
+        }),
+        { target: "draft-7" },
+      ),
+      body: z.toJSONSchema(CardStatementPatchRequestSchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(CardStatementResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { cardAccountId, statementId } = z
+      .object({
+        cardAccountId: z.string().uuid(),
+        statementId: z.string().uuid(),
+      })
+      .parse(request.params);
+    const body = CardStatementPatchRequestSchema.parse(request.body);
+    if (Object.values(body).every((value) => value === undefined)) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a statement field to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { cardAccountId, statementId, ...body },
+        async () => ({
+          statement: await updateCardStatement(
+            client,
+            ownerUserId(request),
+            cardAccountId,
+            statementId,
+            body,
+          ),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+const BillListQuerySchema = z.object({
+  includeArchived: z.coerce.boolean().optional().default(false),
+});
+
+const BillOccurrenceQuerySchema = z.object({
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
+app.get(
+  "/api/v1/bills",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "List this owner's recurring bills",
+      querystring: z.toJSONSchema(BillListQuerySchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillsResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = BillListQuerySchema.parse(request.query);
+    const bills = await withDatabaseConnection((client) =>
+      listBills(client, ownerUserId(request), query.includeArchived),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { bills };
+  },
+);
+
+app.post(
+  "/api/v1/bills",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Create an owner-scoped recurring bill",
+      headers: idempotencyHeaderSchema,
+      body: z.toJSONSchema(BillCreateRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(BillResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const body = BillCreateRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(client, ownerUserId(request), key, body, async () => ({
+        bill: await createBill(client, ownerUserId(request), body),
+      })),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.patch(
+  "/api/v1/bills/:billId",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Update an owner-scoped recurring bill",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ billId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(BillPatchRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillResponseSchema, { target: "draft-7" }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { billId } = z
+      .object({ billId: z.string().uuid() })
+      .parse(request.params);
+    const body = BillPatchRequestSchema.parse(request.body);
+    if (Object.values(body).every((value) => value === undefined)) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Provide a bill field to update.",
+          requestId: request.id,
+        },
+      });
+    }
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { billId, ...body },
+        async () => ({
+          bill: await updateBill(client, ownerUserId(request), billId, body),
+        }),
+      ),
+    );
+    return result.value;
+  },
+);
+
+app.get(
+  "/api/v1/bills/occurrences",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "List recurring bill occurrences for a date window",
+      querystring: z.toJSONSchema(BillOccurrenceQuerySchema, {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        200: z.toJSONSchema(BillOccurrencesResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!(await requireSession(request, reply))) return;
+    const query = BillOccurrenceQuerySchema.parse(request.query);
+    const today = serverTodayInManila();
+    const from = query.from ?? today.slice(0, 8) + "01";
+    const to = query.to ?? `${today.slice(0, 7)}-28`;
+    if (from > to) {
+      return reply.code(400).send({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "The occurrence date window is invalid.",
+          requestId: request.id,
+        },
+      });
+    }
+    const occurrences = await withDatabaseConnection((client) =>
+      listBillOccurrences(client, ownerUserId(request), from, to, today),
+    );
+    reply.header("Cache-Control", "private, no-store");
+    return { occurrences, serverToday: today };
+  },
+);
+
+app.post(
+  "/api/v1/bills/occurrences/:occurrenceId/pay",
+  {
+    schema: {
+      tags: ["bills", "transactions"],
+      summary: "Pay one recurring bill occurrence",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ occurrenceId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      body: z.toJSONSchema(BillPayRequestSchema, { target: "draft-7" }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(BillOccurrenceResponseSchema, {
+          target: "draft-7",
+        }),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { occurrenceId } = z
+      .object({ occurrenceId: z.string().uuid() })
+      .parse(request.params);
+    const body = BillPayRequestSchema.parse(request.body);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { occurrenceId, ...body },
+        async () =>
+          payBillOccurrence(
+            client,
+            ownerUserId(request),
+            occurrenceId,
+            body.fundingAccountId,
+            body.amountMinor,
+            body.note,
+            body.acknowledgeNegativeBalance,
+            serverTodayInManila(),
+          ),
+      ),
+    );
+    return reply.code(201).send(result.value);
+  },
+);
+
+app.post(
+  "/api/v1/bills/occurrences/:occurrenceId/skip",
+  {
+    schema: {
+      tags: ["bills"],
+      summary: "Skip one recurring bill occurrence",
+      headers: idempotencyHeaderSchema,
+      params: z.toJSONSchema(z.object({ occurrenceId: z.string().uuid() }), {
+        target: "draft-7",
+      }),
+      response: {
+        ...authErrorResponses(),
+        201: z.toJSONSchema(
+          z.object({
+            occurrence: BillOccurrencesResponseSchema.shape.occurrences.element,
+          }),
+          { target: "draft-7" },
+        ),
+      },
+    },
+  },
+  async (request, reply) => {
+    if (!requireMutationOrigin(request, reply)) return;
+    if (!(await requireSession(request, reply))) return;
+    if (!requireCsrf(request, reply)) return;
+    const key = requiredIdempotencyKey(request, reply);
+    if (!key) return;
+    const { occurrenceId } = z
+      .object({ occurrenceId: z.string().uuid() })
+      .parse(request.params);
+    const result = await withDatabaseTransaction((client) =>
+      runIdempotently(
+        client,
+        ownerUserId(request),
+        key,
+        { occurrenceId },
+        async () => ({
+          occurrence: await skipBillOccurrence(
+            client,
+            ownerUserId(request),
+            occurrenceId,
+          ),
+        }),
+      ),
+    );
     return reply.code(201).send(result.value);
   },
 );
@@ -1429,7 +2173,7 @@ app.get(
         ORDER BY last_seen_at DESC`,
       [ownerUserId(request), request.authContext!.sessionId],
     );
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { sessions: sessions.rows };
   },
 );

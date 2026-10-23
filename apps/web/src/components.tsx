@@ -1,5 +1,21 @@
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { formatPhp, parsePhpMinor, type MoneyMinor } from "@monikey/money";
+
+const PrivacyPreferenceContext = createContext(false);
+
+export function PrivacyPreferenceProvider({
+  hidden,
+  children,
+}: {
+  hidden: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <PrivacyPreferenceContext.Provider value={hidden}>
+      {children}
+    </PrivacyPreferenceContext.Provider>
+  );
+}
 
 export function MoneyValue({
   amount,
@@ -22,7 +38,10 @@ export function PrivacyMask({
   children: ReactNode;
   label?: string;
 }) {
-  const [hidden, setHidden] = useState(false);
+  const defaultHidden = useContext(PrivacyPreferenceContext);
+  const [locallyHidden, setLocallyHidden] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const hidden = defaultHidden ? !revealed : locallyHidden;
 
   return (
     <span className="privacy-value">
@@ -34,7 +53,10 @@ export function PrivacyMask({
         type="button"
         aria-label={`${hidden ? "Reveal" : "Hide"} ${label.toLowerCase()}`}
         aria-pressed={hidden}
-        onClick={() => setHidden((current) => !current)}
+        onClick={() => {
+          if (defaultHidden) setRevealed((current) => !current);
+          else setLocallyHidden((current) => !current);
+        }}
       >
         <span aria-hidden="true">{hidden ? "◉" : "◎"}</span>
       </button>

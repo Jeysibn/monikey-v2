@@ -41,10 +41,15 @@ try {
   const count = await client.query<{ count: string }>(
     "SELECT count(*)::text AS count FROM users",
   );
-  if (count.rows[0]?.count !== "1") {
-    throw new Error(
-      "The E2E secondary user requires exactly one bootstrapped owner.",
-    );
+  if (Number(count.rows[0]?.count ?? 0) < 1) {
+    throw new Error("The E2E disposable user requires a bootstrapped owner.");
+  }
+  const existing = await client.query<{ id: string }>(
+    "SELECT id FROM users WHERE email_normalized = $1",
+    [email],
+  );
+  if (existing.rowCount) {
+    throw new Error("The requested E2E user already exists.");
   }
 
   const passwordHash = await argon2.hash(password, {

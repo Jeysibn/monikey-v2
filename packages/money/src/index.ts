@@ -47,6 +47,7 @@ export function formatPhp(amount: MoneyMinor): string {
     .map((part) => {
       if (part.type === "integer") return grouped;
       if (part.type === "group") return "";
+      if (part.type === "currency") return `${part.value}\u202f`;
       if (part.type === "decimal") return part.value;
       if (part.type === "fraction") return cents;
       return part.value;
