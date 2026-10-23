@@ -30,8 +30,6 @@ import {
   FinancialAccountPatchRequestSchema,
   FinancialAccountResponseSchema,
   FinancialAccountsResponseSchema,
-  HealthResponseSchema,
-  HealthLiveResponseSchema,
   JsonExportResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
@@ -104,13 +102,24 @@ import { Readable } from "node:stream";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { z } from "zod";
+import { withReadOnlyRepeatableReadTransaction } from "./database.js";
+import { registerHealthRoutes } from "./health.js";
 import { registerMetrics } from "./metrics.js";
 import { recordDatabaseLedgerInvariantFailure } from "./ledger/invariant-metrics.js";
 
 const port = Number(process.env.API_PORT ?? 3000);
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
 const pool = databaseUrl
   ? new Pool({ connectionString: databaseUrl })
+  : undefined;
+const databaseHealthPool = databaseUrl
+  ? new Pool({
+      connectionString: databaseUrl,
+      max: 1,
+      connectionTimeoutMillis: 1_000,
+      statement_timeout: 1_000,
+      query_timeout: 2_000,
+    })
   : undefined;
 const app = Fastify({
   logger: {
@@ -162,6 +171,15 @@ declare module "fastify" {
 }
 
 app.decorateRequest("authContext", null);
+
+for (const databasePool of [pool, databaseHealthPool]) {
+  databasePool?.on("error", (error: Error & { code?: string }) => {
+    app.log.warn(
+      { code: error.code ?? "DATABASE_CONNECTION_ERROR" },
+      "An idle PostgreSQL connection failed.",
+    );
+  });
+}
 
 await app.register(swagger, {
   openapi: {
@@ -262,84 +280,8 @@ app.setNotFoundHandler((request, reply) =>
     },
   }),
 );
-registerMetrics(app, pool);
-app.get("/healthz", { schema: { hide: true } }, async () => ({
-  status: "ok",
-}));
-
-app.get(
-  "/api/v1/health",
-  {
-    schema: {
-      tags: ["system"],
-      summary: "API and database readiness",
-      response: {
-        200: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
-        503: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
-      },
-    },
-  },
-  async (_request, reply) => {
-    let database: "connected" | "unconfigured" | "unavailable" = "unconfigured";
-    if (pool) {
-      try {
-        await pool.query("SELECT 1");
-        database = "connected";
-      } catch {
-        database = "unavailable";
-      }
-    }
-
-    if (database === "unavailable") {
-      return reply.code(503).send({ status: "degraded", database });
-    }
-    return { status: "ok", database };
-  },
-);
-
-app.get(
-  "/api/v1/health/live",
-  {
-    schema: {
-      tags: ["system"],
-      summary: "Process liveness without database inspection",
-      response: {
-        200: z.toJSONSchema(HealthLiveResponseSchema, { target: "draft-7" }),
-      },
-    },
-  },
-  async () => ({ status: "ok" as const }),
-);
-
-app.get(
-  "/api/v1/health/ready",
-  {
-    schema: {
-      tags: ["system"],
-      summary: "API and database readiness",
-      response: {
-        200: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
-        503: z.toJSONSchema(HealthResponseSchema, { target: "draft-7" }),
-      },
-    },
-  },
-  async (_request, reply) => {
-    let database: "connected" | "unconfigured" | "unavailable" = "unconfigured";
-    if (pool) {
-      try {
-        await pool.query("SELECT 1");
-        database = "connected";
-      } catch {
-        database = "unavailable";
-      }
-    }
-
-    if (database === "unavailable") {
-      return reply.code(503).send({ status: "degraded", database });
-    }
-    return { status: "ok", database };
-  },
-);
+registerMetrics(app, databaseHealthPool);
+registerHealthRoutes(app, databaseHealthPool);
 
 app.get("/openapi.json", async () => app.swagger());
 
@@ -739,8 +681,9 @@ app.get(
   async (request, reply) => {
     if (!(await requireSession(request, reply))) return;
     const { month } = ReportMonthQuerySchema.parse(request.query);
-    const report = await withDatabaseConnection((client) =>
-      readMonthlyReport(client, ownerUserId(request), month),
+    const report = await withReadOnlyRepeatableReadTransaction(
+      pool!,
+      (client) => readMonthlyReport(client, ownerUserId(request), month),
     );
     reply.header("Cache-Control", "private, no-store");
     return { report };
@@ -2262,7 +2205,7 @@ app.post(
 );
 
 app.addHook("onClose", async () => {
-  await pool?.end();
+  await Promise.all([pool?.end(), databaseHealthPool?.end()]);
 });
 
 try {

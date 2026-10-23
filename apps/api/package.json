@@ -20,6 +20,7 @@
     "test:bills": "tsx --test src/bills.integration.test.ts",
     "test:reports": "tsx --test src/reports.integration.test.ts",
     "test:transactions": "tsx --test src/transactions.integration.test.ts src/dashboard.integration.test.ts",
+    "test:health": "tsx --test src/health.integration.test.ts",
     "test:transfer-crash": "tsx --test src/transfer-crash.integration.test.ts",
     "test:idempotency": "tsx --test src/idempotency.integration.test.ts",
     "db:generate": "prisma generate --config ../../prisma.config.js",
