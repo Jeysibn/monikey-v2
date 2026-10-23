@@ -35,11 +35,29 @@ PLAYWRIGHT_API_BASE_URL=http://localhost:13000 npm run test:full-stack`
 - It also checks that the publisher requires workflow dispatch on `main` plus
   explicit opt-in, has only the required `packages: write` permission, and
   verifies the main merge before building, scanning local images, and publishing.
-- `npm run test:ci-workflow` passed nine regression cases, including malformed
-  YAML, duplicate push trigger, wrong publish branch, excess publisher
-  permission, missing PostgreSQL or Playwright jobs, and release ordering. These structural guards run as part of
+- `npm run test:ci-workflow` covers malformed YAML, duplicate push trigger,
+  wrong publish branch, excess publisher permission, and release ordering. The
+  PR workflow uses one `validate` job with secret scanning, `npm run validate`,
+  and no Docker or Playwright setup. Financial PostgreSQL integration and
+  Playwright remain local pre-merge acceptance checks and must use the actual
+  API and PostgreSQL as documented above. These structural guards run as part of
   `npm run validate`; they do not emulate GitHub's workflow runtime or authorize
   image publication. No Actions run was started.
+
+## Reduced GitHub Actions workflow — 2026-10-23
+
+- Simplified `.github/workflows/ci.yml` to a single PR `validate` job. It retains
+  TruffleHog commit scanning and the repository's full static/unit/security
+  validation, while removing per-PR CodeQL and Docker/PostgreSQL/Playwright
+  jobs to conserve the Actions allowance.
+- The required PR check is `validate`. Run the real PostgreSQL integration
+  suite and one-worker Playwright acceptance locally before merging finance or
+  API changes; the isolated Compose instructions above use the actual API and
+  PostgreSQL. Image publication remains a separate explicit manual dispatch
+  from `main`.
+- Updated the release verifier so image publication requires the successful
+  `validate` check on the exact merged PR head. This workflow change was only
+  validated locally; no Actions run or image publication was started.
 
 ## Owner-scoped CSV and JSON streaming — 2026-10-23
 

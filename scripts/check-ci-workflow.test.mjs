@@ -5,7 +5,7 @@ import { validateCiWorkflow } from "./check-ci-workflow.mjs";
 
 const workflow = await readFile(".github/workflows/ci.yml", "utf8");
 
-test("accepts the current PR-only workflow and gated main publisher", () => {
+test("accepts one PR validation job and the gated main publisher", () => {
   assert.equal(validateCiWorkflow(workflow), true);
 });
 
@@ -49,28 +49,6 @@ test("rejects malformed workflow YAML", () => {
   assert.throws(
     () => validateCiWorkflow("name: [broken"),
     /must parse cleanly/,
-  );
-});
-
-test("rejects a PR job that omits the real PostgreSQL integration suite", () => {
-  const changed = workflow.replace(
-    "run: npm run test:integration",
-    "run: echo integration skipped",
-  );
-  assert.throws(
-    () => validateCiWorkflow(changed),
-    /must run all PostgreSQL integration suites/,
-  );
-});
-
-test("rejects a PR job that omits actual API-backed Playwright", () => {
-  const changed = workflow.replace(
-    "- run: npm run test:e2e",
-    "- run: echo e2e skipped",
-  );
-  assert.throws(
-    () => validateCiWorkflow(changed),
-    /must run API-backed Playwright/,
   );
 });
 

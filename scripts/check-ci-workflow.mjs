@@ -30,12 +30,11 @@ export function validateCiWorkflow(source) {
 
   const jobs = workflow.jobs;
   assert.deepEqual(Object.keys(jobs).sort(), [
-    "codeql",
-    "e2e",
     "publish-images",
     "validate",
   ]);
-  for (const jobName of ["validate", "e2e", "codeql"]) {
+  assert.equal(jobs.validate.name, "validate");
+  for (const jobName of ["validate"]) {
     assert.equal(
       jobs[jobName].if,
       "github.event_name == 'pull_request'",
@@ -54,37 +53,13 @@ export function validateCiWorkflow(source) {
   assert.ok(validateRuns.some((run) => run.includes("npm ci")));
   assert.ok(validateRuns.some((run) => run.includes("npm run validate")));
 
-  const e2eRuns = jobs.e2e.steps
-    .filter((step) => typeof step.run === "string")
-    .map((step) => step.run);
-  assert.ok(
-    e2eRuns.some((run) => run.includes("npm run test:integration")),
-    "the PR E2E job must run all PostgreSQL integration suites",
-  );
-  assert.ok(
-    e2eRuns.some((run) => run.includes("npm run test:e2e")),
-    "the PR E2E job must run API-backed Playwright",
-  );
-  assert.ok(
-    e2eRuns.some((run) => run.includes("docker compose up --build -d --wait")),
-  );
-  assert.ok(
-    jobs.e2e.steps.some(
-      (step) =>
-        step.if === "always()" &&
-        step.run?.includes("docker compose down --volumes --remove-orphans"),
-    ),
-  );
-
-  for (const jobName of ["validate", "codeql"]) {
-    for (const step of jobs[jobName].steps) {
-      if (!step.uses) continue;
-      assert.match(
-        step.uses,
-        /^[^@]+@[a-f0-9]{40}(?:\s+#.*)?$/,
-        `${jobName} action references must be pinned to commit SHAs`,
-      );
-    }
+  for (const step of jobs.validate.steps) {
+    if (!step.uses) continue;
+    assert.match(
+      step.uses,
+      /^[^@]+@[a-f0-9]{40}(?:\s+#.*)?$/,
+      "validation action references must be pinned to commit SHAs",
+    );
   }
 
   const publisher = jobs["publish-images"];

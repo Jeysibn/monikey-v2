@@ -754,7 +754,7 @@ flowchart TB
 
 ## 10. CI/CD, security scanning and image publication
 
-**Primary requirement:** Unlike V1's standard validation pipeline, V2's merge-required validation MUST include real API + PostgreSQL financial browser workflows. Fast test stages may run in parallel, but a required aggregate gate fails when the real stack is unverified or skipped unexpectedly.
+**Primary requirement:** Financial acceptance MUST use the actual API and PostgreSQL; no mock finance adapter may replace it. To conserve the repository's GitHub Actions allowance, PR CI is intentionally one `validate` job. The owner runs the real PostgreSQL integration and Playwright full-stack suites locally before merging financial or API changes. Record the local result and commit SHA in the project journal/release evidence. Do not claim acceptance if the real stack was skipped or unavailable.
 
 ### 10.1 Branch and promotion strategy (approved)
 
@@ -781,13 +781,10 @@ feature/<ticket> ──PR──> dev ──release PR──> main
 
 | Job | Minimum check | Must block merge? |
 |---|---|---|
-| `quality` | npm clean install, formatting, oxlint/ESLint, TypeScript strict typecheck, unit tests, production build | Yes |
-| `contracts` | Runtime schema validation, OpenAPI generation, client type drift check, unauth/error contract tests | Yes |
-| `finance-invariants` | Exact-money/property-based ledger tests, audit/reversal/idempotency/concurrency rules | Yes |
-| `postgres-integration` | Real PostgreSQL service, fresh migrations, data isolation, DB constraints and transaction rollback tests | Yes |
-| `e2e-real-stack` | Build app, run disposable Postgres/API/web, Playwright on real backend; mobile + key desktop journeys | Yes |
-| `security` | TruffleHog verified secret scan, dependency audit and CodeQL as available, CI permissions checks | Yes on configured severe failures |
-| `manifest-validation` | Compose config, deployment manifests Helm/Kustomize render, schema/policy checks when changed | Yes |
+| `validate` | One PR job: npm clean install, formatting, ESLint, strict TypeScript/build, finance/invariant and repository guard tests, dependency audit, and TruffleHog verified secret scan | Yes |
+| Local financial acceptance | Real PostgreSQL migrations/constraints, all API integration suites, and API-backed Playwright mobile + desktop journeys, run from the isolated Docker Compose stack | Required local pre-merge check for financial/API changes; record evidence |
+
+CodeQL and per-PR full-stack Compose jobs are omitted from GitHub Actions to conserve Actions minutes. This is a deliberate operating-policy change from the original multi-job CI proposal. Local financial acceptance remains mandatory and must never silently skip PostgreSQL or substitute a mock finance adapter.
 
 **No hidden skips:** if Postgres is absent or required E2E cannot connect, CI must **fail** (not silently report “0 tests” or “DB tests skipped”). No test profile may use V1's in-memory finance repository as a replacement for real API verification. Mock UI fixtures may exist only in isolated component tests/Storybook-like previews and must never be a selectable production runtime.
 
@@ -946,7 +943,7 @@ Proposed minimal implementation:
 | `P0-04` | Stand up Compose Postgres+API+web+migrate, separate disposable test profile | P0-02 | Fresh `docker compose up` → web, API and database ready; no worker |
 | `P0-05` | Establish shared schema validation, API error format, OpenAPI output and typed client generation | P0-02 | Sample endpoint + invalid-request contract tests pass |
 | `P0-06` | Configure lint, formatting, strict TS, unit/integration/E2E scaffolding and Playwright mobile projects | P0-02,P0-04 | CI runs valid smoke tests against real stack |
-| `P0-07` | Replicate/improve V1 GitHub Actions quality/security/publish approach without copy-pasting stale config | P0-04,P0-06 | All required checks configured to fail on skipped DB/E2E; CodeQL/secret scan |
+| `P0-07` | Configure one Actions validation job and guarded release publication without copying stale config | P0-04,P0-06 | Required `validate` check; TruffleHog, npm audit, finance/unit/repository guards; real PostgreSQL/API acceptance recorded from local pre-merge runs |
 | `P0-08` | Establish Obsidian `~/main-brain` project page, decision log and per-PR change record convention | P0-03 | Example ADR and issue handoff notes verified |
 
 **Phase 0 exit gate:** a clean clone can launch and test a tiny real web→API→Postgres vertical slice, CI catches intentional failures, and docs state that V1 is read-only reference. No financial UI yet.

@@ -35,6 +35,8 @@ npm run test:contracts # requires the local API
 
 `npm run validate` is the static, database-free gate: ESLint, strict TypeScript/builds, exact-money and invariant tests, formatting, the tracked-file secret scan, and the dependency audit. Use the Docker-backed commands below for PostgreSQL integration and Playwright acceptance.
 
+Pull requests run one GitHub Actions `validate` job. Before merging finance or API changes, run the real PostgreSQL integration and API-backed Playwright suites locally as described below; these full-stack checks are intentionally not run on GitHub Actions to conserve minutes.
+
 `npm run compose:check` validates the base Compose file, the local-test override, and the isolated E2E stack without starting services.
 
 Separate [production image build targets](docs/runbooks/production-images.md) are available for local smoke checks. All six targets (API, web, migration, PostgreSQL, backup, and backup-metrics) have local build/test evidence; scans and SPDX inventories are recorded in [`docs/TESTING.md`](docs/TESTING.md). They have not been published or deployed. Phase 6 still requires immutable registry digest verification, approved secret decryption, owner-device CA trust, live cluster validation, and reviewed GitOps release work.

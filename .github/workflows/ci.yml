@@ -21,6 +21,7 @@ permissions:
 jobs:
   validate:
     if: github.event_name == 'pull_request'
+    name: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -36,73 +37,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run validate
-
-  e2e:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      COMPOSE_FILE: compose.yaml:compose.local-test.yaml
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22.22.0
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npm run compose:check
-      - run: docker compose up --build -d --wait --wait-timeout 180 api web
-      - name: Create isolated E2E owner account
-        run: >-
-          docker compose exec -T -e MONIKEY_BOOTSTRAP_EMAIL=owner@example.test
-          -e MONIKEY_BOOTSTRAP_PASSWORD=CI-only-password-never-used-outside-tests
-          api npm run bootstrap-owner --workspace @monikey/api
-      - name: Create isolated E2E second user
-        run: >-
-          docker compose exec -T -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true
-          -e MONIKEY_E2E_EMAIL=second@example.test
-          -e MONIKEY_E2E_PASSWORD=CI-only-second-user-password-never-used
-          api npm run seed-e2e-user --workspace @monikey/api
-      - name: Create isolated E2E sheet user
-        run: >-
-          docker compose exec -T -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true
-          -e MONIKEY_E2E_EMAIL=sheet@example.test
-          -e MONIKEY_E2E_PASSWORD=CI-only-sheet-password-never-used
-          api npm run seed-e2e-user --workspace @monikey/api
-      - name: Create isolated transfer-crash integration user
-        run: >-
-          docker compose exec -T -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true
-          -e MONIKEY_E2E_EMAIL=crash@example.test
-          -e MONIKEY_E2E_PASSWORD=CI-only-crash-user-password-never-used
-          api npm run seed-e2e-user --workspace @monikey/api
-      - run: npm run contracts:check
-      - name: Verify financial schema constraints
-        run: docker compose exec -T db psql -U monikey -d monikey -f - < prisma/tests/financial_schema.sql
-      - name: Verify complete financial API integration suite against PostgreSQL
-        env:
-          DATABASE_URL: postgresql://monikey:local-only-change-me@localhost:5432/monikey?schema=public
-        run: npm run test:integration
-      - run: npm run test:e2e
-      - if: always()
-        run: docker compose logs --no-color
-      - if: always()
-        run: docker compose down --volumes --remove-orphans
-
-  codeql:
-    if: github.event_name == 'pull_request'
-    name: CodeQL
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: github/codeql-action/init@c298edae2d512d807fe4bdc57c0ac5a036f61501 # v3.29.11
-        with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/autobuild@c298edae2d512d807fe4bdc57c0ac5a036f61501 # v3.29.11
-      - uses: github/codeql-action/analyze@c298edae2d512d807fe4bdc57c0ac5a036f61501 # v3.29.11
 
   publish-images:
     if: >-

@@ -87,7 +87,7 @@ async function main() {
     `/repos/${repository}/commits/${headSha}/check-runs`,
     "check_runs",
   );
-  for (const requiredName of ["validate", "e2e", "CodeQL"]) {
+  for (const requiredName of ["validate"]) {
     const matching = checks
       .filter((check) => check.name === requiredName)
       .sort((left, right) => {

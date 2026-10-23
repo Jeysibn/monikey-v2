@@ -102,8 +102,6 @@ test("accepts the exact merged main commit and paginated successful checks", asy
     ),
     2: [
       check("validate", "success", later),
-      check("e2e", "success", later),
-      check("CodeQL", "success", later),
     ],
   };
   const tempDir = await mkdtemp(join(tmpdir(), "monikey-release-verifier-"));
@@ -127,8 +125,6 @@ test("rejects a failed newest required check even if an older run passed", async
     1: [
       check("validate", "success", "2026-10-23T01:00:00Z"),
       check("validate", "failure", "2026-10-23T02:00:00Z"),
-      check("e2e", "success", "2026-10-23T02:00:00Z"),
-      check("CodeQL", "success", "2026-10-23T02:00:00Z"),
     ],
   };
   const result = await runVerifier({ checkPages });
