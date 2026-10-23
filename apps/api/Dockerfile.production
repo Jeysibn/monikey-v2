@@ -1,4 +1,4 @@
-FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS build
+FROM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
 WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -11,7 +11,7 @@ RUN npm run build --workspace @monikey/contracts \
   && npm run build --workspace @monikey/money \
   && npm run build --workspace @monikey/api
 
-FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS production-dependencies
+FROM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS production-dependencies
 WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -20,7 +20,7 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/money/package.json packages/money/package.json
 RUN npm ci --omit=dev
 
-FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS runtime
+FROM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS runtime
 COPY --from=node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 /usr/local/bin/node /usr/local/bin/node
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production API_PORT=3000
