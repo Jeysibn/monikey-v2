@@ -103,6 +103,7 @@ import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { withReadOnlyRepeatableReadTransaction } from "./database.js";
+import { serverTodayInManila } from "./manila-date.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerMetrics } from "./metrics.js";
 import { recordDatabaseLedgerInvariantFailure } from "./ledger/invariant-metrics.js";
@@ -287,19 +288,6 @@ app.get("/openapi.json", async () => app.swagger());
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function serverTodayInManila(): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(
-    parts.map(({ type, value }) => [type, value]),
-  );
-  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function ownerUserId(request: FastifyRequest): string {

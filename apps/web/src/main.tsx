@@ -30,6 +30,11 @@ import {
 } from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
 import { ReportsFeature } from "./features/reports/ReportsFeature";
+import { useLatestResource } from "./shared/hooks/use-latest-resource";
+import {
+  clearPendingSubmission,
+  pendingSubmissionKey,
+} from "./shared/lib/pending-submissions";
 import "./style.css";
 
 type Theme = "light" | "dark";
@@ -92,68 +97,6 @@ type Profile = {
   onboardingStatus: "NEEDS_FIRST_ACCOUNT" | "READY";
 };
 
-type PendingIdempotencyRecord = {
-  fingerprint: string;
-  key: string;
-};
-
-const pendingTransactionKeys = new Map<string, PendingIdempotencyRecord>();
-
-async function transactionIdempotencyKey(
-  userId: string,
-  payload: unknown,
-): Promise<string> {
-  const fingerprintBytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(JSON.stringify(payload)),
-  );
-  const fingerprint = Array.from(new Uint8Array(fingerprintBytes), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-  const storageKey = `monikey-v2.pending-transaction.${userId}`;
-  let pending = pendingTransactionKeys.get(storageKey) ?? null;
-  try {
-    const stored = sessionStorage.getItem(storageKey);
-    if (stored) {
-      const parsed = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
-      if (
-        typeof parsed.fingerprint === "string" &&
-        typeof parsed.key === "string"
-      ) {
-        pending = { fingerprint: parsed.fingerprint, key: parsed.key };
-      }
-    }
-  } catch {
-    // Keep the in-memory key when session storage is unavailable.
-  }
-  if (pending?.fingerprint === fingerprint) return pending.key;
-
-  const key = crypto.randomUUID();
-  const next = { fingerprint, key };
-  pendingTransactionKeys.set(storageKey, next);
-  try {
-    sessionStorage.setItem(storageKey, JSON.stringify(next));
-  } catch {
-    // The current page can still safely retry in memory when storage is blocked.
-  }
-  return key;
-}
-
-function clearTransactionIdempotencyKey(userId: string, key: string): void {
-  const storageKey = `monikey-v2.pending-transaction.${userId}`;
-  if (pendingTransactionKeys.get(storageKey)?.key === key) {
-    pendingTransactionKeys.delete(storageKey);
-  }
-  try {
-    const stored = sessionStorage.getItem(storageKey);
-    if (!stored) return;
-    const pending = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
-    if (pending.key === key) sessionStorage.removeItem(storageKey);
-  } catch {
-    // The stored retry key is only a convenience; successful API state is final.
-  }
-}
-
 type AuthContextValue = {
   profile: Profile | null;
   loading: boolean;
@@ -171,6 +114,26 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+function isTerminalClientError(status: number): boolean {
+  return (
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 409 &&
+    status !== 429
+  );
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
     ...init,
@@ -184,8 +147,9 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
     | (T & { error?: { message?: string } })
     | null;
   if (!response.ok) {
-    throw new Error(
+    throw new ApiRequestError(
       payload?.error?.message ?? "The request could not be completed.",
+      response.status,
     );
   }
   return payload as T;
@@ -843,33 +807,22 @@ function DashboardLoading() {
 }
 
 function DashboardHome({ profile }: { profile: Profile }) {
-  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const loadSummary = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setSummary(
-        await apiRequest<DashboardSummaryResponse>("/dashboard/summary"),
-      );
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Your dashboard could not be loaded.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { refreshProfile } = useAuth();
+  const fetchSummary = useCallback(
+    () => apiRequest<DashboardSummaryResponse>("/dashboard/summary"),
+    [],
+  );
+  const resource = useLatestResource(
+    `dashboard:${profile.user.id}`,
+    fetchSummary,
+  );
+  const summary = resource.data;
 
   useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+    if (resource.errorStatus === 401) void refreshProfile();
+  }, [refreshProfile, resource.errorStatus]);
 
-  if (loading && !summary) return <DashboardLoading />;
+  if (resource.loading && !summary) return <DashboardLoading />;
 
   return (
     <section className="dashboard-page" aria-labelledby="page-heading">
@@ -881,25 +834,48 @@ function DashboardHome({ profile }: { profile: Profile }) {
             Your money, accounts and latest activity.
           </p>
         </div>
-        <Link className="dashboard-primary-action" to="/app/transactions/new">
-          <span aria-hidden="true">+</span> Add transaction
-        </Link>
+        <div className="dashboard-heading-actions">
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void resource.reload()}
+          >
+            {resource.refreshing ? "Refreshing…" : "Refresh balances"}
+          </button>
+          <Link className="dashboard-primary-action" to="/app/transactions/new">
+            <span aria-hidden="true">+</span> Add transaction
+          </Link>
+        </div>
       </div>
 
-      {error ? (
+      {resource.error ? (
         <div className="dashboard-error" role="alert">
           <div>
-            <strong>Dashboard unavailable</strong>
-            <p>{error}</p>
+            <strong>
+              {resource.stale
+                ? "Showing previously loaded figures"
+                : "Dashboard unavailable"}
+            </strong>
+            <p>
+              {resource.stale
+                ? `These figures could not be refreshed. ${resource.error}`
+                : resource.error}
+            </p>
           </div>
           <button
             type="button"
             className="quiet-button"
-            onClick={() => void loadSummary()}
+            onClick={() => void resource.reload()}
+            disabled={resource.refreshing}
           >
-            Try again
+            {resource.refreshing ? "Refreshing…" : "Try again"}
           </button>
         </div>
+      ) : null}
+      {resource.refreshing ? (
+        <p className="dashboard-helper" role="status">
+          Refreshing verified balances…
+        </p>
       ) : null}
 
       {summary ? (
@@ -2025,8 +2001,12 @@ function cardUtilization(account: AccountRecord): string | null {
 }
 
 function AccountsPage() {
-  const { profile, loading: authLoading, csrfToken } = useAuth();
-  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const {
+    profile,
+    loading: authLoading,
+    csrfToken,
+    refreshProfile,
+  } = useAuth();
   const [showArchived, setShowArchived] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [type, setType] = useState<AccountRecord["type"]>("BANK");
@@ -2034,37 +2014,27 @@ function AccountsPage() {
   const [institution, setInstitution] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
   const [creditLimit, setCreditLimit] = useState("");
-  const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const load = useCallback(async () => {
-    if (!profile) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const result = await apiRequest<{ accounts: AccountRecord[] }>(
+  const fetchAccounts = useCallback(
+    () =>
+      apiRequest<{ accounts: AccountRecord[] }>(
         "/accounts?includeArchived=true",
-      );
-      setAccounts(result.accounts);
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Accounts could not be loaded.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [profile]);
+      ),
+    [],
+  );
+  const accountsResource = useLatestResource(
+    `accounts:${profile?.user.id ?? "signed-out"}`,
+    fetchAccounts,
+    Boolean(profile),
+  );
+  const accounts = accountsResource.data?.accounts ?? [];
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (accountsResource.errorStatus === 401) void refreshProfile();
+  }, [accountsResource.errorStatus, refreshProfile]);
 
   async function createAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2118,7 +2088,7 @@ function AccountsPage() {
       setCreditLimit("");
       setShowCreate(false);
       setSuccess("Account created with a ledger-backed opening balance.");
-      await load();
+      await accountsResource.reload();
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -2130,7 +2100,8 @@ function AccountsPage() {
     }
   }
 
-  if (authLoading || (loading && !accounts.length)) return <DashboardLoading />;
+  if (authLoading || (accountsResource.loading && !accounts.length))
+    return <DashboardLoading />;
   if (!profile) {
     return (
       <RoutePage
@@ -2159,14 +2130,23 @@ function AccountsPage() {
             history remains available.
           </p>
         </div>
-        <button
-          className="dashboard-primary-action"
-          type="button"
-          onClick={() => setShowCreate((current) => !current)}
-        >
-          <span aria-hidden="true">+</span>{" "}
-          {showCreate ? "Close form" : "Add account"}
-        </button>
+        <div className="dashboard-heading-actions">
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void accountsResource.reload()}
+          >
+            {accountsResource.refreshing ? "Refreshing…" : "Refresh balances"}
+          </button>
+          <button
+            className="dashboard-primary-action"
+            type="button"
+            onClick={() => setShowCreate((current) => !current)}
+          >
+            <span aria-hidden="true">+</span>{" "}
+            {showCreate ? "Close form" : "Add account"}
+          </button>
+        </div>
       </div>
 
       {success ? (
@@ -2178,6 +2158,30 @@ function AccountsPage() {
         <p className="form-error" role="alert">
           {error}
         </p>
+      ) : null}
+      {accountsResource.error ? (
+        <div className="dashboard-error" role="alert">
+          <div>
+            <strong>
+              {accountsResource.stale
+                ? "Account balances may be out of date"
+                : "Accounts unavailable"}
+            </strong>
+            <p>
+              {accountsResource.stale
+                ? `The last loaded balances remain visible, but could not be refreshed. ${accountsResource.error}`
+                : accountsResource.error}
+            </p>
+          </div>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void accountsResource.reload()}
+            disabled={accountsResource.refreshing}
+          >
+            {accountsResource.refreshing ? "Refreshing…" : "Retry"}
+          </button>
+        </div>
       ) : null}
 
       {showCreate ? (
@@ -3009,6 +3013,7 @@ function CardPaymentPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const isOnline = useOnlineStatus();
+  const submissionInFlight = useRef(false);
 
   const load = useCallback(async () => {
     if (!profile || !accountId) {
@@ -3062,6 +3067,7 @@ function CardPaymentPage() {
     acknowledge = false,
   ) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
     setError("");
     setSuccess("");
     setConfirmNegative(false);
@@ -3069,7 +3075,7 @@ function CardPaymentPage() {
       setError("You are offline. Reconnect before recording a payment.");
       return;
     }
-    if (!accountId || !csrfToken || !fundingAccountId) {
+    if (!profile || !accountId || !csrfToken || !fundingAccountId) {
       setError("Choose a funding account.");
       return;
     }
@@ -3082,34 +3088,67 @@ function CardPaymentPage() {
       );
       return;
     }
+    const body = {
+      fundingAccountId,
+      amountMinor,
+      occurredOn,
+      ...(note.trim() ? { note: note.trim() } : {}),
+      ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+    };
+    submissionInFlight.current = true;
     setPending(true);
+    let idempotencyKey: string | null = null;
     try {
+      idempotencyKey = await pendingSubmissionKey(
+        profile.user.id,
+        `card-payment:${accountId}`,
+        body,
+      );
       await apiRequest(`/credit-cards/${accountId}/payments`, {
         method: "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          fundingAccountId,
-          amountMinor,
-          occurredOn,
-          ...(note.trim() ? { note: note.trim() } : {}),
-          ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(
+        profile.user.id,
+        `card-payment:${accountId}`,
+        idempotencyKey,
+      );
       setAmount("");
       setNote("");
       setSuccess("Card payment posted. It is not counted as a new expense.");
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(
+          profile.user.id,
+          `card-payment:${accountId}`,
+          idempotencyKey,
+        );
+      }
       const message =
         caught instanceof Error
           ? caught.message
           : "The card payment could not be saved.";
-      if (message.includes("negative")) setConfirmNegative(true);
-      setError(message);
+      if (message.includes("negative")) {
+        setConfirmNegative(true);
+        setError(message);
+      } else if (caught instanceof ApiRequestError && caught.status < 500) {
+        setError(message);
+      } else {
+        setError(
+          `The payment result could not be confirmed. If it reached MoniKey, retry using the same details to safely recover its result. ${message}`,
+        );
+      }
     } finally {
+      submissionInFlight.current = false;
       setPending(false);
     }
   }
@@ -4205,11 +4244,17 @@ function QuickAddPage() {
   const [fee, setFee] = useState("");
   const [note, setNote] = useState("");
   const [occurredOn, setOccurredOn] = useState(profile?.serverToday ?? "");
+  const [businessToday, setBusinessToday] = useState(
+    profile?.serverToday ?? "",
+  );
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [negativeConfirmation, setNegativeConfirmation] = useState(false);
   const [hasEdited, setHasEdited] = useState(false);
+  const hasEditedRef = useRef(false);
+  const dateEditedRef = useRef(false);
+  const submissionInFlight = useRef(false);
   const sheetRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -4291,12 +4336,14 @@ function QuickAddPage() {
       setLoading(false);
       return;
     }
-    setOccurredOn(profile.serverToday);
     void Promise.all([
       apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
       apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+      apiRequest<Profile>("/me"),
     ])
-      .then(([accountResult, categoryResult]) => {
+      .then(([accountResult, categoryResult, currentProfile]) => {
+        setBusinessToday(currentProfile.serverToday);
+        if (!dateEditedRef.current) setOccurredOn(currentProfile.serverToday);
         const activeAccounts = accountResult.accounts.filter(
           (account) => !account.archivedAt,
         );
@@ -4344,12 +4391,16 @@ function QuickAddPage() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
     setError("");
     setNegativeConfirmation(false);
     if (!isOnline) {
       setError("You are offline. Reconnect before recording a transaction.");
       return;
     }
+    let requestAttempted = false;
+    let responseReceived = false;
+    let outcomeUnknown = false;
     try {
       const amountMinor = parsePositive(amount, "Amount").toString();
       if (!profile || !csrfToken)
@@ -4389,11 +4440,14 @@ function QuickAddPage() {
       if (mode === "TRANSFER" && destinationAccountId === sourceAccountId) {
         throw new Error("Choose two different accounts.");
       }
+      submissionInFlight.current = true;
       setPending(true);
-      const idempotencyKey = await transactionIdempotencyKey(
+      const idempotencyKey = await pendingSubmissionKey(
         profile.user.id,
+        "transaction",
         body,
       );
+      requestAttempted = true;
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
@@ -4404,43 +4458,66 @@ function QuickAddPage() {
         },
         body: JSON.stringify(body),
       });
+      responseReceived = true;
+      outcomeUnknown = response.status >= 500 || response.status === 408;
       const payload = (await response.json().catch(() => null)) as {
         error?: { message?: string };
       } | null;
       if (!response.ok) {
         const message =
           payload?.error?.message ?? "The transaction could not be saved.";
+        if (isTerminalClientError(response.status)) {
+          clearPendingSubmission(
+            profile.user.id,
+            "transaction",
+            idempotencyKey,
+          );
+        }
         if (response.status === 409 && message.includes("negative")) {
           setNegativeConfirmation(true);
         }
         throw new Error(message);
       }
-      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
+      clearPendingSubmission(profile.user.id, "transaction", idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");
+      hasEditedRef.current = false;
+      dateEditedRef.current = false;
       setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
-      setError(
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The transaction could not be saved.",
+          : "The transaction could not be saved.";
+      const uncertain =
+        outcomeUnknown || (requestAttempted && !responseReceived);
+      setError(
+        uncertain
+          ? `The transaction result could not be confirmed. If it reached MoniKey, retry with the same details to recover it safely. ${message}`
+          : message,
       );
     } finally {
+      submissionInFlight.current = false;
       setPending(false);
     }
   }
 
   async function confirmNegativeBalance() {
+    if (submissionInFlight.current) return;
     if (!csrfToken) return;
     if (!isOnline) {
       setError("You are offline. Reconnect before recording a transaction.");
       return;
     }
     setError("");
+    submissionInFlight.current = true;
     setPending(true);
+    let requestAttempted = false;
+    let responseReceived = false;
+    let outcomeUnknown = false;
     try {
       if (!profile) throw new Error("Your session needs to be refreshed.");
       const amountMinor = parsePositive(amount, "Amount").toString();
@@ -4468,10 +4545,12 @@ function QuickAddPage() {
               occurredOn,
               ...(note.trim() ? { note: note.trim() } : {}),
             };
-      const idempotencyKey = await transactionIdempotencyKey(
+      const idempotencyKey = await pendingSubmissionKey(
         profile.user.id,
+        "transaction",
         body,
       );
+      requestAttempted = true;
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
@@ -4482,28 +4561,46 @@ function QuickAddPage() {
         },
         body: JSON.stringify(body),
       });
+      responseReceived = true;
+      outcomeUnknown = response.status >= 500 || response.status === 408;
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           error?: { message?: string };
         } | null;
+        if (isTerminalClientError(response.status)) {
+          clearPendingSubmission(
+            profile.user.id,
+            "transaction",
+            idempotencyKey,
+          );
+        }
         throw new Error(
           payload?.error?.message ?? "The transaction could not be saved.",
         );
       }
-      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
+      clearPendingSubmission(profile.user.id, "transaction", idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");
+      hasEditedRef.current = false;
+      dateEditedRef.current = false;
       setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
-      setError(
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The transaction could not be saved.",
+          : "The transaction could not be saved.";
+      const uncertain =
+        outcomeUnknown || (requestAttempted && !responseReceived);
+      setError(
+        uncertain
+          ? `The transaction result could not be confirmed. If it reached MoniKey, retry with the same details to recover it safely. ${message}`
+          : message,
       );
     } finally {
+      submissionInFlight.current = false;
       setPending(false);
     }
   }
@@ -4539,7 +4636,10 @@ function QuickAddPage() {
       <form
         className="quick-add-card"
         onSubmit={submit}
-        onChange={() => setHasEdited(true)}
+        onChange={() => {
+          hasEditedRef.current = true;
+          setHasEdited(true);
+        }}
       >
         <div className="mode-tabs" role="tablist" aria-label="Transaction type">
           {(["EXPENSE", "INCOME", "TRANSFER"] as QuickAddMode[]).map((item) => (
@@ -4551,6 +4651,7 @@ function QuickAddPage() {
               aria-selected={mode === item}
               onClick={() => {
                 setMode(item);
+                hasEditedRef.current = true;
                 setHasEdited(true);
                 setError("");
                 setNegativeConfirmation(false);
@@ -4567,7 +4668,7 @@ function QuickAddPage() {
               {mode === "TRANSFER" ? "Move money" : `New ${mode.toLowerCase()}`}
             </h2>
           </div>
-          <span className="form-kind">{profile.serverToday}</span>
+          <span className="form-kind">{businessToday}</span>
         </div>
         <div className="field-group">
           <label className="field-label" htmlFor="quick-add-amount">
@@ -4704,8 +4805,11 @@ function QuickAddPage() {
               className="text-input"
               type="date"
               value={occurredOn}
-              max={profile.serverToday}
-              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+              max={businessToday}
+              onChange={(event) => {
+                dateEditedRef.current = true;
+                setOccurredOn(event.currentTarget.value);
+              }}
             />
           </label>
           <label className="field-group">
