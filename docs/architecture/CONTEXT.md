@@ -10,7 +10,7 @@ The approved source is [`MONIKEY_V2_MASTER_PLAN.md`](../../MONIKEY_V2_MASTER_PLA
 
 - React, Vite, TypeScript, and an online-first installable PWA.
 - Fastify modular monolith with one API process and PostgreSQL.
-- Prisma for ordinary CRUD and versioned SQL migrations for constraints it cannot express.
+- Direct PostgreSQL access through `pg` for runtime queries and transactional domain operations; Prisma schema/configuration and versioned SQL migrations are used for database tooling, not runtime CRUD.
 - Exact PHP minor units backed by PostgreSQL `BIGINT`; JSON carries minor amounts as decimal strings.
 - Double-entry immutable journals are the only source of financial truth.
 - User-scoped ownership, private authentication, Asia/Manila financial dates.

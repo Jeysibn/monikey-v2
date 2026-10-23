@@ -15,13 +15,13 @@ const password =
 const screenshotDir = process.env.MONIKEY_REVIEW_SCREENSHOT_DIR;
 if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
 const routes = [
-  ["home", "/app", "Your money, in balance."],
-  ["activity", "/app/activity", "Activity that stays traceable."],
+  ["home", "/app", "Overview"],
+  ["activity", "/app/activity", "Activity"],
   ["quick-add", "/app/transactions/new", "Record it while it is fresh."],
-  ["accounts", "/app/accounts", "Accounts you can trace."],
-  ["bills", "/app/bills", "Bills with a clear next step."],
+  ["accounts", "/app/accounts", "Accounts"],
+  ["bills", "/app/bills", "Bills"],
   ["settings", "/app/settings", "Settings"],
-  ["reports", "/app/reports", "Reports that reconcile."],
+  ["reports", "/app/reports", "Reports"],
   ["security", "/app/settings/security", "Security you can review."],
   ["categories", "/app/settings/categories", "Categories that keep context."],
 ];
@@ -137,9 +137,8 @@ async function assertReviewCaptureAtTop(page, name) {
   const position = await page.evaluate(() => {
     const pageContent = document.querySelector(".page-content");
     const topbar = document.querySelector(".topbar");
-    const notice = document.querySelector(".preview-notice");
     const topbarBounds = topbar?.getBoundingClientRect();
-    const noticeBounds = notice?.getBoundingClientRect();
+    const mainBounds = document.querySelector("main")?.getBoundingClientRect();
     return {
       pageScrollTop:
         pageContent instanceof HTMLElement ? pageContent.scrollTop : null,
@@ -149,10 +148,10 @@ async function assertReviewCaptureAtTop(page, name) {
           topbarBounds.top >= 0 &&
           topbarBounds.bottom <= window.innerHeight,
       ),
-      sessionNoticeVisible: Boolean(
-        noticeBounds &&
-          noticeBounds.top >= 0 &&
-          noticeBounds.bottom <= window.innerHeight,
+      mainVisible: Boolean(
+        mainBounds &&
+          mainBounds.width > 0 &&
+          mainBounds.top < window.innerHeight,
       ),
     };
   });
@@ -164,9 +163,9 @@ async function assertReviewCaptureAtTop(page, name) {
     `${name} capture hides the app header.`,
   );
   assert.equal(
-    position.sessionNoticeVisible,
+    position.mainVisible,
     true,
-    `${name} capture hides the session notice.`,
+    `${name} main content is not visible.`,
   );
 }
 
@@ -258,9 +257,15 @@ try {
       await page.goto(`${pageOrigin}${path}`, {
         waitUntil: "domcontentloaded",
       });
-      await page.getByRole("heading", { name: heading }).waitFor({
-        state: "visible",
-      });
+      if (name === "quick-add" && target.isMobile) {
+        await page.locator(".quick-add-card").waitFor({ state: "visible" });
+      } else {
+        await page
+          .getByRole("heading", { name: heading, exact: true })
+          .waitFor({
+            state: "visible",
+          });
+      }
       await page.waitForTimeout(100);
       await resetReviewScrollPosition(page);
       await assertReviewCaptureAtTop(page, name);
@@ -340,6 +345,17 @@ try {
           interactive: interactive.length,
           unnamed: unnamed.length,
           undersized: undersized.length,
+          undersizedTargets: undersized.map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              tag: element.tagName,
+              className: element.className,
+              text: element.textContent?.trim().slice(0, 40) ?? "",
+              ariaLabel: element.getAttribute("aria-label"),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          }),
           domContentLoadedMs: Math.round(
             navigation?.domContentLoadedEventEnd ?? 0,
           ),
@@ -367,7 +383,11 @@ try {
         apiNetworkFailureCount - apiNetworkFailuresBefore;
       assert.ok(metrics.overflowPx <= 0, `${name} has horizontal overflow.`);
       assert.equal(metrics.unnamed, 0, `${name} has unnamed controls.`);
-      assert.equal(metrics.undersized, 0, `${name} has undersized controls.`);
+      assert.equal(
+        metrics.undersized,
+        0,
+        `${name} has undersized controls: ${JSON.stringify(metrics.undersizedTargets)}`,
+      );
       assert.equal(routePageErrors, 0, `${name} has page errors.`);
       assert.equal(routeApiErrors, 0, `${name} has API error responses.`);
       assert.equal(

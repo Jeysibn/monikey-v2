@@ -58,8 +58,9 @@ test("quick add action and theme control have accessible route states", async ({
   await expect(
     page.getByRole("button", { name: "Record expense" }),
   ).toBeDisabled();
-  await expect(page.getByLabel("Account")).toBeDisabled();
-  await expect(page.getByLabel("Category")).toBeDisabled();
+  const previewSelects = page.locator(".quick-add-card select");
+  await expect(previewSelects.nth(0)).toBeDisabled();
+  await expect(previewSelects.nth(1)).toBeDisabled();
 
   const amount = page.getByLabel("Amount");
   await amount.fill("1.234");
@@ -501,9 +502,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     page.getByText("Onboarding Cash", { exact: true }),
   ).toBeVisible();
   await page.goto("/app/activity?kind=EXPENSE");
-  await expect(
-    page.getByRole("heading", { name: "Activity that stays traceable." }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
   await expect(page.getByLabel("Type")).toHaveValue("EXPENSE");
   await page.reload();
   await expect(page.getByLabel("Type")).toHaveValue("EXPENSE");
@@ -528,9 +527,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     "Transaction reversed. Its original journal remains immutable.",
   );
   await page.goto("/app/accounts");
-  await expect(
-    page.getByRole("heading", { name: "Accounts you can trace." }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Accounts" })).toBeVisible();
   await expect(
     page.getByText("Onboarding Cash", { exact: true }),
   ).toBeVisible();
@@ -1133,6 +1130,11 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     });
     expect(ownerLogin.status()).toBe(200);
     const ownerCsrfToken = (await ownerLogin.json()).csrfToken as string;
+    const ownerReportBefore = await ownerContext.request.get(
+      `${api}/reports/monthly?month=2026-10`,
+    );
+    expect(ownerReportBefore.status()).toBe(200);
+    const ownerReportBaseline = (await ownerReportBefore.json()).report;
     const ownerAccounts = await ownerContext.request.get(`${api}/accounts`);
     expect(ownerAccounts.status()).toBe(200);
     expect(
@@ -1292,9 +1294,9 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     expect(ownerReport.status()).toBe(200);
     await expect(ownerReport.json()).resolves.toMatchObject({
       report: {
-        incomeMinor: "0",
-        netExpensesMinor: "0",
-        netCashFlowMinor: "0",
+        incomeMinor: ownerReportBaseline.incomeMinor,
+        netExpensesMinor: ownerReportBaseline.netExpensesMinor,
+        netCashFlowMinor: ownerReportBaseline.netCashFlowMinor,
       },
     });
     for (const transactionId of [
@@ -2112,9 +2114,7 @@ test("reports, exports, security, and categories stay owner-scoped", async ({
     owner: { timezone: "Asia/Manila", currency: "PHP" },
   });
   await page.goto("/app/reports");
-  await expect(
-    page.getByRole("heading", { name: "Reports that reconcile." }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reports" })).toBeVisible();
   await page.goto("/app/settings/security");
   await expect(
     page.getByRole("heading", { name: "Security you can review." }),
@@ -2123,6 +2123,69 @@ test("reports, exports, security, and categories stay owner-scoped", async ({
   await expect(
     page.getByRole("heading", { name: "Categories that keep context." }),
   ).toBeVisible();
+});
+
+test("reports keep month data isolated and retry the selected month", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(login.status()).toBe(200);
+  let delayAugust = false;
+  let augustRequests = 0;
+  let failJulyOnce = true;
+  await page.route("**/api/v1/reports/monthly?month=2026-08", async (route) => {
+    augustRequests += 1;
+    if (delayAugust) await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
+  await page.route("**/api/v1/reports/monthly?month=2026-07", async (route) => {
+    if (failJulyOnce) {
+      failJulyOnce = false;
+      await route.abort("failed");
+    } else await route.continue();
+  });
+
+  await page.goto("/app/reports");
+  const monthInput = page.locator("input[type=month]");
+  await expect(page.locator("[data-report-month]")).toBeVisible();
+  const initialMonth = await monthInput.inputValue();
+  await monthInput.fill("");
+  await expect(monthInput).toHaveValue(initialMonth);
+  delayAugust = true;
+  await monthInput.fill("2026-08");
+  await expect.poll(() => augustRequests).toBe(1);
+  await expect(page.locator("[data-report-month]")).toHaveCount(0);
+  await monthInput.fill("2026-09");
+  await expect(page.locator('[data-report-month="2026-09"]')).toBeVisible();
+  await page.waitForTimeout(600);
+  await expect(page.locator('[data-report-month="2026-09"]')).toBeVisible();
+
+  await monthInput.fill("2026-07");
+  await expect(page.getByRole("alert")).toContainText(
+    "Report unavailable for 2026-07",
+  );
+  await expect(page.locator("[data-report-month]")).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator('[data-report-month="2026-07"]')).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/app/transactions/new");
+  const amountInput = page.getByLabel("Amount");
+  await expect(amountInput).toBeVisible();
+  expect((await amountInput.boundingBox())?.y).toBeLessThan(420);
+  await page.goto("/app/activity");
+  const filterToggle = page.getByRole("button", { name: /Filters/ });
+  await expect(filterToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Type")).toBeHidden();
+  await filterToggle.click();
+  await expect(page.getByLabel("Type")).toBeVisible();
 });
 
 test("login rate limits repeated failures", async ({ page }) => {

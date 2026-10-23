@@ -29,6 +29,7 @@ import {
   ReferenceSelect,
 } from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
+import { ReportsFeature } from "./features/reports/ReportsFeature";
 import "./style.css";
 
 type Theme = "light" | "dark";
@@ -540,6 +541,15 @@ function AppShell() {
               {secondaryNavigation.map((item) => (
                 <NavigationLink key={item.to} {...item} />
               ))}
+              {profile ? (
+                <button
+                  className="mobile-menu-sign-out"
+                  type="button"
+                  onClick={() => void logout()}
+                >
+                  Sign out
+                </button>
+              ) : null}
             </nav>
           </details>
           <button
@@ -597,15 +607,6 @@ function AppShell() {
                 yet.
               </span>
             </div>
-          ) : null}
-          {profile ? (
-            <button
-              className="mobile-session-link"
-              type="button"
-              onClick={() => void logout()}
-            >
-              Sign out
-            </button>
           ) : null}
           <Outlet />
         </main>
@@ -1190,6 +1191,9 @@ function ActivityPage() {
   const { profile, loading: authLoading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const paramsKey = searchParams.toString();
+  const appliedFilters = activityFiltersFromParams(
+    new URLSearchParams(paramsKey),
+  );
   const [filters, setFilters] = useState<ActivityFilters>(() =>
     activityFiltersFromParams(searchParams),
   );
@@ -1200,40 +1204,71 @@ function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
+  const [retryVersion, setRetryVersion] = useState(0);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const requestId = useRef(0);
+  const moreController = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
 
   useEffect(() => {
     if (!profile) {
       setLoading(false);
       return;
     }
-    const urlFilters = activityFiltersFromParams(searchParams);
+    const id = ++requestId.current;
+    const controller = new AbortController();
+    moreController.current?.abort();
+    moreController.current = null;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    setMoreError("");
+    setActivity([]);
+    setNextCursor(null);
+    const urlFilters = activityFiltersFromParams(
+      new URLSearchParams(paramsKey),
+    );
     setFilters(urlFilters);
     setLoading(true);
     setError("");
-    const query = new URLSearchParams(searchParams);
+    const query = activityFilterParams(urlFilters);
     query.set("limit", "25");
     void Promise.all([
       apiRequest<{ activity: DashboardActivity[]; nextCursor: string | null }>(
         `/transactions?${query.toString()}`,
+        { signal: controller.signal },
       ),
-      apiRequest<{ accounts: DashboardAccount[] }>("/accounts"),
-      apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+      apiRequest<{ accounts: DashboardAccount[] }>("/accounts", {
+        signal: controller.signal,
+      }),
+      apiRequest<{ categories: QuickAddCategory[] }>("/categories", {
+        signal: controller.signal,
+      }),
     ])
       .then(([activityResult, accountResult, categoryResult]) => {
+        if (id !== requestId.current) return;
         setActivity(activityResult.activity);
         setNextCursor(activityResult.nextCursor);
         setAccounts(accountResult.accounts);
         setCategories(categoryResult.categories);
       })
       .catch((caught) => {
+        if (controller.signal.aborted || id !== requestId.current) return;
+        setActivity([]);
         setError(
           caught instanceof Error
             ? caught.message
             : "Activity could not be loaded.",
         );
       })
-      .finally(() => setLoading(false));
-  }, [paramsKey, profile]);
+      .finally(() => {
+        if (id === requestId.current) setLoading(false);
+      });
+    return () => {
+      controller.abort();
+      moreController.current?.abort();
+    };
+  }, [paramsKey, profile, retryVersion]);
 
   function updateFilter(key: keyof ActivityFilters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -1249,27 +1284,47 @@ function ActivityPage() {
   }
 
   async function loadMore() {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMoreRef.current || loading || error) return;
+    loadingMoreRef.current = true;
+    const id = requestId.current;
+    const requestKey = paramsKey;
+    const controller = new AbortController();
+    moreController.current = controller;
     setLoadingMore(true);
-    setError("");
-    const query = activityFilterParams(filters);
+    setMoreError("");
+    const query = activityFilterParams(appliedFilters);
     query.set("limit", "25");
     query.set("cursor", nextCursor);
     try {
       const result = await apiRequest<{
         activity: DashboardActivity[];
         nextCursor: string | null;
-      }>(`/transactions?${query.toString()}`);
-      setActivity((current) => [...current, ...result.activity]);
+      }>(`/transactions?${query.toString()}`, { signal: controller.signal });
+      if (id !== requestId.current || requestKey !== paramsKey) return;
+      setActivity((current) => {
+        const seen = new Set(current.map((item) => item.transaction.id));
+        const additions = result.activity.filter((item) => {
+          const transactionId = item.transaction.id;
+          if (seen.has(transactionId)) return false;
+          seen.add(transactionId);
+          return true;
+        });
+        return [...current, ...additions];
+      });
       setNextCursor(result.nextCursor);
     } catch (caught) {
-      setError(
+      if (controller.signal.aborted || id !== requestId.current) return;
+      setMoreError(
         caught instanceof Error
           ? caught.message
           : "More activity could not be loaded.",
       );
     } finally {
-      setLoadingMore(false);
+      if (moreController.current === controller) {
+        moreController.current = null;
+        loadingMoreRef.current = false;
+        if (id === requestId.current) setLoadingMore(false);
+      }
     }
   }
 
@@ -1298,108 +1353,130 @@ function ActivityPage() {
     <section className="activity-page" aria-labelledby="page-heading">
       <div className="page-intro">
         <p className="eyebrow">Your timeline · Private</p>
-        <h1 id="page-heading">Activity that stays traceable.</h1>
+        <h1 id="page-heading">Activity</h1>
         <p className="page-description">
-          Search and filter the posted records behind your balances. Open any
-          row to inspect its revision and correct or reverse it safely.
+          Search posted records and open one to review, edit, or reverse it.
         </p>
       </div>
 
       <form className="activity-filter-panel" onSubmit={applyFilters}>
-        <div className="activity-filter-grid">
-          <label className="field-group activity-search-field">
-            <span className="field-label">Search</span>
-            <input
-              className="text-input"
-              type="search"
-              value={filters.search}
-              onChange={(event) =>
-                updateFilter("search", event.currentTarget.value)
-              }
-              placeholder="Notes or labels"
-            />
-          </label>
-          <label className="field-group">
-            <span className="field-label">Type</span>
-            <select
-              className="reference-select"
-              value={filters.kind}
-              onChange={(event) =>
-                updateFilter("kind", event.currentTarget.value)
-              }
+        <button
+          type="button"
+          className="activity-filter-toggle"
+          aria-expanded={filtersExpanded}
+          aria-controls="activity-advanced-filters"
+          onClick={() => setFiltersExpanded((expanded) => !expanded)}
+        >
+          Filters{" "}
+          <span>
+            {Object.values(appliedFilters).filter(Boolean).length
+              ? `${Object.values(appliedFilters).filter(Boolean).length} applied`
+              : "All activity"}
+          </span>
+        </button>
+        <div
+          className={`activity-filter-content${filtersExpanded ? " is-expanded" : ""}`}
+          id="activity-advanced-filters"
+        >
+          <div className="activity-filter-grid">
+            <label className="field-group activity-search-field">
+              <span className="field-label">Search</span>
+              <input
+                className="text-input"
+                type="search"
+                value={filters.search}
+                onChange={(event) =>
+                  updateFilter("search", event.currentTarget.value)
+                }
+                placeholder="Notes or labels"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-label">Type</span>
+              <select
+                className="reference-select"
+                value={filters.kind}
+                onChange={(event) =>
+                  updateFilter("kind", event.currentTarget.value)
+                }
+              >
+                <option value="">All types</option>
+                {activityKinds.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {formatActivityKind(kind)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-label">Account</span>
+              <select
+                className="reference-select"
+                value={filters.accountId}
+                onChange={(event) =>
+                  updateFilter("accountId", event.currentTarget.value)
+                }
+              >
+                <option value="">All accounts</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-label">Category</span>
+              <select
+                className="reference-select"
+                value={filters.categoryId}
+                onChange={(event) =>
+                  updateFilter("categoryId", event.currentTarget.value)
+                }
+              >
+                <option value="">All categories</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-label">From</span>
+              <input
+                className="text-input"
+                type="date"
+                value={filters.from}
+                onChange={(event) =>
+                  updateFilter("from", event.currentTarget.value)
+                }
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-label">To</span>
+              <input
+                className="text-input"
+                type="date"
+                value={filters.to}
+                onChange={(event) =>
+                  updateFilter("to", event.currentTarget.value)
+                }
+              />
+            </label>
+          </div>
+          <div className="activity-filter-actions">
+            <button className="save-button" type="submit">
+              Apply filters
+            </button>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={clearFilters}
             >
-              <option value="">All types</option>
-              {activityKinds.map((kind) => (
-                <option key={kind} value={kind}>
-                  {formatActivityKind(kind)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field-group">
-            <span className="field-label">Account</span>
-            <select
-              className="reference-select"
-              value={filters.accountId}
-              onChange={(event) =>
-                updateFilter("accountId", event.currentTarget.value)
-              }
-            >
-              <option value="">All accounts</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field-group">
-            <span className="field-label">Category</span>
-            <select
-              className="reference-select"
-              value={filters.categoryId}
-              onChange={(event) =>
-                updateFilter("categoryId", event.currentTarget.value)
-              }
-            >
-              <option value="">All categories</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field-group">
-            <span className="field-label">From</span>
-            <input
-              className="text-input"
-              type="date"
-              value={filters.from}
-              onChange={(event) =>
-                updateFilter("from", event.currentTarget.value)
-              }
-            />
-          </label>
-          <label className="field-group">
-            <span className="field-label">To</span>
-            <input
-              className="text-input"
-              type="date"
-              value={filters.to}
-              onChange={(event) =>
-                updateFilter("to", event.currentTarget.value)
-              }
-            />
-          </label>
-        </div>
-        <div className="activity-filter-actions">
-          <button className="save-button" type="submit">
-            Apply filters
-          </button>
-          <button className="quiet-button" type="button" onClick={clearFilters}>
-            Clear
-          </button>
+              Clear
+            </button>
+          </div>
         </div>
       </form>
 
@@ -1412,7 +1489,7 @@ function ActivityPage() {
           <button
             type="button"
             className="quiet-button"
-            onClick={() => setSearchParams(new URLSearchParams(searchParams))}
+            onClick={() => setRetryVersion((version) => version + 1)}
           >
             Try again
           </button>
@@ -1420,7 +1497,7 @@ function ActivityPage() {
       ) : null}
 
       <div className="activity-results" aria-live="polite">
-        {loading ? (
+        {error ? null : loading ? (
           <div className="dashboard-skeleton" role="status">
             <span className="skeleton-line skeleton-line-wide" />
             <span className="skeleton-line" />
@@ -1494,7 +1571,19 @@ function ActivityPage() {
           </div>
         )}
       </div>
-      {nextCursor ? (
+      {moreError ? (
+        <div className="dashboard-error" role="alert">
+          <p>{moreError}</p>
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={() => void loadMore()}
+          >
+            Retry loading more
+          </button>
+        </div>
+      ) : null}
+      {nextCursor && !error ? (
         <button
           className="quiet-button activity-load-more"
           type="button"
@@ -2064,10 +2153,10 @@ function AccountsPage() {
       <div className="accounts-heading">
         <div className="page-intro">
           <p className="eyebrow">Your money · Private</p>
-          <h1 id="page-heading">Accounts you can trace.</h1>
+          <h1 id="page-heading">Accounts</h1>
           <p className="page-description">
-            Balances come from posted journals. Archive an account when it is no
-            longer active and its history remains available.
+            Balances come from posted journals. Archive inactive accounts; their
+            history remains available.
           </p>
         </div>
         <button
@@ -3423,10 +3512,10 @@ function BillsPage() {
     <section className="route-page bills-page" aria-labelledby="page-heading">
       <div className="page-intro">
         <p className="eyebrow">Plan ahead · Private</p>
-        <h1 id="page-heading">Bills with a clear next step.</h1>
+        <h1 id="page-heading">Bills</h1>
         <p className="page-description">
-          Keep recurring reminders separate until you confirm a payment. Paid
-          bills post one ordinary expense to the ledger.
+          Track recurring reminders. Confirm payment before a bill posts one
+          expense to your ledger.
         </p>
       </div>
       {error ? (
@@ -4424,7 +4513,7 @@ function QuickAddPage() {
   const quickAddContent = (
     <section
       ref={sheetRef}
-      className={`route-page${isSheet ? " quick-add-sheet" : ""}`}
+      className={`route-page quick-add-page${isSheet ? " quick-add-sheet" : ""}`}
       aria-labelledby="page-heading"
       {...(isSheet ? { role: "dialog" as const, "aria-modal": true } : {})}
     >
@@ -4785,62 +4874,10 @@ function SettingsPage() {
   );
 }
 
-type MonthlyReportView = {
-  month: string;
-  incomeMinor: string;
-  netExpensesMinor: string;
-  netCashFlowMinor: string;
-  categories: {
-    categoryId: string | null;
-    categoryName: string;
-    amountMinor: string;
-  }[];
-};
-
-function monthEndDate(month: string): string {
-  const [year, monthNumber] = month.split("-").map(Number);
-  if (!year || !monthNumber) return "";
-  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
-}
-
 function ReportsPage() {
   const { profile, loading: authLoading } = useAuth();
-  const [month, setMonth] = useState(profile?.serverToday.slice(0, 7) ?? "");
-  const [report, setReport] = useState<MonthlyReportView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    if (!profile || !month) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const result = await apiRequest<{ report: MonthlyReportView }>(
-        `/reports/monthly?month=${month}`,
-      );
-      setReport(result.report);
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Reports could not be loaded.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [month, profile]);
-
-  useEffect(() => {
-    if (profile && !month) setMonth(profile.serverToday.slice(0, 7));
-  }, [month, profile]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (authLoading || loading) return <DashboardLoading />;
+  if (authLoading) return <DashboardLoading />;
   if (!profile) {
     return (
       <RoutePage
@@ -4853,135 +4890,13 @@ function ReportsPage() {
       />
     );
   }
-  const maxCategory =
-    report?.categories.reduce((max, category) => {
-      const amount = BigInt(category.amountMinor);
-      const absolute = amount < 0n ? -amount : amount;
-      return absolute > max ? absolute : max;
-    }, 0n) ?? 0n;
-  const exportTo = monthEndDate(month);
+
   return (
-    <section className="route-page reports-page" aria-labelledby="page-heading">
-      <div className="page-intro">
-        <p className="eyebrow">Understand your month · Private</p>
-        <h1 id="page-heading">Reports that reconcile.</h1>
-        <p className="page-description">
-          Income, net expenses, cash flow, and categories come from posted
-          journals. Transfers and card payments are excluded from spending.
-        </p>
-      </div>
-      <div className="report-toolbar">
-        <label className="field-group">
-          <span className="field-label">Month</span>
-          <input
-            className="text-input"
-            type="month"
-            value={month}
-            onChange={(event) => setMonth(event.currentTarget.value)}
-          />
-        </label>
-        <div className="report-export-actions">
-          <a
-            className="quiet-button"
-            href={`/api/v1/exports/transactions.csv?from=${month}-01&to=${exportTo}`}
-          >
-            Download CSV
-          </a>
-          <a className="quiet-button" href="/api/v1/exports/data.json">
-            Download JSON
-          </a>
-        </div>
-      </div>
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {report ? (
-        <>
-          <div className="report-stat-grid" aria-label="Monthly totals">
-            <div className="dashboard-stat">
-              <p className="dashboard-label">Income</p>
-              <PrivacyMask label="monthly income">
-                {dashboardMoney(report.incomeMinor)}
-              </PrivacyMask>
-            </div>
-            <div className="dashboard-stat">
-              <p className="dashboard-label">Net expenses</p>
-              <PrivacyMask label="net monthly expenses">
-                {dashboardMoney(report.netExpensesMinor)}
-              </PrivacyMask>
-            </div>
-            <div className="dashboard-stat">
-              <p className="dashboard-label">Net cash flow</p>
-              <PrivacyMask label="net cash flow">
-                {dashboardMoney(report.netCashFlowMinor)}
-              </PrivacyMask>
-            </div>
-          </div>
-          <section
-            className="report-category-panel"
-            aria-labelledby="category-report-heading"
-          >
-            <div className="dashboard-panel-heading">
-              <div>
-                <p className="dashboard-label">Expense categories</p>
-                <h2 id="category-report-heading">Where the month moved</h2>
-              </div>
-            </div>
-            {report.categories.length ? (
-              <div
-                className="report-category-table"
-                role="table"
-                aria-label="Monthly expense categories"
-              >
-                <div
-                  className="report-category-row report-category-header"
-                  role="row"
-                >
-                  <span role="columnheader">Category</span>
-                  <span role="columnheader">Net amount</span>
-                </div>
-                {report.categories.map((category) => (
-                  <div
-                    className="report-category-row"
-                    role="row"
-                    key={category.categoryId ?? "uncategorized"}
-                  >
-                    <span role="cell">
-                      <strong>{category.categoryName}</strong>
-                      <span
-                        className="report-bar"
-                        style={{
-                          width: `${(() => {
-                            const amount = BigInt(category.amountMinor);
-                            const absolute = amount < 0n ? -amount : amount;
-                            if (maxCategory === 0n) return "4";
-                            const width = (absolute * 100n) / maxCategory;
-                            return (width < 4n ? 4n : width).toString();
-                          })()}%`,
-                        }}
-                      />
-                    </span>
-                    <span role="cell">
-                      <PrivacyMask
-                        label={`${category.categoryName} monthly amount`}
-                      >
-                        {dashboardMoney(category.amountMinor)}
-                      </PrivacyMask>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="dashboard-empty">
-                <p>No categorized expenses in this month.</p>
-              </div>
-            )}
-          </section>
-        </>
-      ) : null}
-    </section>
+    <ReportsFeature
+      initialMonth={profile.serverToday.slice(0, 7)}
+      request={apiRequest}
+      renderMoney={dashboardMoney}
+    />
   );
 }
 
