@@ -56,8 +56,9 @@ PLAYWRIGHT_API_BASE_URL=http://localhost:13000 npm run test:full-stack`
   PostgreSQL. Image publication remains a separate explicit manual dispatch
   from `main`.
 - Updated the release verifier so image publication requires the successful
-  `validate` check on the exact merged PR head. This workflow change was only
-  validated locally; no Actions run or image publication was started.
+  `validate` check on the exact merged PR head. The updated workflow passed GitHub Actions run
+  [39886879477](https://github.com/Jeysibn/monikey-v2/actions/runs/39886879477)
+  on commit `863d29f`; no image publication was started.
 
 ## Owner-scoped CSV and JSON streaming — 2026-10-23
 
