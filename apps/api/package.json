@@ -11,7 +11,7 @@
     "bootstrap-owner": "tsx src/bootstrap-owner.ts",
     "seed-e2e-user": "tsx src/seed-e2e-user.ts",
     "seed-scale-review": "tsx src/seed-scale-review.ts",
-    "test:unit": "tsx --test src/ledger/domain.test.ts src/repository.guardrails.test.ts src/metrics.test.ts",
+    "test:unit": "tsx --test src/ledger/domain.test.ts src/repository.guardrails.test.ts src/metrics.test.ts src/manila-date.test.ts",
     "test:invariants": "tsx --test src/finance-invariants.test.ts",
     "test:ledger": "tsx --test src/ledger/integration.test.ts",
     "test:accounts": "tsx --test src/accounts.integration.test.ts",

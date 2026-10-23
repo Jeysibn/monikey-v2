@@ -619,6 +619,13 @@ h1 {
   font-weight: 700;
 }
 
+.dashboard-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
 .dashboard-primary-action span {
   font-size: 20px;
   font-weight: 400;
@@ -2892,7 +2899,18 @@ h1 {
   .dashboard-primary-action {
     width: 100%;
     justify-content: center;
-    margin-top: 20px;
+    margin-top: 0;
+  }
+
+  .dashboard-heading-actions {
+    width: 100%;
+    flex-direction: column-reverse;
+    align-items: stretch;
+    margin-top: 18px;
+  }
+
+  .dashboard-heading-actions .quiet-button {
+    width: 100%;
   }
 
   .dashboard-hero {

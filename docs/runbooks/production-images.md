@@ -1,13 +1,13 @@
 # Local production image build and smoke checks
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 These image targets prepare V2 for later reviewed release work. Local tags are
 not release artifacts. Do not push them to a registry or deploy them as part of
 this runbook. Production Kubernetes manifests, SOPS/age wiring, TLS, image
 registry publication, provenance, and GitOps promotion remain Phase 6 gates.
 
-## Build the three images
+## Build the six images
 
 Run from the repository root with Docker available:
 
@@ -15,7 +15,15 @@ Run from the repository root with Docker available:
 docker build -f apps/api/Dockerfile.production -t monikey-v2-api:local-prod .
 docker build -f apps/web/Dockerfile.production -t monikey-v2-web:local-prod .
 docker build -f apps/api/Dockerfile.migrate -t monikey-v2-migrate:local .
+docker build -f apps/api/Dockerfile.postgres -t monikey-v2-postgres:local-prod .
+docker build -f apps/api/Dockerfile.backup -t monikey-v2-backup:local-prod .
+docker build -f apps/backup-metrics/Dockerfile -t monikey-v2-backup-metrics:local-prod .
 ```
+
+These are the six image identities referenced by the workload manifests: API,
+web, migration, PostgreSQL, backup, and backup metrics. A local tag is only a
+build target; production manifests must still be rendered with reviewed,
+published immutable digests before any GitOps change.
 
 The API/web image builds use Node 22.22 and Nginx 1.29.3 base image digests.
 Runtime stages refresh and upgrade Alpine packages at build time. The API
