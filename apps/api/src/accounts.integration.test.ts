@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Pool } from "pg";
 import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
+import { readMonthlyReport } from "./reports.js";
 import { requireDatabaseUrl } from "./test-support/database-url.js";
 
 const databaseUrl = requireDatabaseUrl();
@@ -80,6 +81,10 @@ test("opening balances post against equity and read back from the ledger", async
 
     const reread = await readFinancialAccount(client, userId, bank.id);
     assert.equal(reread.balanceMinor, "1000000");
+    assert.equal(
+      (await readMonthlyReport(client, userId, "2026-10")).incomeMinor,
+      "0",
+    );
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");
   } finally {
     await client.query("ROLLBACK");

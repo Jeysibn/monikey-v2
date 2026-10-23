@@ -36,9 +36,9 @@ test("serializes minor units as exact base-10 strings", () => {
 });
 
 test("formats large values without converting the amount to Number", () => {
-  assert.equal(formatPhp(moneyMinor("125050")), "₱1,250.50");
+  assert.equal(formatPhp(moneyMinor("125050")), "₱\u202f1,250.50");
   assert.equal(
     formatPhp(moneyMinor("-123456789012345678")),
-    "-₱1,234,567,890,123,456.78",
+    "-₱\u202f1,234,567,890,123,456.78",
   );
 });

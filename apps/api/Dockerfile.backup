@@ -1,0 +1,20 @@
+FROM postgres:17.11-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+
+# The CronJob runs the backup script directly as UID 70 and never uses the
+# upstream entrypoint. Remove its bundled gosu binary so the image does not
+# carry an unused Go executable with known HIGH/CRITICAL vulnerabilities.
+RUN rm -f /usr/local/bin/gosu
+
+# Rotation and the Argo pre-migration hook share one PVC. Require util-linux
+# flock so concurrent runs cannot race state updates or prune each other's data.
+RUN command -v flock >/dev/null
+
+COPY --chown=70:70 deploy/kubernetes/backup/pg-backup-rotate.sh /usr/local/bin/monikey-pg-backup
+RUN chmod 0755 /usr/local/bin/monikey-pg-backup \
+  && mkdir -p /backups \
+  && chown 70:70 /backups
+
+VOLUME ["/backups"]
+
+USER 70:70
+ENTRYPOINT ["/usr/local/bin/monikey-pg-backup"]

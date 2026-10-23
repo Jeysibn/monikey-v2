@@ -1,6 +1,6 @@
 # Financial schema contract
 
-Status: implementation in progress for P2-03. This document translates sections 4 and 6 of `MONIKEY_V2_MASTER_PLAN.md` into the initial PostgreSQL schema contract.
+Status: the financial schema supports the implemented Phase 2–4 domain; Phase 5 reports and exports derive from that data without a separate finance model. Production Kubernetes resources are maintained separately under `deploy/`. This document translates sections 4 and 6 of `MONIKEY_V2_MASTER_PLAN.md` into the PostgreSQL schema contract.
 
 ## Ownership
 
@@ -14,7 +14,7 @@ Each committed journal must have at least two postings and equal debit and credi
 
 ## Initial scope
 
-The migration includes accounts, categories, ledger mappings, transactions, revisions, journals, postings, per-user idempotency records, and append-only audit events. Statement, recurring bill, and occurrence tables are deferred to their respective approved work packages; the initial schema leaves their future links out rather than adding unvalidated unused tables.
+The migration includes accounts, categories, ledger mappings, transactions, revisions, journals, postings, per-user idempotency records, append-only audit events, manually entered card statements and allocations, recurring bill rules, and deterministic bill occurrences. Card statement and bill rows use composite owner-scoped references and triggers for card/payment kind constraints. Bill occurrences use a unique owner/bill/due-date key and retain the linked paid transaction.
 
 ## Money and dates
 
@@ -22,4 +22,4 @@ Persisted amounts are positive PostgreSQL `BIGINT` minor units, with debit/credi
 
 ## Compatibility and verification
 
-Migrations must apply to both a fresh database and the current V2 schema. P2-03 tests exercise composite ownership, type checks, positive amounts, immutable history, balanced journals, and migration application. The schema has no V1 data or migration dependency.
+Migrations must apply to both a fresh database and the current V2 schema. P2-03 tests exercise composite ownership, type checks, positive amounts, immutable history, balanced journals, and migration application. The schema has no V1 data or migration dependency. Phase 4 migrations are additive and preserve the immutable journal boundary: statement edits and bill reminders do not write postings; confirmed card payments and bill payments call the bounded transaction services.

@@ -1,0 +1,18 @@
+FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS prisma-cli
+WORKDIR /opt/prisma
+RUN npm init -y \
+  && npm install --omit=optional --save-exact prisma@7.10.1 dotenv@16.6.1
+
+FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS runtime
+COPY --from=node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 /usr/local/bin/node /usr/local/bin/node
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+  && apk update \
+  && apk upgrade --no-cache
+ENV NODE_ENV=production
+WORKDIR /workspace
+COPY --from=prisma-cli --chown=node:node /opt/prisma/node_modules /opt/prisma/node_modules
+COPY --from=prisma-cli --chown=node:node /opt/prisma/node_modules/dotenv ./node_modules/dotenv
+COPY --chown=node:node prisma ./prisma
+COPY --chown=node:node prisma.config.js ./prisma.config.js
+USER node
+CMD ["node", "/opt/prisma/node_modules/prisma/build/index.js", "migrate", "deploy", "--config", "/workspace/prisma.config.js"]

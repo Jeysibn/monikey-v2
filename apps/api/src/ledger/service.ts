@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { assertBalancedPostings, type LedgerPostingInput } from "./domain.js";
+import { recordLedgerInvariantValidationFailure } from "./invariant-metrics.js";
 
 export type JournalOperationKind =
   | "OPENING_BALANCE"
@@ -37,7 +38,12 @@ export async function postBalancedJournal(
   client: PoolClient,
   input: PostBalancedJournalInput,
 ): Promise<string> {
-  assertBalancedPostings(input.postings);
+  try {
+    assertBalancedPostings(input.postings);
+  } catch (error) {
+    recordLedgerInvariantValidationFailure(error);
+    throw error;
+  }
   if (
     (input.operationKind === "REVERSAL") !==
     (input.reversalOf !== undefined)

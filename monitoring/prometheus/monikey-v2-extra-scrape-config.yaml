@@ -1,0 +1,22 @@
+# Merge this block into `extraScrapeConfigs` in the pinned Prometheus chart
+# values (25.19.1 in the audited homelab source). It uses the stable V2 Service
+# DNS name and needs no additional Kubernetes API discovery permissions.
+extraScrapeConfigs: |
+  - job_name: monikey-v2-api
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api.monikey-v2.svc.cluster.local:3000
+        labels:
+          namespace: monikey-v2
+  - job_name: monikey-v2-backup
+    scrape_interval: 30s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - backup-metrics.monikey-v2.svc.cluster.local:9100
+        labels:
+          namespace: monikey-v2

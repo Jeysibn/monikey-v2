@@ -3,7 +3,9 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,8 +18,16 @@ import {
   Routes,
   useNavigate,
   useLocation,
+  useParams,
+  useSearchParams,
 } from "react-router";
-import { AmountEntry, PrivacyMask, ReferenceSelect } from "./components";
+import {
+  AmountEntry,
+  MoneyValue,
+  PrivacyMask,
+  PrivacyPreferenceProvider,
+  ReferenceSelect,
+} from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
 import "./style.css";
 
@@ -52,6 +62,7 @@ const pageTitles: Record<string, string> = {
 
 type Profile = {
   user: {
+    id: string;
     emailNormalized: string;
     timezone: "Asia/Manila";
     currency: "PHP";
@@ -61,6 +72,68 @@ type Profile = {
   serverToday: string;
   onboardingStatus: "NEEDS_FIRST_ACCOUNT" | "READY";
 };
+
+type PendingIdempotencyRecord = {
+  fingerprint: string;
+  key: string;
+};
+
+const pendingTransactionKeys = new Map<string, PendingIdempotencyRecord>();
+
+async function transactionIdempotencyKey(
+  userId: string,
+  payload: unknown,
+): Promise<string> {
+  const fingerprintBytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(payload)),
+  );
+  const fingerprint = Array.from(new Uint8Array(fingerprintBytes), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const storageKey = `monikey-v2.pending-transaction.${userId}`;
+  let pending = pendingTransactionKeys.get(storageKey) ?? null;
+  try {
+    const stored = sessionStorage.getItem(storageKey);
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
+      if (
+        typeof parsed.fingerprint === "string" &&
+        typeof parsed.key === "string"
+      ) {
+        pending = { fingerprint: parsed.fingerprint, key: parsed.key };
+      }
+    }
+  } catch {
+    // Keep the in-memory key when session storage is unavailable.
+  }
+  if (pending?.fingerprint === fingerprint) return pending.key;
+
+  const key = crypto.randomUUID();
+  const next = { fingerprint, key };
+  pendingTransactionKeys.set(storageKey, next);
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {
+    // The current page can still safely retry in memory when storage is blocked.
+  }
+  return key;
+}
+
+function clearTransactionIdempotencyKey(userId: string, key: string): void {
+  const storageKey = `monikey-v2.pending-transaction.${userId}`;
+  if (pendingTransactionKeys.get(storageKey)?.key === key) {
+    pendingTransactionKeys.delete(storageKey);
+  }
+  try {
+    const stored = sessionStorage.getItem(storageKey);
+    if (!stored) return;
+    const pending = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
+    if (pending.key === key) sessionStorage.removeItem(storageKey);
+  } catch {
+    // The stored retry key is only a convenience; successful API state is final.
+  }
+}
 
 type AuthContextValue = {
   profile: Profile | null;
@@ -173,7 +246,25 @@ function useAuth(): AuthContextValue {
   return context;
 }
 
+function useOnlineStatus(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+
+  useEffect(() => {
+    const markOnline = () => setOnline(true);
+    const markOffline = () => setOnline(false);
+    window.addEventListener("online", markOnline);
+    window.addEventListener("offline", markOffline);
+    return () => {
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener("offline", markOffline);
+    };
+  }, []);
+
+  return online;
+}
+
 function useTheme(): [Theme, () => void] {
+  const { profile, csrfToken } = useAuth();
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem("monikey-theme");
     if (stored === "light" || stored === "dark") return stored;
@@ -181,6 +272,12 @@ function useTheme(): [Theme, () => void] {
       ? "dark"
       : "light";
   });
+
+  useEffect(() => {
+    if (profile?.user.theme === "light" || profile?.user.theme === "dark") {
+      setTheme(profile.user.theme);
+    }
+  }, [profile?.user.theme]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -195,7 +292,18 @@ function useTheme(): [Theme, () => void] {
 
   return [
     theme,
-    () => setTheme((current) => (current === "light" ? "dark" : "light")),
+    () => {
+      const next = theme === "light" ? "dark" : "light";
+      setTheme(next);
+      window.localStorage.setItem("monikey-theme", next);
+      if (profile && csrfToken) {
+        void apiRequest("/me/preferences", {
+          method: "PATCH",
+          headers: { "x-csrf-token": csrfToken },
+          body: JSON.stringify({ theme: next }),
+        }).catch(() => undefined);
+      }
+    },
   ];
 }
 
@@ -224,6 +332,11 @@ function NavigationLink({
   end?: boolean;
   action?: boolean;
 }) {
+  const location = useLocation();
+  const contextualFrom =
+    action && location.pathname !== to
+      ? `${location.pathname}${location.search}`
+      : undefined;
   return (
     <NavLink
       className={({ isActive }) =>
@@ -232,6 +345,7 @@ function NavigationLink({
       to={to}
       {...(end ? { end: true } : {})}
       {...(action ? { "aria-label": "Add transaction" } : {})}
+      {...(contextualFrom ? { state: { from: contextualFrom } } : {})}
     >
       <span className="nav-symbol" aria-hidden="true">
         {symbol}
@@ -245,8 +359,12 @@ function AppShell() {
   const [theme, toggleTheme] = useTheme();
   const location = useLocation();
   const { profile, logout } = useAuth();
+  const isOnline = useOnlineStatus();
   const pageTitle =
-    pageTitles[location.pathname] ??
+    (location.pathname === "/onboarding" &&
+    profile?.onboardingStatus === "READY"
+      ? "Accounts"
+      : pageTitles[location.pathname]) ??
     (location.pathname.includes("/statements")
       ? "Statements"
       : location.pathname.includes("/transactions/")
@@ -322,6 +440,17 @@ function AppShell() {
         </header>
 
         <main className="page-content" id="main-content">
+          {!isOnline ? (
+            <div className="connection-notice" role="alert">
+              <span className="notice-mark" aria-hidden="true">
+                !
+              </span>
+              <span>
+                Offline. Financial submissions are disabled until the connection
+                returns.
+              </span>
+            </div>
+          ) : null}
           <div className="preview-notice" role="status">
             <span className="notice-mark" aria-hidden="true">
               i
@@ -361,6 +490,8 @@ function RoutePage({
   icon,
   linkTo = "/app",
   linkLabel = "Back to Home",
+  emptyTitle = "Nothing to show yet",
+  emptyDescription = "Saved records appear here when this view has something to show. No sample balances or transactions are added.",
 }: {
   eyebrow: string;
   title: string;
@@ -368,6 +499,8 @@ function RoutePage({
   icon: string;
   linkTo?: string;
   linkLabel?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   return (
     <section className="route-page" aria-labelledby="page-heading">
@@ -381,11 +514,8 @@ function RoutePage({
           {icon}
         </span>
         <div className="empty-copy">
-          <p className="empty-title">Nothing to show yet</p>
-          <p>
-            This area will use your saved records once sign-in and real account
-            workflows are ready. No sample balances or transactions are shown.
-          </p>
+          <p className="empty-title">{emptyTitle}</p>
+          <p>{emptyDescription}</p>
         </div>
         <Link className="quiet-link" to={linkTo}>
           {linkLabel}
@@ -396,6 +526,16 @@ function RoutePage({
 }
 
 function HomePage() {
+  const { profile, loading } = useAuth();
+
+  if (loading) {
+    return <DashboardLoading />;
+  }
+
+  if (profile) {
+    return <DashboardHome profile={profile} />;
+  }
+
   return (
     <section className="home-page" aria-labelledby="page-heading">
       <div className="page-intro home-intro">
@@ -445,6 +585,3005 @@ function HomePage() {
           <span className="lower-rule" />
         </div>
       </div>
+    </section>
+  );
+}
+
+type DashboardAccount = {
+  id: string;
+  type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
+  name: string;
+  balanceMinor: string;
+  creditLimitMinor?: string | null;
+  archivedAt: string | null;
+};
+
+type DashboardActivity = {
+  transaction: {
+    id: string;
+    kind:
+      | "OPENING_BALANCE"
+      | "INCOME"
+      | "EXPENSE"
+      | "TRANSFER"
+      | "REFUND"
+      | "ADJUSTMENT"
+      | "CARD_PAYMENT";
+    status: "POSTED" | "VOID";
+    currentRevision: number;
+    occurredOn: string;
+    categoryId: string | null;
+    refundedTransactionId: string | null;
+    note: string | null;
+  };
+  revision: Record<string, unknown>;
+  createdAt: string;
+};
+
+type DashboardSummaryResponse = {
+  availableMoneyMinor: string;
+  cardDebtMinor: string;
+  netFinancialPositionMinor: string;
+  month: string;
+  incomeMinor: string;
+  spendingMinor: string;
+  accounts: DashboardAccount[];
+  upcomingBills: {
+    id: string;
+    billName: string;
+    expectedAmountMinor: string | null;
+    actualAmountMinor: string | null;
+    dueOn: string;
+    status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
+  }[];
+  recentActivity: DashboardActivity[];
+  serverToday: string;
+};
+
+function dashboardMoney(value: string) {
+  return <MoneyValue amount={moneyMinor(value)} />;
+}
+
+function phpInputFromMinor(value: string): string {
+  const amount = moneyMinor(value);
+  const negative = amount < 0n;
+  const absolute = negative ? -amount : amount;
+  return `${negative ? "-" : ""}${absolute / 100n}.${(absolute % 100n)
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+function dashboardAccountType(type: DashboardAccount["type"]): string {
+  return {
+    CASH: "Cash",
+    BANK: "Bank",
+    EWALLET: "E-wallet",
+    CREDIT_CARD: "Credit card",
+  }[type];
+}
+
+function dashboardActivityAmount(activity: DashboardActivity): string | null {
+  const amount = activity.revision.amountMinor;
+  return typeof amount === "string" && /^-?\d+$/.test(amount) ? amount : null;
+}
+
+function dashboardActivityLabel(activity: DashboardActivity): string {
+  if (activity.transaction.note) return activity.transaction.note;
+  return {
+    OPENING_BALANCE: "Opening balance",
+    INCOME: "Income",
+    EXPENSE: "Expense",
+    TRANSFER: "Transfer",
+    REFUND: "Refund",
+    ADJUSTMENT: "Adjustment",
+    CARD_PAYMENT: "Card payment",
+  }[activity.transaction.kind];
+}
+
+function DashboardLoading() {
+  return (
+    <section className="dashboard-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Private dashboard</p>
+        <h1 id="page-heading">Your money, in balance.</h1>
+        <p className="page-description">Loading your saved figures…</p>
+      </div>
+      <div
+        className="dashboard-skeleton"
+        aria-label="Loading dashboard"
+        role="status"
+      >
+        <span className="skeleton-line skeleton-line-wide" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line skeleton-line-short" />
+      </div>
+    </section>
+  );
+}
+
+function DashboardHome({ profile }: { profile: Profile }) {
+  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setSummary(
+        await apiRequest<DashboardSummaryResponse>("/dashboard/summary"),
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Your dashboard could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+
+  if (loading && !summary) return <DashboardLoading />;
+
+  return (
+    <section className="dashboard-page" aria-labelledby="page-heading">
+      <div className="dashboard-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Private dashboard · {profile.user.currency}</p>
+          <h1 id="page-heading">Your money, in balance.</h1>
+          <p className="page-description">
+            A current view of the accounts and journals that belong to you.
+          </p>
+        </div>
+        <Link className="dashboard-primary-action" to="/app/transactions/new">
+          <span aria-hidden="true">+</span> Add transaction
+        </Link>
+      </div>
+
+      {error ? (
+        <div className="dashboard-error" role="alert">
+          <div>
+            <strong>Dashboard unavailable</strong>
+            <p>{error}</p>
+          </div>
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={() => void loadSummary()}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      {summary ? (
+        <>
+          <div className="dashboard-hero">
+            <div>
+              <p className="dashboard-label">Available money</p>
+              <div className="dashboard-balance">
+                <PrivacyMask label="available money">
+                  {dashboardMoney(summary.availableMoneyMinor)}
+                </PrivacyMask>
+              </div>
+              <p className="dashboard-helper">
+                Cash, bank, and e-wallet balances · {summary.serverToday}
+              </p>
+            </div>
+            <div className="dashboard-hero-meta">
+              <span className="status-dot" aria-hidden="true" />
+              <span>Posted journal totals</span>
+            </div>
+          </div>
+
+          <div className="dashboard-stat-grid" aria-label="Financial summary">
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net position</p>
+              <PrivacyMask label="net financial position">
+                {dashboardMoney(summary.netFinancialPositionMinor)}
+              </PrivacyMask>
+              <p className="dashboard-helper">After card debt</p>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Card debt</p>
+              <PrivacyMask label="card debt">
+                {dashboardMoney(summary.cardDebtMinor)}
+              </PrivacyMask>
+              <p className="dashboard-helper">Current liability balance</p>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">This month</p>
+              <p className="dashboard-stat-line dashboard-income">
+                <span>Income</span>
+                {dashboardMoney(summary.incomeMinor)}
+              </p>
+              <p className="dashboard-stat-line dashboard-expense">
+                <span>Spending</span>
+                {dashboardMoney(summary.spendingMinor)}
+              </p>
+              <p className="dashboard-helper">{summary.month}</p>
+            </div>
+          </div>
+
+          <div className="dashboard-columns">
+            <section
+              className="dashboard-panel"
+              aria-labelledby="accounts-heading"
+            >
+              <div className="dashboard-panel-heading">
+                <div>
+                  <p className="dashboard-label">Your accounts</p>
+                  <h2 id="accounts-heading">Balances at a glance</h2>
+                </div>
+                <Link className="quiet-link" to="/app/accounts">
+                  View all
+                </Link>
+              </div>
+              {summary.accounts.length ? (
+                <div className="account-list">
+                  {summary.accounts.map((account) => (
+                    <Link
+                      className="account-row"
+                      key={account.id}
+                      to={`/app/accounts/${account.id}`}
+                    >
+                      <span className="account-mark" aria-hidden="true">
+                        {account.type === "CREDIT_CARD" ? "◇" : "•"}
+                      </span>
+                      <span className="account-copy">
+                        <strong>{account.name}</strong>
+                        <span>{dashboardAccountType(account.type)}</span>
+                      </span>
+                      <span className="account-balance">
+                        <PrivacyMask label={`${account.name} balance`}>
+                          {dashboardMoney(account.balanceMinor)}
+                        </PrivacyMask>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="dashboard-empty">
+                  <p>No accounts yet.</p>
+                  <Link className="quiet-link" to="/onboarding">
+                    Create your first account
+                  </Link>
+                </div>
+              )}
+            </section>
+
+            <section
+              className="dashboard-panel"
+              aria-labelledby="activity-heading"
+            >
+              <div className="dashboard-panel-heading">
+                <div>
+                  <p className="dashboard-label">Latest records</p>
+                  <h2 id="activity-heading">Recent activity</h2>
+                </div>
+                <Link className="quiet-link" to="/app/activity">
+                  View all
+                </Link>
+              </div>
+              {summary.recentActivity.length ? (
+                <div className="activity-list">
+                  {summary.recentActivity.map((activity) => {
+                    const amount = dashboardActivityAmount(activity);
+                    const isIncome = ["INCOME", "REFUND"].includes(
+                      activity.transaction.kind,
+                    );
+                    return (
+                      <Link
+                        className="activity-row"
+                        key={activity.transaction.id}
+                        to={`/app/transactions/${activity.transaction.id}`}
+                      >
+                        <span className="activity-kind" aria-hidden="true">
+                          {isIncome
+                            ? "↑"
+                            : activity.transaction.kind === "EXPENSE"
+                              ? "↓"
+                              : "↔"}
+                        </span>
+                        <span className="activity-copy">
+                          <strong>{dashboardActivityLabel(activity)}</strong>
+                          <span>
+                            {activity.transaction.occurredOn} ·{" "}
+                            {activity.transaction.status === "VOID"
+                              ? "Voided"
+                              : activity.transaction.kind.replaceAll("_", " ")}
+                          </span>
+                        </span>
+                        <span
+                          className={`activity-amount${isIncome ? " is-income" : ""}`}
+                        >
+                          {amount ? (
+                            <PrivacyMask label="activity amount">
+                              {dashboardMoney(amount)}
+                            </PrivacyMask>
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="dashboard-empty">
+                  <p>Transactions will appear here after you record one.</p>
+                  <Link className="quiet-link" to="/app/transactions/new">
+                    Add a transaction
+                  </Link>
+                </div>
+              )}
+            </section>
+          </div>
+
+          <section
+            className="dashboard-panel dashboard-bills-panel"
+            aria-labelledby="dashboard-bills-heading"
+          >
+            <div className="dashboard-panel-heading">
+              <div>
+                <p className="dashboard-label">Plan ahead</p>
+                <h2 id="dashboard-bills-heading">Upcoming bills</h2>
+              </div>
+              <Link className="quiet-link" to="/app/bills">
+                View bills
+              </Link>
+            </div>
+            {summary.upcomingBills.length ? (
+              <div className="bill-list">
+                {summary.upcomingBills.map((bill) => (
+                  <div className="bill-row" key={bill.id}>
+                    <div>
+                      <strong>{bill.billName}</strong>
+                      <span>
+                        {bill.dueOn} ·{" "}
+                        {bill.status === "OVERDUE" ? "Overdue" : "Upcoming"}
+                      </span>
+                    </div>
+                    <span>
+                      {bill.expectedAmountMinor ? (
+                        <PrivacyMask label={`${bill.billName} expected bill`}>
+                          {formatPhp(moneyMinor(bill.expectedAmountMinor))}
+                        </PrivacyMask>
+                      ) : (
+                        "Variable amount"
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-empty">
+                <p>No upcoming bills.</p>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+type ActivityFilters = {
+  search: string;
+  from: string;
+  to: string;
+  kind: string;
+  accountId: string;
+  categoryId: string;
+};
+
+const activityKinds = [
+  "OPENING_BALANCE",
+  "INCOME",
+  "EXPENSE",
+  "TRANSFER",
+  "REFUND",
+  "ADJUSTMENT",
+  "CARD_PAYMENT",
+] as const;
+
+function activityFiltersFromParams(params: URLSearchParams): ActivityFilters {
+  return {
+    search: params.get("search") ?? "",
+    from: params.get("from") ?? "",
+    to: params.get("to") ?? "",
+    kind: params.get("kind") ?? "",
+    accountId: params.get("accountId") ?? "",
+    categoryId: params.get("categoryId") ?? "",
+  };
+}
+
+function activityFilterParams(filters: ActivityFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return params;
+}
+
+function formatActivityKind(kind: string): string {
+  return kind
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/(^| )\S/g, (letter) => letter.toUpperCase());
+}
+
+function revisionText(revision: Record<string, unknown>, key: string): string {
+  const value = revision[key];
+  return typeof value === "string" ? value : "";
+}
+
+function activityAccountIds(revision: Record<string, unknown>): string[] {
+  return ["sourceAccountId", "accountId", "fromAccountId", "toAccountId"]
+    .map((key) => revisionText(revision, key))
+    .filter(Boolean);
+}
+
+function ActivityPage() {
+  const { profile, loading: authLoading } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const paramsKey = searchParams.toString();
+  const [filters, setFilters] = useState<ActivityFilters>(() =>
+    activityFiltersFromParams(searchParams),
+  );
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [activity, setActivity] = useState<DashboardActivity[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    const urlFilters = activityFiltersFromParams(searchParams);
+    setFilters(urlFilters);
+    setLoading(true);
+    setError("");
+    const query = new URLSearchParams(searchParams);
+    query.set("limit", "25");
+    void Promise.all([
+      apiRequest<{ activity: DashboardActivity[]; nextCursor: string | null }>(
+        `/transactions?${query.toString()}`,
+      ),
+      apiRequest<{ accounts: DashboardAccount[] }>("/accounts"),
+      apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+    ])
+      .then(([activityResult, accountResult, categoryResult]) => {
+        setActivity(activityResult.activity);
+        setNextCursor(activityResult.nextCursor);
+        setAccounts(accountResult.accounts);
+        setCategories(categoryResult.categories);
+      })
+      .catch((caught) => {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Activity could not be loaded.",
+        );
+      })
+      .finally(() => setLoading(false));
+  }, [paramsKey, profile]);
+
+  function updateFilter(key: keyof ActivityFilters, value: string) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSearchParams(activityFilterParams(filters));
+  }
+
+  function clearFilters() {
+    setSearchParams(new URLSearchParams());
+  }
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    const query = activityFilterParams(filters);
+    query.set("limit", "25");
+    query.set("cursor", nextCursor);
+    try {
+      const result = await apiRequest<{
+        activity: DashboardActivity[];
+        nextCursor: string | null;
+      }>(`/transactions?${query.toString()}`);
+      setActivity((current) => [...current, ...result.activity]);
+      setNextCursor(result.nextCursor);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "More activity could not be loaded.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const accountNames = new Map(
+    accounts.map((account) => [account.id, account.name]),
+  );
+  const categoryNames = new Map(
+    categories.map((category) => [category.id, category.name]),
+  );
+
+  if (authLoading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Your timeline"
+        title="Activity"
+        description="Activity is private and only loads records owned by the signed-in account."
+        icon="◷"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  return (
+    <section className="activity-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Your timeline · Private</p>
+        <h1 id="page-heading">Activity that stays traceable.</h1>
+        <p className="page-description">
+          Search and filter the posted records behind your balances. Open any
+          row to inspect its revision and correct or reverse it safely.
+        </p>
+      </div>
+
+      <form className="activity-filter-panel" onSubmit={applyFilters}>
+        <div className="activity-filter-grid">
+          <label className="field-group activity-search-field">
+            <span className="field-label">Search</span>
+            <input
+              className="text-input"
+              type="search"
+              value={filters.search}
+              onChange={(event) =>
+                updateFilter("search", event.currentTarget.value)
+              }
+              placeholder="Notes or labels"
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Type</span>
+            <select
+              className="reference-select"
+              value={filters.kind}
+              onChange={(event) =>
+                updateFilter("kind", event.currentTarget.value)
+              }
+            >
+              <option value="">All types</option>
+              {activityKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {formatActivityKind(kind)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Account</span>
+            <select
+              className="reference-select"
+              value={filters.accountId}
+              onChange={(event) =>
+                updateFilter("accountId", event.currentTarget.value)
+              }
+            >
+              <option value="">All accounts</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Category</span>
+            <select
+              className="reference-select"
+              value={filters.categoryId}
+              onChange={(event) =>
+                updateFilter("categoryId", event.currentTarget.value)
+              }
+            >
+              <option value="">All categories</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">From</span>
+            <input
+              className="text-input"
+              type="date"
+              value={filters.from}
+              onChange={(event) =>
+                updateFilter("from", event.currentTarget.value)
+              }
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">To</span>
+            <input
+              className="text-input"
+              type="date"
+              value={filters.to}
+              onChange={(event) =>
+                updateFilter("to", event.currentTarget.value)
+              }
+            />
+          </label>
+        </div>
+        <div className="activity-filter-actions">
+          <button className="save-button" type="submit">
+            Apply filters
+          </button>
+          <button className="quiet-button" type="button" onClick={clearFilters}>
+            Clear
+          </button>
+        </div>
+      </form>
+
+      {error ? (
+        <div className="dashboard-error" role="alert">
+          <div>
+            <strong>Activity unavailable</strong>
+            <p>{error}</p>
+          </div>
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={() => setSearchParams(new URLSearchParams(searchParams))}
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      <div className="activity-results" aria-live="polite">
+        {loading ? (
+          <div className="dashboard-skeleton" role="status">
+            <span className="skeleton-line skeleton-line-wide" />
+            <span className="skeleton-line" />
+            <span className="skeleton-line" />
+          </div>
+        ) : activity.length ? (
+          <div className="activity-feed">
+            {activity.map((item) => {
+              const amount = dashboardActivityAmount(item);
+              const ids = activityAccountIds(item.revision);
+              const accountLabel = ids
+                .map((id) => accountNames.get(id))
+                .filter(Boolean)
+                .join(" → ");
+              const categoryLabel = item.transaction.categoryId
+                ? categoryNames.get(item.transaction.categoryId)
+                : null;
+              const isIncome = ["INCOME", "REFUND"].includes(
+                item.transaction.kind,
+              );
+              return (
+                <Link
+                  className="activity-feed-row"
+                  key={item.transaction.id}
+                  to={`/app/transactions/${item.transaction.id}`}
+                >
+                  <span
+                    className={`activity-kind${isIncome ? " is-income" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {isIncome
+                      ? "↑"
+                      : item.transaction.kind === "EXPENSE"
+                        ? "↓"
+                        : "↔"}
+                  </span>
+                  <span className="activity-feed-copy">
+                    <strong>{dashboardActivityLabel(item)}</strong>
+                    <span>
+                      {item.transaction.occurredOn} ·{" "}
+                      {formatActivityKind(item.transaction.kind)}
+                      {accountLabel ? ` · ${accountLabel}` : ""}
+                      {categoryLabel ? ` · ${categoryLabel}` : ""}
+                    </span>
+                  </span>
+                  <span
+                    className={`activity-feed-amount${isIncome ? " is-income" : ""}`}
+                  >
+                    {amount ? (
+                      <PrivacyMask label="activity amount">
+                        {dashboardMoney(amount)}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="dashboard-empty activity-empty">
+            <p>No records match these filters.</p>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={clearFilters}
+            >
+              Show all activity
+            </button>
+          </div>
+        )}
+      </div>
+      {nextCursor ? (
+        <button
+          className="quiet-button activity-load-more"
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+type TransactionAuditRevision = {
+  version: number;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown>;
+  reason: string | null;
+  createdAt: string;
+};
+
+type AccountRecord = DashboardAccount & {
+  institution: string | null;
+  currency: "PHP";
+  sortOrder: number;
+  creditLimitMinor: string | null;
+  statementDay: number | null;
+  dueDay: number | null;
+};
+
+type CardStatementRecord = {
+  id: string;
+  cardAccountId: string;
+  statementDate: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  amountDueMinor: string;
+  allocatedMinor: string;
+  remainingDueMinor: string;
+  paymentDueDate: string;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function TransactionDetailPage() {
+  const { transactionId } = useParams<{ transactionId: string }>();
+  const { csrfToken, profile, loading: authLoading } = useAuth();
+  const [transaction, setTransaction] = useState<
+    DashboardActivity["transaction"] | null
+  >(null);
+  const [revisions, setRevisions] = useState<TransactionAuditRevision[]>([]);
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [amount, setAmount] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [occurredOn, setOccurredOn] = useState("");
+  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const loadVersion = useRef(0);
+
+  const load = useCallback(async () => {
+    if (!transactionId || !profile) return;
+    const version = ++loadVersion.current;
+    setLoading(true);
+    setError("");
+    try {
+      const [detail, audit, accountResult, categoryResult] = await Promise.all([
+        apiRequest<{ transaction: DashboardActivity["transaction"] }>(
+          `/transactions/${transactionId}`,
+        ),
+        apiRequest<{
+          transaction: DashboardActivity["transaction"];
+          revisions: TransactionAuditRevision[];
+        }>(`/transactions/${transactionId}/audit`),
+        apiRequest<{ accounts: DashboardAccount[] }>(
+          "/accounts?includeArchived=true",
+        ),
+        apiRequest<{ categories: QuickAddCategory[] }>(
+          "/categories?includeArchived=true",
+        ),
+      ]);
+      if (version !== loadVersion.current) return;
+      setTransaction(detail.transaction);
+      setRevisions(audit.revisions);
+      setAccounts(accountResult.accounts);
+      setCategories(categoryResult.categories);
+      const current = audit.revisions.at(-1)?.after ?? {};
+      const currentAmount = revisionText(current, "amountMinor");
+      setAmount(currentAmount ? phpInputFromMinor(currentAmount) : "");
+      setAccountId(
+        revisionText(current, "sourceAccountId") ||
+          revisionText(current, "accountId"),
+      );
+      setCategoryId(
+        detail.transaction.categoryId ?? revisionText(current, "categoryId"),
+      );
+      setOccurredOn(detail.transaction.occurredOn);
+      setNote(detail.transaction.note ?? revisionText(current, "note"));
+    } catch (caught) {
+      if (version !== loadVersion.current) return;
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be loaded.",
+      );
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
+    }
+  }, [profile, transactionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!transactionId || !csrfToken || !transaction) return;
+    if (!reason.trim()) {
+      setError("Give the revision a reason.");
+      return;
+    }
+    let amountMinor: string;
+    try {
+      amountMinor = parsePhpMinor(amount).toString();
+      if (BigInt(amountMinor) <= 0n) throw new Error("positive");
+    } catch {
+      setError("Enter a positive PHP amount with up to two decimals.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/transactions/${transactionId}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          kind: transaction.kind,
+          sourceAccountId: accountId,
+          categoryId,
+          amountMinor,
+          occurredOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+          reason: reason.trim(),
+        }),
+      });
+      setSuccess("Transaction updated and re-posted through the ledger.");
+      setReason("");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function reverseTransaction() {
+    setError("");
+    setSuccess("");
+    if (!transactionId || !csrfToken || !reason.trim()) {
+      setError("Give the reversal a reason.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/transactions/${transactionId}`, {
+        method: "DELETE",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      setSuccess(
+        "Transaction reversed. Its original journal remains immutable.",
+      );
+      setReason("");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be reversed.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Activity"
+        title="Sign in to review this record."
+        description="Transaction details are private and only available to the owning account."
+        icon="↗"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (error && !transaction) {
+    return (
+      <section className="route-page" aria-labelledby="page-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Activity</p>
+          <h1 id="page-heading">Transaction unavailable.</h1>
+          <p className="page-description">{error}</p>
+        </div>
+        <Link className="quiet-link" to="/app/activity">
+          Back to Activity
+        </Link>
+      </section>
+    );
+  }
+  if (!transaction) return null;
+
+  const currentRevision = revisions.at(-1)?.after ?? {};
+  const editable =
+    transaction.kind === "INCOME" || transaction.kind === "EXPENSE";
+  const activeAccounts = accounts.filter((account) => !account.archivedAt);
+  const matchingCategories = categories.filter(
+    (category) =>
+      !category.archivedAt && (!editable || category.kind === transaction.kind),
+  );
+
+  return (
+    <section
+      className="route-page transaction-detail-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">
+          Activity · {formatActivityKind(transaction.kind)}
+        </p>
+        <h1 id="page-heading">Review this record.</h1>
+        <p className="page-description">
+          Revision {transaction.currentRevision} ·{" "}
+          {transaction.status === "VOID" ? "Voided" : "Posted"}. Changes create
+          compensating journals and keep the original history.
+        </p>
+      </div>
+      <div className="transaction-detail-card">
+        <div className="transaction-detail-summary">
+          <span className="dashboard-label">Current amount</span>
+          {revisionText(currentRevision, "amountMinor") ? (
+            <PrivacyMask label="transaction amount">
+              {dashboardMoney(revisionText(currentRevision, "amountMinor"))}
+            </PrivacyMask>
+          ) : (
+            <strong>{formatActivityKind(transaction.kind)}</strong>
+          )}
+          <span className="dashboard-helper">
+            {transaction.occurredOn}
+            {transaction.note ? ` · ${transaction.note}` : ""}
+          </span>
+        </div>
+
+        {success ? (
+          <p className="form-success" role="status">
+            {success}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {editable && transaction.status === "POSTED" ? (
+          <form className="detail-edit-form" onSubmit={submitEdit}>
+            <div className="form-heading">
+              <div>
+                <p className="form-kicker">EDIT POSTED RECORD</p>
+                <h2>Correct the details</h2>
+              </div>
+              <span className="form-kind">Ledger-safe</span>
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="detail-amount">
+                Amount *
+              </label>
+              <input
+                className="text-input"
+                id="detail-amount"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => setAmount(event.currentTarget.value)}
+              />
+            </div>
+            <div className="reference-grid">
+              <label className="field-group">
+                <span className="field-label">Account *</span>
+                <select
+                  className="reference-select"
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.currentTarget.value)}
+                >
+                  <option value="">Choose an account</option>
+                  {activeAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-group">
+                <span className="field-label">Category *</span>
+                <select
+                  className="reference-select"
+                  value={categoryId}
+                  onChange={(event) => setCategoryId(event.currentTarget.value)}
+                >
+                  <option value="">Choose a category</option>
+                  {matchingCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="reference-grid">
+              <label className="field-group">
+                <span className="field-label">Date *</span>
+                <input
+                  className="text-input"
+                  type="date"
+                  value={occurredOn}
+                  onChange={(event) => setOccurredOn(event.currentTarget.value)}
+                />
+              </label>
+              <label className="field-group">
+                <span className="field-label">Note</span>
+                <input
+                  className="text-input"
+                  value={note}
+                  onChange={(event) => setNote(event.currentTarget.value)}
+                  maxLength={500}
+                />
+              </label>
+            </div>
+            <button className="save-button" type="submit" disabled={pending}>
+              {pending ? "Saving…" : "Save revision"}
+            </button>
+          </form>
+        ) : null}
+
+        {transaction.status === "POSTED" ? (
+          <label className="field-group detail-reason-field">
+            <span className="field-label">Reason for edit or reversal *</span>
+            <input
+              className="text-input"
+              value={reason}
+              onChange={(event) => setReason(event.currentTarget.value)}
+              maxLength={300}
+              placeholder="Corrected receipt or duplicate entry"
+            />
+          </label>
+        ) : null}
+
+        {transaction.status === "POSTED" ? (
+          <div className="detail-reversal-panel">
+            <p className="dashboard-label">Reverse this record</p>
+            <p>
+              Use a reversal when the posted record should no longer affect
+              balances. The original journal stays immutable.
+            </p>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={() => void reverseTransaction()}
+              disabled={pending || !reason.trim()}
+            >
+              {pending ? "Reversing…" : "Reverse transaction"}
+            </button>
+            <p className="field-hint">
+              The reason is saved in the immutable audit history.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="revision-history">
+          <div className="dashboard-panel-heading">
+            <div>
+              <p className="dashboard-label">Immutable history</p>
+              <h2>Revisions</h2>
+            </div>
+          </div>
+          {revisions.map((revision) => (
+            <div className="revision-row" key={revision.version}>
+              <strong>Revision {revision.version}</strong>
+              <span>
+                {new Date(revision.createdAt).toLocaleString("en-PH", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+              </span>
+              <span>{revision.reason ?? "Original posting"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Link className="quiet-link" to="/app/activity">
+        Back to Activity
+      </Link>
+    </section>
+  );
+}
+
+function accountTypeLabel(type: DashboardAccount["type"]): string {
+  return dashboardAccountType(type);
+}
+
+function cardUtilization(account: AccountRecord): string | null {
+  if (!account.creditLimitMinor) return null;
+  const limit = BigInt(account.creditLimitMinor);
+  const debt = BigInt(account.balanceMinor);
+  if (limit <= 0n) return null;
+  const boundedDebt = debt > 0n ? debt : 0n;
+  const basisPoints = (boundedDebt * 10000n) / limit;
+  return `${basisPoints / 100n}.${(basisPoints % 100n)
+    .toString()
+    .padStart(2, "0")}%`;
+}
+
+function AccountsPage() {
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [type, setType] = useState<AccountRecord["type"]>("BANK");
+  const [name, setName] = useState("");
+  const [institution, setInstitution] = useState("");
+  const [openingBalance, setOpeningBalance] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ accounts: AccountRecord[] }>(
+        "/accounts?includeArchived=true",
+      );
+      setAccounts(result.accounts);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Accounts could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!csrfToken) {
+      setError("Your session needs to be refreshed.");
+      return;
+    }
+    if (!name.trim()) {
+      setError("Give the account a name.");
+      return;
+    }
+    let openingBalanceMinor: string;
+    try {
+      openingBalanceMinor = parsePhpMinor(openingBalance || "0").toString();
+      if (BigInt(openingBalanceMinor) < 0n) throw new Error("negative");
+    } catch {
+      setError("Enter a valid non-negative PHP opening balance.");
+      return;
+    }
+    let creditLimitMinor: string | undefined;
+    if (type === "CREDIT_CARD" && creditLimit.trim()) {
+      try {
+        creditLimitMinor = parsePhpMinor(creditLimit).toString();
+        if (BigInt(creditLimitMinor) <= 0n) throw new Error("positive");
+      } catch {
+        setError("Enter a positive PHP credit limit.");
+        return;
+      }
+    }
+    setPending(true);
+    try {
+      await apiRequest("/accounts", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          type,
+          name: name.trim(),
+          openingBalanceMinor,
+          ...(institution.trim() ? { institution: institution.trim() } : {}),
+          ...(creditLimitMinor ? { creditLimitMinor } : {}),
+        }),
+      });
+      setName("");
+      setInstitution("");
+      setOpeningBalance("");
+      setCreditLimit("");
+      setShowCreate(false);
+      setSuccess("Account created with a ledger-backed opening balance.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be created.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || (loading && !accounts.length)) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Your money"
+        title="Accounts"
+        description="Sign in to see balances that belong to your private journal."
+        icon="▤"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  const visibleAccounts = accounts.filter(
+    (account) => showArchived || !account.archivedAt,
+  );
+
+  return (
+    <section className="accounts-page" aria-labelledby="page-heading">
+      <div className="accounts-heading">
+        <div className="page-intro">
+          <p className="eyebrow">Your money · Private</p>
+          <h1 id="page-heading">Accounts you can trace.</h1>
+          <p className="page-description">
+            Balances come from posted journals. Archive an account when it is no
+            longer active and its history remains available.
+          </p>
+        </div>
+        <button
+          className="dashboard-primary-action"
+          type="button"
+          onClick={() => setShowCreate((current) => !current)}
+        >
+          <span aria-hidden="true">+</span>{" "}
+          {showCreate ? "Close form" : "Add account"}
+        </button>
+      </div>
+
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {showCreate ? (
+        <form className="account-create-card" onSubmit={createAccount}>
+          <div className="form-heading">
+            <div>
+              <p className="form-kicker">NEW ACCOUNT</p>
+              <h2>Give every balance a home.</h2>
+            </div>
+            <span className="form-kind">PHP</span>
+          </div>
+          <div className="reference-grid">
+            <label className="field-group">
+              <span className="field-label">Type *</span>
+              <select
+                className="reference-select"
+                value={type}
+                onChange={(event) =>
+                  setType(event.currentTarget.value as AccountRecord["type"])
+                }
+              >
+                <option value="CASH">Cash</option>
+                <option value="BANK">Bank</option>
+                <option value="EWALLET">E-wallet</option>
+                <option value="CREDIT_CARD">Credit card</option>
+              </select>
+            </label>
+            <label className="field-group">
+              <span className="field-label">Name *</span>
+              <input
+                className="text-input"
+                value={name}
+                onChange={(event) => setName(event.currentTarget.value)}
+                maxLength={120}
+              />
+            </label>
+          </div>
+          <div className="reference-grid">
+            <label className="field-group">
+              <span className="field-label">Opening balance *</span>
+              <input
+                className="text-input"
+                inputMode="decimal"
+                value={openingBalance}
+                onChange={(event) =>
+                  setOpeningBalance(event.currentTarget.value)
+                }
+                placeholder="0.00"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-label">
+                Institution <span className="field-optional">Optional</span>
+              </span>
+              <input
+                className="text-input"
+                value={institution}
+                onChange={(event) => setInstitution(event.currentTarget.value)}
+                maxLength={120}
+              />
+            </label>
+          </div>
+          {type === "CREDIT_CARD" ? (
+            <label className="field-group account-credit-limit">
+              <span className="field-label">
+                Credit limit <span className="field-optional">Optional</span>
+              </span>
+              <input
+                className="text-input"
+                inputMode="decimal"
+                value={creditLimit}
+                onChange={(event) => setCreditLimit(event.currentTarget.value)}
+                placeholder="0.00"
+              />
+            </label>
+          ) : null}
+          <button className="save-button" type="submit" disabled={pending}>
+            {pending ? "Creating…" : "Create account"}
+          </button>
+        </form>
+      ) : null}
+
+      <div className="accounts-toolbar">
+        <p className="dashboard-label">
+          {visibleAccounts.length}{" "}
+          {visibleAccounts.length === 1 ? "account" : "accounts"}
+        </p>
+        <label className="archive-toggle">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.currentTarget.checked)}
+          />
+          <span>Include archived history</span>
+        </label>
+      </div>
+
+      {visibleAccounts.length ? (
+        <div className="accounts-list">
+          {visibleAccounts.map((account) => (
+            <Link
+              className={`account-detail-row${account.archivedAt ? " is-archived" : ""}`}
+              key={account.id}
+              to={`/app/accounts/${account.id}`}
+            >
+              <span className="account-mark" aria-hidden="true">
+                {account.type === "CREDIT_CARD" ? "◇" : "•"}
+              </span>
+              <span className="account-copy">
+                <strong>{account.name}</strong>
+                <span>
+                  {accountTypeLabel(account.type)}
+                  {account.institution ? ` · ${account.institution}` : ""}
+                  {account.archivedAt ? " · Archived" : ""}
+                </span>
+              </span>
+              <span className="account-balance">
+                <PrivacyMask label={`${account.name} balance`}>
+                  {dashboardMoney(account.balanceMinor)}
+                </PrivacyMask>
+              </span>
+              <span className="account-row-arrow" aria-hidden="true">
+                →
+              </span>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="dashboard-empty account-empty">
+          <p>
+            {showArchived
+              ? "No accounts have been created yet."
+              : "No active accounts."}
+          </p>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => setShowCreate(true)}
+          >
+            Create an account
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AccountDetailPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [account, setAccount] = useState<AccountRecord | null>(null);
+  const [activity, setActivity] = useState<DashboardActivity[]>([]);
+  const [name, setName] = useState("");
+  const [sortOrder, setSortOrder] = useState("0");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const [accountResult, activityResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ activity: DashboardActivity[] }>(
+          `/accounts/${accountId}/activity?limit=50`,
+        ),
+      ]);
+      setAccount(accountResult.account);
+      setActivity(activityResult.activity);
+      setName(accountResult.account.name);
+      setSortOrder(String(accountResult.account.sortOrder));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function saveAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accountId || !csrfToken || !name.trim()) {
+      setError("Give the account a name.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiRequest(`/accounts/${accountId}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          sortOrder: Number(sortOrder) || 0,
+        }),
+      });
+      setSuccess("Account details saved.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function archiveAccount() {
+    if (!accountId || !csrfToken) return;
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      await apiRequest(`/accounts/${accountId}/archive`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+      });
+      setSuccess("Account archived. Its history remains available.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The account could not be archived.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Account overview"
+        title="Sign in to review accounts."
+        description="Account details and history are private to the owning account."
+        icon="▤"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!account) {
+    return (
+      <RoutePage
+        eyebrow="Account overview"
+        title="Account unavailable."
+        description={
+          error || "The requested account is not available to this owner."
+        }
+        icon="▤"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  const utilization = cardUtilization(account);
+
+  return (
+    <section
+      className="route-page account-detail-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">
+          {accountTypeLabel(account.type)} · Account overview
+        </p>
+        <h1 id="page-heading">{account.name}</h1>
+        <p className="page-description">
+          {account.institution ? `${account.institution} · ` : ""}
+          {account.archivedAt ? "Archived history" : "Active account"}. Balance
+          is derived from posted ledger entries.
+        </p>
+      </div>
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="account-detail-hero">
+        <span className="dashboard-label">Current balance</span>
+        <PrivacyMask label={`${account.name} balance`}>
+          {dashboardMoney(account.balanceMinor)}
+        </PrivacyMask>
+        <span className="dashboard-helper">
+          {account.currency} · {activity.length} recorded{" "}
+          {activity.length === 1 ? "entry" : "entries"}
+        </span>
+        {account.type === "CREDIT_CARD" ? (
+          <div className="card-metrics" aria-label="Credit card metrics">
+            <span>
+              <strong>Limit</strong>{" "}
+              {account.creditLimitMinor
+                ? formatPhp(moneyMinor(account.creditLimitMinor))
+                : "Unavailable"}
+            </span>
+            <span>
+              <strong>Utilization</strong> {utilization ?? "Unavailable"}
+              {utilization &&
+              BigInt(account.balanceMinor) >
+                BigInt(account.creditLimitMinor ?? "0")
+                ? " · Over limit"
+                : ""}
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {account.type === "CREDIT_CARD" && !account.archivedAt ? (
+        <div className="card-detail-actions">
+          <Link
+            className="dashboard-primary-action card-pay-action"
+            to={`/app/accounts/${account.id}/pay`}
+          >
+            Pay this card
+          </Link>
+          <Link
+            className="quiet-link"
+            to={`/app/accounts/${account.id}/statements`}
+          >
+            View statements
+          </Link>
+        </div>
+      ) : null}
+
+      <form className="account-edit-card" onSubmit={saveAccount}>
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">ACCOUNT METADATA</p>
+            <h2>Keep the label useful</h2>
+          </div>
+          <span className="form-kind">
+            {account.archivedAt ? "Archived" : "Editable"}
+          </span>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              disabled={Boolean(account.archivedAt)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Sort order</span>
+            <input
+              className="text-input"
+              type="number"
+              min="0"
+              value={sortOrder}
+              onChange={(event) => setSortOrder(event.currentTarget.value)}
+              disabled={Boolean(account.archivedAt)}
+            />
+          </label>
+        </div>
+        {!account.archivedAt ? (
+          <button className="save-button" type="submit" disabled={pending}>
+            {pending ? "Saving…" : "Save account details"}
+          </button>
+        ) : null}
+      </form>
+
+      {!account.archivedAt ? (
+        <div className="account-archive-panel">
+          <p className="dashboard-label">Archive account</p>
+          <p>
+            Archiving stops future postings while retaining this account and its
+            activity for history.
+          </p>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void archiveAccount()}
+            disabled={pending}
+          >
+            Archive account
+          </button>
+        </div>
+      ) : null}
+
+      <section
+        className="account-history-panel"
+        aria-labelledby="account-history-heading"
+      >
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Ledger history</p>
+            <h2 id="account-history-heading">Recent activity</h2>
+          </div>
+          <Link
+            className="quiet-link"
+            to={`/app/activity?accountId=${account.id}`}
+          >
+            View all
+          </Link>
+        </div>
+        {activity.length ? (
+          <div className="activity-feed">
+            {activity.map((item) => {
+              const amount = dashboardActivityAmount(item);
+              const isIncome = ["INCOME", "REFUND"].includes(
+                item.transaction.kind,
+              );
+              return (
+                <Link
+                  className="activity-feed-row"
+                  key={item.transaction.id}
+                  to={`/app/transactions/${item.transaction.id}`}
+                >
+                  <span
+                    className={`activity-kind${isIncome ? " is-income" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {isIncome
+                      ? "↑"
+                      : item.transaction.kind === "EXPENSE"
+                        ? "↓"
+                        : "↔"}
+                  </span>
+                  <span className="activity-feed-copy">
+                    <strong>{dashboardActivityLabel(item)}</strong>
+                    <span>
+                      {item.transaction.occurredOn} ·{" "}
+                      {formatActivityKind(item.transaction.kind)}
+                    </span>
+                  </span>
+                  <span
+                    className={`activity-feed-amount${isIncome ? " is-income" : ""}`}
+                  >
+                    {amount ? (
+                      <PrivacyMask label="activity amount">
+                        {dashboardMoney(amount)}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No activity recorded for this account.</p>
+          </div>
+        )}
+      </section>
+      <Link className="quiet-link" to="/app/accounts">
+        Back to Accounts
+      </Link>
+    </section>
+  );
+}
+
+function CardStatementsPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [account, setAccount] = useState<AccountRecord | null>(null);
+  const [statements, setStatements] = useState<CardStatementRecord[]>([]);
+  const [statementDate, setStatementDate] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [amountDue, setAmountDue] = useState("");
+  const [paymentDueDate, setPaymentDueDate] = useState("");
+  const [note, setNote] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const [accountResult, statementResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ statements: CardStatementRecord[] }>(
+          `/credit-cards/${accountId}/statements`,
+        ),
+      ]);
+      setAccount(accountResult.account);
+      setStatements(statementResult.statements);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Card statements could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function resetStatementForm() {
+    setEditingId(null);
+    setStatementDate("");
+    setPeriodStart("");
+    setPeriodEnd("");
+    setAmountDue("");
+    setPaymentDueDate("");
+    setNote("");
+  }
+
+  function editStatement(statement: CardStatementRecord) {
+    setEditingId(statement.id);
+    setStatementDate(statement.statementDate);
+    setPeriodStart(statement.periodStart ?? "");
+    setPeriodEnd(statement.periodEnd ?? "");
+    setAmountDue(phpInputFromMinor(statement.amountDueMinor));
+    setPaymentDueDate(statement.paymentDueDate);
+    setNote(statement.note ?? "");
+  }
+
+  async function saveStatement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!accountId || !csrfToken || !statementDate || !paymentDueDate) {
+      setError("Choose the statement and payment dates.");
+      return;
+    }
+    let amountDueMinor: string;
+    try {
+      amountDueMinor = parsePhpMinor(amountDue || "0").toString();
+    } catch {
+      setError("Enter a valid non-negative PHP amount due.");
+      return;
+    }
+    setPending(true);
+    try {
+      const body = {
+        statementDate,
+        ...(periodStart ? { periodStart } : {}),
+        ...(periodEnd ? { periodEnd } : {}),
+        amountDueMinor,
+        paymentDueDate,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      };
+      await apiRequest(
+        editingId
+          ? `/credit-cards/${accountId}/statements/${editingId}`
+          : `/credit-cards/${accountId}/statements`,
+        {
+          method: editingId ? "PATCH" : "POST",
+          headers: {
+            "x-csrf-token": csrfToken,
+            "idempotency-key": crypto.randomUUID(),
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      setSuccess(editingId ? "Statement corrected." : "Statement recorded.");
+      resetStatementForm();
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The statement could not be saved.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Credit card statements"
+        title="Statements"
+        description="Statement snapshots and payment allocations are private to the card owner."
+        icon="□"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!account || account.type !== "CREDIT_CARD") {
+    return (
+      <RoutePage
+        eyebrow="Credit card statements"
+        title="Card unavailable."
+        description={
+          error || "The requested card is not available to this owner."
+        }
+        icon="□"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  return (
+    <section
+      className="route-page statements-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Credit cards · Statements</p>
+        <h1 id="page-heading">{account.name} statements.</h1>
+        <p className="page-description">
+          Enter the issuer snapshot manually. Statement amounts stay separate
+          from overall card debt and never create ledger postings.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form
+        className="account-edit-card statement-form"
+        onSubmit={saveStatement}
+      >
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">
+              {editingId ? "CORRECT STATEMENT" : "NEW STATEMENT"}
+            </p>
+            <h2>
+              {editingId
+                ? "Keep the issuer record accurate"
+                : "Record an issuer snapshot"}
+            </h2>
+          </div>
+          {editingId ? (
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={resetStatementForm}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Statement date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={statementDate}
+              onChange={(event) => setStatementDate(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Payment due date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={paymentDueDate}
+              onChange={(event) => setPaymentDueDate(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">
+              Period start <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              type="date"
+              value={periodStart}
+              onChange={(event) => setPeriodStart(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Period end <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              type="date"
+              value={periodEnd}
+              onChange={(event) => setPeriodEnd(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Amount due *</span>
+          <input
+            className="text-input"
+            type="text"
+            inputMode="decimal"
+            value={amountDue}
+            onChange={(event) => setAmountDue(event.currentTarget.value)}
+            placeholder="0.00"
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">
+            Note <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.currentTarget.value)}
+            placeholder="Issuer reference"
+          />
+        </label>
+        <button className="save-button" type="submit" disabled={pending}>
+          {pending
+            ? "Saving…"
+            : editingId
+              ? "Save statement correction"
+              : "Record statement"}
+        </button>
+      </form>
+      <section
+        className="statement-list"
+        aria-labelledby="statement-history-heading"
+      >
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Statement history</p>
+            <h2 id="statement-history-heading">Issuer snapshots</h2>
+          </div>
+        </div>
+        {statements.length ? (
+          statements.map((statement) => (
+            <article className="statement-row" key={statement.id}>
+              <div className="statement-row-main">
+                <strong>{statement.statementDate}</strong>
+                <span>
+                  Due {statement.paymentDueDate}
+                  {statement.note ? ` · ${statement.note}` : ""}
+                </span>
+              </div>
+              <div className="statement-row-amount">
+                <PrivacyMask label="statement amount due">
+                  {dashboardMoney(statement.amountDueMinor)}
+                </PrivacyMask>
+                <span>
+                  {statement.remainingDueMinor === "0" ? (
+                    "Paid or allocated"
+                  ) : (
+                    <PrivacyMask label="statement remaining due">
+                      {`${formatPhp(moneyMinor(statement.remainingDueMinor))} remaining`}
+                    </PrivacyMask>
+                  )}
+                </span>
+              </div>
+              <button
+                className="quiet-button"
+                type="button"
+                onClick={() => editStatement(statement)}
+              >
+                Edit statement
+              </button>
+            </article>
+          ))
+        ) : (
+          <div className="dashboard-empty">
+            <p>No statement snapshots yet.</p>
+            <p>
+              Record the amount shown by your issuer to track payment allocation
+              separately from card debt.
+            </p>
+          </div>
+        )}
+      </section>
+      <Link className="quiet-link" to={`/app/accounts/${account.id}`}>
+        Back to card
+      </Link>
+    </section>
+  );
+}
+
+function CardPaymentPage() {
+  const { accountId } = useParams<{ accountId: string }>();
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const [card, setCard] = useState<AccountRecord | null>(null);
+  const [fundingAccounts, setFundingAccounts] = useState<AccountRecord[]>([]);
+  const [fundingAccountId, setFundingAccountId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [occurredOn, setOccurredOn] = useState(profile?.serverToday ?? "");
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [confirmNegative, setConfirmNegative] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const isOnline = useOnlineStatus();
+
+  const load = useCallback(async () => {
+    if (!profile || !accountId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const [cardResult, accountsResult] = await Promise.all([
+        apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
+        apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
+      ]);
+      setCard(cardResult.account);
+      const assets = accountsResult.accounts.filter(
+        (account) =>
+          !account.archivedAt &&
+          account.type !== "CREDIT_CARD" &&
+          account.id !== accountId,
+      );
+      setFundingAccounts(assets);
+      setFundingAccountId((current) => current || assets[0]?.id || "");
+      setOccurredOn(profile.serverToday);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The card could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function parsePaymentAmount(): string {
+    try {
+      const parsed = parsePhpMinor(amount);
+      if (parsed <= 0n) throw new Error();
+      return parsed.toString();
+    } catch {
+      throw new Error("Enter a positive PHP payment amount.");
+    }
+  }
+
+  async function submit(
+    event: React.FormEvent<HTMLFormElement>,
+    acknowledge = false,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    setConfirmNegative(false);
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a payment.");
+      return;
+    }
+    if (!accountId || !csrfToken || !fundingAccountId) {
+      setError("Choose a funding account.");
+      return;
+    }
+    let amountMinor: string;
+    try {
+      amountMinor = parsePaymentAmount();
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Enter a valid amount.",
+      );
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest(`/credit-cards/${accountId}/payments`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          fundingAccountId,
+          amountMinor,
+          occurredOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+          ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+        }),
+      });
+      setAmount("");
+      setNote("");
+      setSuccess("Card payment posted. It is not counted as a new expense.");
+      await load();
+    } catch (caught) {
+      const message =
+        caught instanceof Error
+          ? caught.message
+          : "The card payment could not be saved.";
+      if (message.includes("negative")) setConfirmNegative(true);
+      setError(message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Credit card payment"
+        title="Sign in to pay a card."
+        description="Card payments are private ledger actions between your card and a funding account."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  if (!card || card.type !== "CREDIT_CARD") {
+    return (
+      <RoutePage
+        eyebrow="Credit card payment"
+        title="Card unavailable."
+        description={
+          error || "The requested credit card is not available to this owner."
+        }
+        icon="◇"
+        linkTo="/app/accounts"
+        linkLabel="Back to Accounts"
+      />
+    );
+  }
+
+  return (
+    <section className="route-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Credit card · Payment</p>
+        <h1 id="page-heading">Pay {card.name}.</h1>
+        <p className="page-description">
+          Settle card liability from cash, bank, or e-wallet money. This payment
+          does not create another expense.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form
+        className="quick-add-card card-payment-card"
+        onSubmit={(event) => void submit(event)}
+      >
+        <div className="account-detail-hero compact">
+          <span className="dashboard-label">Outstanding debt</span>
+          <PrivacyMask label={`${card.name} debt`}>
+            {dashboardMoney(card.balanceMinor)}
+          </PrivacyMask>
+          <span className="dashboard-helper">
+            {card.creditLimitMinor
+              ? `Limit ${formatPhp(moneyMinor(card.creditLimitMinor))}`
+              : "Limit unavailable"}
+          </span>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Payment amount *</span>
+          <input
+            className="text-input"
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.currentTarget.value)}
+            placeholder="0.00"
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Funding account *</span>
+          <select
+            className="reference-select"
+            value={fundingAccountId}
+            onChange={(event) => setFundingAccountId(event.currentTarget.value)}
+            disabled={!fundingAccounts.length}
+          >
+            <option value="">Choose a funding account</option>
+            {fundingAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name} · {formatPhp(moneyMinor(account.balanceMinor))}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="reference-grid quick-add-details">
+          <label className="field-group">
+            <span className="field-label">Date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={occurredOn}
+              max={profile.serverToday}
+              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Note <span className="field-optional">Optional</span>
+            </span>
+            <input
+              className="text-input"
+              value={note}
+              maxLength={500}
+              onChange={(event) => setNote(event.currentTarget.value)}
+              placeholder="Statement payment"
+            />
+          </label>
+        </div>
+        {confirmNegative ? (
+          <div className="confirmation-panel" role="alert">
+            <p>
+              This payment will make the funding account negative. Continue?
+            </p>
+            <button
+              className="save-button"
+              type="button"
+              disabled={pending || !isOnline}
+              onClick={(event) =>
+                void submit(
+                  event as unknown as React.FormEvent<HTMLFormElement>,
+                  true,
+                )
+              }
+            >
+              Confirm and pay
+            </button>
+          </div>
+        ) : (
+          <button
+            className="save-button"
+            type="submit"
+            disabled={pending || !fundingAccounts.length || !isOnline}
+          >
+            {pending ? "Saving…" : "Record card payment"}
+          </button>
+        )}
+      </form>
+      <Link className="quiet-link" to={`/app/accounts/${card.id}`}>
+        Back to card
+      </Link>
+    </section>
+  );
+}
+
+type BillRecord = {
+  id: string;
+  name: string;
+  categoryId: string;
+  suggestedAccountId: string | null;
+  amountMode: "FIXED" | "VARIABLE";
+  defaultAmountMinor: string | null;
+  dueDay: number;
+  startOn: string;
+  endOn: string | null;
+  status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BillOccurrence = {
+  id: string;
+  billId: string;
+  billName: string;
+  categoryId: string;
+  suggestedAccountId: string | null;
+  amountMode: "FIXED" | "VARIABLE";
+  expectedAmountMinor: string | null;
+  actualAmountMinor: string | null;
+  dueOn: string;
+  status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
+  paidTransactionId: string | null;
+  note: string | null;
+};
+
+function billWindow(today: string) {
+  const [year = 1970, month = 1] = today.split("-").slice(0, 2).map(Number);
+  const end = new Date(Date.UTC(year, month - 1 + 3, 0));
+  return {
+    from: `${today.slice(0, 7)}-01`,
+    to: `${end.getUTCFullYear().toString().padStart(4, "0")}-${(end.getUTCMonth() + 1).toString().padStart(2, "0")}-${end.getUTCDate().toString().padStart(2, "0")}`,
+  };
+}
+
+function BillsPage() {
+  const { profile, loading: authLoading, csrfToken } = useAuth();
+  const isOnline = useOnlineStatus();
+  const [bills, setBills] = useState<BillRecord[]>([]);
+  const [occurrences, setOccurrences] = useState<BillOccurrence[]>([]);
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [suggestedAccountId, setSuggestedAccountId] = useState("");
+  const [amountMode, setAmountMode] =
+    useState<BillRecord["amountMode"]>("FIXED");
+  const [defaultAmount, setDefaultAmount] = useState("");
+  const [dueDay, setDueDay] = useState("1");
+  const [startOn, setStartOn] = useState(profile?.serverToday ?? "");
+  const [note, setNote] = useState("");
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payAccountId, setPayAccountId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const window = billWindow(profile.serverToday);
+      const [billResult, occurrenceResult, accountResult, categoryResult] =
+        await Promise.all([
+          apiRequest<{ bills: BillRecord[] }>("/bills"),
+          apiRequest<{ occurrences: BillOccurrence[] }>(
+            `/bills/occurrences?from=${window.from}&to=${window.to}`,
+          ),
+          apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
+          apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+        ]);
+      setBills(billResult.bills);
+      setOccurrences(occurrenceResult.occurrences);
+      const activeAccounts = accountResult.accounts.filter(
+        (account) => !account.archivedAt && account.type !== "CREDIT_CARD",
+      );
+      const expenseCategories = categoryResult.categories.filter(
+        (category) => !category.archivedAt && category.kind === "EXPENSE",
+      );
+      setAccounts(activeAccounts);
+      setCategories(expenseCategories);
+      setCategoryId((current) => current || expenseCategories[0]?.id || "");
+      setPayAccountId((current) => current || activeAccounts[0]?.id || "");
+      setStartOn((current) => current || profile.serverToday);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Bills could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createBillRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!csrfToken || !name.trim() || !categoryId || !startOn) {
+      setError("Enter a bill name, expense category, and start date.");
+      return;
+    }
+    let amountMinor: string | undefined;
+    if (amountMode === "FIXED") {
+      try {
+        const parsed = parsePhpMinor(defaultAmount);
+        if (parsed <= 0n) throw new Error();
+        amountMinor = parsed.toString();
+      } catch {
+        setError("Fixed bills need a positive PHP amount.");
+        return;
+      }
+    }
+    setPending(true);
+    try {
+      await apiRequest("/bills", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          categoryId,
+          ...(suggestedAccountId ? { suggestedAccountId } : {}),
+          amountMode,
+          ...(amountMinor ? { defaultAmountMinor: amountMinor } : {}),
+          dueDay: Number(dueDay),
+          startOn,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        }),
+      });
+      setName("");
+      setDefaultAmount("");
+      setNote("");
+      setSuccess("Bill created. Its upcoming occurrences are ready to review.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The bill could not be created.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function payOccurrence(occurrence: BillOccurrence) {
+    if (!csrfToken || !payAccountId || !isOnline) return;
+    let amountMinor: string | undefined;
+    try {
+      if (occurrence.amountMode === "VARIABLE") {
+        const parsed = parsePhpMinor(payAmount);
+        if (parsed <= 0n) throw new Error();
+        amountMinor = parsed.toString();
+      }
+    } catch {
+      setError("Variable bills need a positive payment amount.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/bills/occurrences/${occurrence.id}/pay`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          fundingAccountId: payAccountId,
+          ...(amountMinor ? { amountMinor } : {}),
+        }),
+      });
+      setPayingId(null);
+      setPayAmount("");
+      setSuccess(`${occurrence.billName} marked paid and posted to Activity.`);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The bill could not be paid.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function skipOccurrence(occurrence: BillOccurrence) {
+    if (!csrfToken || !isOnline) return;
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/bills/occurrences/${occurrence.id}/skip`, {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: "{}",
+      });
+      setSuccess(`${occurrence.billName} occurrence skipped.`);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The occurrence could not be skipped.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Plan ahead"
+        title="Bills"
+        description="Recurring bills and their payment history stay private to your account."
+        icon="□"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+
+  return (
+    <section className="route-page bills-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Plan ahead · Private</p>
+        <h1 id="page-heading">Bills with a clear next step.</h1>
+        <p className="page-description">
+          Keep recurring reminders separate until you confirm a payment. Paid
+          bills post one ordinary expense to the ledger.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {success ? (
+        <p className="form-success" role="status">
+          {success}
+        </p>
+      ) : null}
+      <form className="account-edit-card bill-form" onSubmit={createBillRecord}>
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">NEW RECURRING BILL</p>
+            <h2>Set up a monthly reminder</h2>
+          </div>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Internet"
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Expense category *</span>
+            <select
+              className="reference-select"
+              value={categoryId}
+              onChange={(event) => setCategoryId(event.currentTarget.value)}
+            >
+              <option value="">Choose a category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Amount type *</span>
+            <select
+              className="reference-select"
+              value={amountMode}
+              onChange={(event) =>
+                setAmountMode(
+                  event.currentTarget.value as BillRecord["amountMode"],
+                )
+              }
+            >
+              <option value="FIXED">Fixed</option>
+              <option value="VARIABLE">Variable</option>
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">
+              Default amount{" "}
+              {amountMode === "VARIABLE" ? (
+                <span className="field-optional">Not used</span>
+              ) : (
+                "*"
+              )}
+            </span>
+            <input
+              className="text-input"
+              type="text"
+              inputMode="decimal"
+              value={defaultAmount}
+              disabled={amountMode === "VARIABLE"}
+              onChange={(event) => setDefaultAmount(event.currentTarget.value)}
+              placeholder="0.00"
+            />
+          </label>
+        </div>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Due day *</span>
+            <input
+              className="text-input"
+              type="number"
+              min="1"
+              max="31"
+              value={dueDay}
+              onChange={(event) => setDueDay(event.currentTarget.value)}
+            />
+          </label>
+          <label className="field-group">
+            <span className="field-label">Start date *</span>
+            <input
+              className="text-input"
+              type="date"
+              value={startOn}
+              onChange={(event) => setStartOn(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+        <label className="field-group">
+          <span className="field-label">
+            Suggested funding account{" "}
+            <span className="field-optional">Optional</span>
+          </span>
+          <select
+            className="reference-select"
+            value={suggestedAccountId}
+            onChange={(event) =>
+              setSuggestedAccountId(event.currentTarget.value)
+            }
+          >
+            <option value="">Choose later</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field-group">
+          <span className="field-label">
+            Note <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.currentTarget.value)}
+            placeholder="Renewal or account reference"
+          />
+        </label>
+        <button
+          className="save-button"
+          type="submit"
+          disabled={pending || !isOnline}
+        >
+          {pending ? "Saving…" : "Create bill"}
+        </button>
+      </form>
+      <section className="bill-section" aria-labelledby="bill-list-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Saved reminders</p>
+            <h2 id="bill-list-heading">Your recurring bills</h2>
+          </div>
+        </div>
+        {bills.length ? (
+          <div className="bill-list">
+            {bills.map((bill) => (
+              <article className="bill-row" key={bill.id}>
+                <div>
+                  <strong>{bill.name}</strong>
+                  <span>
+                    {bill.amountMode === "FIXED" && bill.defaultAmountMinor ? (
+                      <PrivacyMask label={`${bill.name} default amount`}>
+                        {formatPhp(moneyMinor(bill.defaultAmountMinor))}
+                      </PrivacyMask>
+                    ) : (
+                      "Variable amount"
+                    )}{" "}
+                    · Due day {bill.dueDay} · {bill.status.toLowerCase()}
+                  </span>
+                </div>
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled={pending || !isOnline}
+                  onClick={() =>
+                    void apiRequest(`/bills/${bill.id}`, {
+                      method: "PATCH",
+                      headers: {
+                        "x-csrf-token": csrfToken ?? "",
+                        "idempotency-key": crypto.randomUUID(),
+                      },
+                      body: JSON.stringify({
+                        status: bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
+                      }),
+                    }).then(() => load())
+                  }
+                >
+                  {bill.status === "ACTIVE" ? "Pause" : "Resume"}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No recurring bills yet.</p>
+          </div>
+        )}
+      </section>
+      <section className="bill-section" aria-labelledby="occurrence-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Next three months</p>
+            <h2 id="occurrence-heading">Upcoming occurrences</h2>
+          </div>
+        </div>
+        {occurrences.length ? (
+          <div className="bill-list">
+            {occurrences.map((occurrence) => (
+              <article className="bill-row occurrence-row" key={occurrence.id}>
+                <div>
+                  <strong>{occurrence.billName}</strong>
+                  <span>
+                    {occurrence.dueOn} · {occurrence.status.toLowerCase()} ·{" "}
+                    {occurrence.amountMode === "VARIABLE" ? (
+                      "Variable amount"
+                    ) : occurrence.expectedAmountMinor ? (
+                      <PrivacyMask
+                        label={`${occurrence.billName} expected amount`}
+                      >
+                        {formatPhp(moneyMinor(occurrence.expectedAmountMinor))}
+                      </PrivacyMask>
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                </div>
+                {occurrence.status === "UPCOMING" ||
+                occurrence.status === "OVERDUE" ? (
+                  <div className="bill-row-actions">
+                    {payingId === occurrence.id ? (
+                      <>
+                        <select
+                          className="reference-select"
+                          value={payAccountId}
+                          onChange={(event) =>
+                            setPayAccountId(event.currentTarget.value)
+                          }
+                        >
+                          <option value="">Funding account</option>
+                          {accounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name}
+                            </option>
+                          ))}
+                        </select>
+                        {occurrence.amountMode === "VARIABLE" ? (
+                          <input
+                            className="text-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={payAmount}
+                            onChange={(event) =>
+                              setPayAmount(event.currentTarget.value)
+                            }
+                            placeholder="Amount"
+                          />
+                        ) : null}
+                        <button
+                          className="save-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => void payOccurrence(occurrence)}
+                        >
+                          Confirm pay
+                        </button>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          onClick={() => setPayingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => {
+                            setPayingId(occurrence.id);
+                            setPayAmount(
+                              occurrence.expectedAmountMinor
+                                ? phpInputFromMinor(
+                                    occurrence.expectedAmountMinor,
+                                  )
+                                : "",
+                            );
+                          }}
+                        >
+                          Pay
+                        </button>
+                        <button
+                          className="quiet-button"
+                          type="button"
+                          disabled={pending || !isOnline}
+                          onClick={() => void skipOccurrence(occurrence)}
+                        >
+                          Skip
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <span className="bill-status">
+                    {occurrence.status.toLowerCase()}
+                  </span>
+                )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="dashboard-empty">
+            <p>No bill occurrences in the next three months.</p>
+          </div>
+        )}
+      </section>
     </section>
   );
 }
@@ -587,10 +3726,12 @@ function OnboardingPage() {
       <RoutePage
         eyebrow="Your accounts"
         title="Your first account is already set up."
-        description="You can add more accounts from the Accounts area once that workflow is available."
+        description="Your account balances and history are in Accounts. Add another account there whenever you need one."
         icon="✓"
-        linkTo="/app"
-        linkLabel="Go to Home"
+        linkTo="/app/accounts"
+        linkLabel="Go to Accounts"
+        emptyTitle="Your account is ready."
+        emptyDescription="Account balances and history come from your saved journal. Manage your accounts whenever you need to."
       />
     );
   }
@@ -804,6 +3945,9 @@ type QuickAddCategory = {
 
 function QuickAddPage() {
   const { profile, csrfToken } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
   const [mode, setMode] = useState<QuickAddMode>("EXPENSE");
   const [accounts, setAccounts] = useState<QuickAddAccount[]>([]);
   const [categories, setCategories] = useState<QuickAddCategory[]>([]);
@@ -819,6 +3963,82 @@ function QuickAddPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [negativeConfirmation, setNegativeConfirmation] = useState(false);
+  const [hasEdited, setHasEdited] = useState(false);
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const returnTo = (location.state as { from?: string } | null)?.from ?? "/app";
+  const isSheet = Boolean(
+    (location.state as { from?: string } | null)?.from &&
+      returnTo !== location.pathname,
+  );
+  const isSheetReady = isSheet && Boolean(profile);
+
+  const closeSheet = useCallback(() => {
+    if (hasEdited && !window.confirm("Discard this unfinished transaction?")) {
+      return;
+    }
+    navigate(returnTo);
+    window.requestAnimationFrame(() => {
+      if (openerRef.current?.isConnected) openerRef.current.focus();
+    });
+  }, [hasEdited, navigate, returnTo]);
+
+  useEffect(() => {
+    if (!isSheetReady) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () =>
+      Array.from(
+        sheetRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSheet();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (!controls.length) return;
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    const frame = window.requestAnimationFrame(() => focusable()[0]?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeSheet, isSheetReady]);
+
+  useLayoutEffect(() => {
+    if (!isSheetReady) return;
+    if (document.activeElement instanceof HTMLElement) {
+      openerRef.current = document.activeElement;
+    }
+    closeButtonRef.current?.focus();
+  }, [isSheetReady]);
+
+  useEffect(() => {
+    if (!hasEdited) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasEdited]);
 
   useEffect(() => {
     if (!profile) {
@@ -832,7 +4052,7 @@ function QuickAddPage() {
     ])
       .then(([accountResult, categoryResult]) => {
         const activeAccounts = accountResult.accounts.filter(
-          (account) => !account.archivedAt && account.type !== "CREDIT_CARD",
+          (account) => !account.archivedAt,
         );
         const activeCategories = categoryResult.categories.filter(
           (category) => !category.archivedAt,
@@ -858,6 +4078,9 @@ function QuickAddPage() {
   const visibleCategories = categories.filter((category) =>
     mode === "TRANSFER" ? category.kind === "EXPENSE" : category.kind === mode,
   );
+  const visibleAccounts = accounts.filter(
+    (account) => mode !== "TRANSFER" || account.type !== "CREDIT_CARD",
+  );
   const expenseCategories = categories.filter(
     (category) => category.kind === "EXPENSE",
   );
@@ -877,6 +4100,10 @@ function QuickAddPage() {
     event.preventDefault();
     setError("");
     setNegativeConfirmation(false);
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a transaction.");
+      return;
+    }
     try {
       const amountMinor = parsePositive(amount, "Amount").toString();
       if (!profile || !csrfToken)
@@ -917,13 +4144,17 @@ function QuickAddPage() {
         throw new Error("Choose two different accounts.");
       }
       setPending(true);
+      const idempotencyKey = await transactionIdempotencyKey(
+        profile.user.id,
+        body,
+      );
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
         body: JSON.stringify(body),
       });
@@ -938,9 +4169,11 @@ function QuickAddPage() {
         }
         throw new Error(message);
       }
+      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");
+      setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
@@ -956,9 +4189,14 @@ function QuickAddPage() {
 
   async function confirmNegativeBalance() {
     if (!csrfToken) return;
+    if (!isOnline) {
+      setError("You are offline. Reconnect before recording a transaction.");
+      return;
+    }
     setError("");
     setPending(true);
     try {
+      if (!profile) throw new Error("Your session needs to be refreshed.");
       const amountMinor = parsePositive(amount, "Amount").toString();
       const body =
         mode === "TRANSFER"
@@ -984,13 +4222,17 @@ function QuickAddPage() {
               occurredOn,
               ...(note.trim() ? { note: note.trim() } : {}),
             };
+      const idempotencyKey = await transactionIdempotencyKey(
+        profile.user.id,
+        body,
+      );
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
         body: JSON.stringify(body),
       });
@@ -1002,9 +4244,11 @@ function QuickAddPage() {
           payload?.error?.message ?? "The transaction could not be saved.",
         );
       }
+      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");
+      setHasEdited(false);
       setNegativeConfirmation(false);
       setError("Transaction saved.");
     } catch (caught) {
@@ -1020,8 +4264,24 @@ function QuickAddPage() {
 
   if (!profile) return <QuickAddPreviewPage />;
 
-  return (
-    <section className="route-page" aria-labelledby="page-heading">
+  const quickAddContent = (
+    <section
+      ref={sheetRef}
+      className={`route-page${isSheet ? " quick-add-sheet" : ""}`}
+      aria-labelledby="page-heading"
+      {...(isSheet ? { role: "dialog" as const, "aria-modal": true } : {})}
+    >
+      {isSheet ? (
+        <button
+          ref={closeButtonRef}
+          className="sheet-close-button"
+          type="button"
+          aria-label="Close quick add"
+          onClick={closeSheet}
+        >
+          ×
+        </button>
+      ) : null}
       <div className="page-intro">
         <p className="eyebrow">Quick add · Private</p>
         <h1 id="page-heading">Record it while it is fresh.</h1>
@@ -1030,7 +4290,11 @@ function QuickAddPage() {
           balanced journal and can be safely retried.
         </p>
       </div>
-      <form className="quick-add-card" onSubmit={submit}>
+      <form
+        className="quick-add-card"
+        onSubmit={submit}
+        onChange={() => setHasEdited(true)}
+      >
         <div className="mode-tabs" role="tablist" aria-label="Transaction type">
           {(["EXPENSE", "INCOME", "TRANSFER"] as QuickAddMode[]).map((item) => (
             <button
@@ -1041,6 +4305,7 @@ function QuickAddPage() {
               aria-selected={mode === item}
               onClick={() => {
                 setMode(item);
+                setHasEdited(true);
                 setError("");
                 setNegativeConfirmation(false);
               }}
@@ -1096,7 +4361,7 @@ function QuickAddPage() {
               <option value="">
                 {loading ? "Loading accounts…" : "Choose an account"}
               </option>
-              {accounts.map((account) => (
+              {visibleAccounts.map((account) => (
                 <option key={account.id} value={account.id}>
                   {account.name} · {formatPhp(moneyMinor(account.balanceMinor))}
                 </option>
@@ -1117,7 +4382,7 @@ function QuickAddPage() {
                 disabled={loading}
               >
                 <option value="">Choose a destination</option>
-                {accounts.map((account) => (
+                {visibleAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
                   </option>
@@ -1228,7 +4493,7 @@ function QuickAddPage() {
               className="save-button"
               type="button"
               onClick={() => void confirmNegativeBalance()}
-              disabled={pending}
+              disabled={pending || !isOnline}
             >
               Confirm and record
             </button>
@@ -1237,7 +4502,7 @@ function QuickAddPage() {
           <button
             className="save-button"
             type="submit"
-            disabled={pending || loading || !accounts.length}
+            disabled={pending || loading || !accounts.length || !isOnline}
           >
             {pending ? "Saving…" : `Record ${mode.toLowerCase()}`}
           </button>
@@ -1245,9 +4510,56 @@ function QuickAddPage() {
       </form>
     </section>
   );
+
+  if (isSheet) {
+    return (
+      <div
+        className="quick-add-overlay"
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeSheet();
+        }}
+      >
+        {quickAddContent}
+      </div>
+    );
+  }
+
+  return quickAddContent;
 }
 
 function SettingsPage() {
+  const { profile, csrfToken, refreshProfile } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function toggleBalancePrivacy() {
+    if (!profile || !csrfToken) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await apiRequest("/me/preferences", {
+        method: "PATCH",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify({ hideBalances: !profile.user.hideBalances }),
+      });
+      await refreshProfile();
+      setMessage(
+        profile.user.hideBalances
+          ? "Balances will be visible by default."
+          : "Balances will be hidden by default.",
+      );
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "Your privacy preference could not be saved.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="route-page" aria-labelledby="page-heading">
       <div className="page-intro">
@@ -1269,6 +4581,624 @@ function SettingsPage() {
           <span className="preview-private-value">Private value</span>
         </PrivacyMask>
       </div>
+      {profile ? (
+        <div className="settings-preference-card">
+          <div>
+            <p className="empty-title">Privacy default</p>
+            <p className="field-hint">
+              Mask financial amounts when your private session opens.
+            </p>
+          </div>
+          <button
+            className="quiet-button"
+            type="button"
+            onClick={() => void toggleBalancePrivacy()}
+            disabled={saving}
+          >
+            {saving
+              ? "Saving…"
+              : profile.user.hideBalances
+                ? "Show balances by default"
+                : "Hide balances by default"}
+          </button>
+        </div>
+      ) : null}
+      <div className="settings-preference-card settings-links-card">
+        <div>
+          <p className="empty-title">Account controls</p>
+          <p className="field-hint">
+            Manage categories, sessions, and password access.
+          </p>
+        </div>
+        <div className="card-detail-actions">
+          <Link className="quiet-link" to="/app/settings/categories">
+            Categories
+          </Link>
+          <Link className="quiet-link" to="/app/settings/security">
+            Security
+          </Link>
+        </div>
+      </div>
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+type MonthlyReportView = {
+  month: string;
+  incomeMinor: string;
+  netExpensesMinor: string;
+  netCashFlowMinor: string;
+  categories: {
+    categoryId: string | null;
+    categoryName: string;
+    amountMinor: string;
+  }[];
+};
+
+function monthEndDate(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return "";
+  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+}
+
+function ReportsPage() {
+  const { profile, loading: authLoading } = useAuth();
+  const [month, setMonth] = useState(profile?.serverToday.slice(0, 7) ?? "");
+  const [report, setReport] = useState<MonthlyReportView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile || !month) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ report: MonthlyReportView }>(
+        `/reports/monthly?month=${month}`,
+      );
+      setReport(result.report);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Reports could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [month, profile]);
+
+  useEffect(() => {
+    if (profile && !month) setMonth(profile.serverToday.slice(0, 7));
+  }, [month, profile]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (authLoading || loading) return <DashboardLoading />;
+  if (!profile) {
+    return (
+      <RoutePage
+        eyebrow="Understand your month"
+        title="Reports"
+        description="Monthly insights are generated from your private ledger and are available after sign-in."
+        icon="▥"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  }
+  const maxCategory =
+    report?.categories.reduce((max, category) => {
+      const amount = BigInt(category.amountMinor);
+      const absolute = amount < 0n ? -amount : amount;
+      return absolute > max ? absolute : max;
+    }, 0n) ?? 0n;
+  const exportTo = monthEndDate(month);
+  return (
+    <section className="route-page reports-page" aria-labelledby="page-heading">
+      <div className="page-intro">
+        <p className="eyebrow">Understand your month · Private</p>
+        <h1 id="page-heading">Reports that reconcile.</h1>
+        <p className="page-description">
+          Income, net expenses, cash flow, and categories come from posted
+          journals. Transfers and card payments are excluded from spending.
+        </p>
+      </div>
+      <div className="report-toolbar">
+        <label className="field-group">
+          <span className="field-label">Month</span>
+          <input
+            className="text-input"
+            type="month"
+            value={month}
+            onChange={(event) => setMonth(event.currentTarget.value)}
+          />
+        </label>
+        <div className="report-export-actions">
+          <a
+            className="quiet-button"
+            href={`/api/v1/exports/transactions.csv?from=${month}-01&to=${exportTo}`}
+          >
+            Download CSV
+          </a>
+          <a className="quiet-button" href="/api/v1/exports/data.json">
+            Download JSON
+          </a>
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {report ? (
+        <>
+          <div className="report-stat-grid" aria-label="Monthly totals">
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Income</p>
+              <PrivacyMask label="monthly income">
+                {dashboardMoney(report.incomeMinor)}
+              </PrivacyMask>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net expenses</p>
+              <PrivacyMask label="net monthly expenses">
+                {dashboardMoney(report.netExpensesMinor)}
+              </PrivacyMask>
+            </div>
+            <div className="dashboard-stat">
+              <p className="dashboard-label">Net cash flow</p>
+              <PrivacyMask label="net cash flow">
+                {dashboardMoney(report.netCashFlowMinor)}
+              </PrivacyMask>
+            </div>
+          </div>
+          <section
+            className="report-category-panel"
+            aria-labelledby="category-report-heading"
+          >
+            <div className="dashboard-panel-heading">
+              <div>
+                <p className="dashboard-label">Expense categories</p>
+                <h2 id="category-report-heading">Where the month moved</h2>
+              </div>
+            </div>
+            {report.categories.length ? (
+              <div
+                className="report-category-table"
+                role="table"
+                aria-label="Monthly expense categories"
+              >
+                <div
+                  className="report-category-row report-category-header"
+                  role="row"
+                >
+                  <span role="columnheader">Category</span>
+                  <span role="columnheader">Net amount</span>
+                </div>
+                {report.categories.map((category) => (
+                  <div
+                    className="report-category-row"
+                    role="row"
+                    key={category.categoryId ?? "uncategorized"}
+                  >
+                    <span role="cell">
+                      <strong>{category.categoryName}</strong>
+                      <span
+                        className="report-bar"
+                        style={{
+                          width: `${(() => {
+                            const amount = BigInt(category.amountMinor);
+                            const absolute = amount < 0n ? -amount : amount;
+                            if (maxCategory === 0n) return "4";
+                            const width = (absolute * 100n) / maxCategory;
+                            return (width < 4n ? 4n : width).toString();
+                          })()}%`,
+                        }}
+                      />
+                    </span>
+                    <span role="cell">
+                      <PrivacyMask
+                        label={`${category.categoryName} monthly amount`}
+                      >
+                        {dashboardMoney(category.amountMinor)}
+                      </PrivacyMask>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-empty">
+                <p>No categorized expenses in this month.</p>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+type SessionRecord = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+  current: boolean;
+};
+
+function SecurityPage() {
+  const {
+    profile,
+    csrfToken,
+    refreshProfile,
+    loading: authLoading,
+  } = useAuth();
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!profile) return;
+    try {
+      const result = await apiRequest<{ sessions: SessionRecord[] }>(
+        "/auth/sessions",
+      );
+      setSessions(result.sessions);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Sessions could not be loaded.",
+      );
+    }
+  }, [profile]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function revoke(sessionId: string) {
+    if (!csrfToken) return;
+    setPending(true);
+    setError("");
+    try {
+      await apiRequest(`/auth/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      setMessage("Session revoked.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The session could not be revoked.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    if (!csrfToken || newPassword !== confirmPassword) {
+      setError("New passwords must match.");
+      return;
+    }
+    setPending(true);
+    try {
+      await apiRequest("/auth/change-password", {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      await refreshProfile();
+      setMessage("Password updated. Other sessions were signed out.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The password could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (authLoading) return <DashboardLoading />;
+  if (!profile)
+    return (
+      <RoutePage
+        eyebrow="Security"
+        title="Sign in to manage security."
+        description="Sessions and password controls are private to the account owner."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  return (
+    <section
+      className="route-page security-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Private access</p>
+        <h1 id="page-heading">Security you can review.</h1>
+        <p className="page-description">
+          Rotate your password and revoke sessions you no longer recognize.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
+      <form
+        className="account-edit-card security-form"
+        onSubmit={changePassword}
+      >
+        <div className="form-heading">
+          <div>
+            <p className="form-kicker">PASSWORD</p>
+            <h2>Change password</h2>
+          </div>
+        </div>
+        <label className="field-group">
+          <span className="field-label">Current password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.currentTarget.value)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">New password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={12}
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.currentTarget.value)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Confirm new password *</span>
+          <input
+            className="text-input"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={12}
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.currentTarget.value)}
+          />
+        </label>
+        <button className="save-button" type="submit" disabled={pending}>
+          {pending ? "Updating…" : "Update password"}
+        </button>
+      </form>
+      <section className="session-panel" aria-labelledby="sessions-heading">
+        <div className="dashboard-panel-heading">
+          <div>
+            <p className="dashboard-label">Active sessions</p>
+            <h2 id="sessions-heading">Where you are signed in</h2>
+          </div>
+        </div>
+        {sessions.map((session) => (
+          <div className="session-row" key={session.id}>
+            <div>
+              <strong>
+                {session.current ? "This session" : "Other session"}
+              </strong>
+              <span>
+                {session.userAgent ?? "Unknown device"} · Last seen{" "}
+                {new Date(session.lastSeenAt).toLocaleString("en-PH")}
+              </span>
+            </div>
+            {session.current ? (
+              <span className="session-current">Current</span>
+            ) : (
+              <button
+                className="quiet-button"
+                type="button"
+                disabled={pending}
+                onClick={() => void revoke(session.id)}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+      </section>
+    </section>
+  );
+}
+
+function CategoriesPage() {
+  const { profile, csrfToken, loading: authLoading } = useAuth();
+  const [categories, setCategories] = useState<QuickAddCategory[]>([]);
+  const [kind, setKind] = useState<QuickAddCategory["kind"]>("EXPENSE");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    if (!profile) return;
+    const result = await apiRequest<{ categories: QuickAddCategory[] }>(
+      "/categories?includeArchived=true",
+    );
+    setCategories(result.categories);
+  }, [profile]);
+  useEffect(() => {
+    void load().catch((caught) =>
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Categories could not be loaded.",
+      ),
+    );
+  }, [load]);
+  async function create(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!csrfToken || !name.trim()) return;
+    try {
+      await apiRequest("/categories", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ kind, name: name.trim() }),
+      });
+      setName("");
+      setMessage("Category created.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The category could not be created.",
+      );
+    }
+  }
+  async function archive(category: QuickAddCategory) {
+    if (!csrfToken) return;
+    try {
+      await apiRequest(`/categories/${category.id}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ archived: !category.archivedAt }),
+      });
+      setMessage(
+        category.archivedAt ? "Category restored." : "Category archived.",
+      );
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The category could not be updated.",
+      );
+    }
+  }
+  if (authLoading) return <DashboardLoading />;
+  if (!profile)
+    return (
+      <RoutePage
+        eyebrow="Categories"
+        title="Sign in to manage categories."
+        description="Categories organize future records without changing posted history."
+        icon="◇"
+        linkTo="/login"
+        linkLabel="Go to sign in"
+      />
+    );
+  return (
+    <section
+      className="route-page categories-page"
+      aria-labelledby="page-heading"
+    >
+      <div className="page-intro">
+        <p className="eyebrow">Personalize</p>
+        <h1 id="page-heading">Categories that keep context.</h1>
+        <p className="page-description">
+          Renaming or archiving a category never rewrites a posted journal.
+        </p>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="form-success" role="status">
+          {message}
+        </p>
+      ) : null}
+      <form className="account-edit-card category-form" onSubmit={create}>
+        <div className="reference-grid">
+          <label className="field-group">
+            <span className="field-label">Type *</span>
+            <select
+              className="reference-select"
+              value={kind}
+              onChange={(event) =>
+                setKind(event.currentTarget.value as QuickAddCategory["kind"])
+              }
+            >
+              <option value="EXPENSE">Expense</option>
+              <option value="INCOME">Income</option>
+            </select>
+          </label>
+          <label className="field-group">
+            <span className="field-label">Name *</span>
+            <input
+              className="text-input"
+              required
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Home supplies"
+            />
+          </label>
+        </div>
+        <button className="save-button" type="submit">
+          Create category
+        </button>
+      </form>
+      <section className="category-list" aria-label="Saved categories">
+        {categories.map((category) => (
+          <div className="category-row" key={category.id}>
+            <div>
+              <strong>{category.name}</strong>
+              <span>
+                {category.kind === "EXPENSE" ? "Expense" : "Income"}
+                {category.archivedAt ? " · Archived" : ""}
+              </span>
+            </div>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={() => void archive(category)}
+            >
+              {category.archivedAt ? "Restore" : "Archive"}
+            </button>
+          </div>
+        ))}
+      </section>
     </section>
   );
 }
@@ -1292,97 +5222,30 @@ function App() {
         <Route path="/" element={<AppShell />}>
           <Route index element={<HomePage />} />
           <Route path="app" element={<HomePage />} />
-          <Route
-            path="app/activity"
-            element={
-              <RoutePage
-                eyebrow="Your timeline"
-                title="Activity"
-                description="Find and review the financial actions you record."
-                icon="◷"
-              />
-            }
-          />
+          <Route path="app/activity" element={<ActivityPage />} />
           <Route path="app/transactions/new" element={<QuickAddPage />} />
           <Route
             path="app/transactions/:transactionId"
-            element={
-              <RoutePage
-                eyebrow="Activity"
-                title="Transaction details"
-                description="A transaction view will show its account, category and complete change history."
-                icon="↗"
-              />
-            }
+            element={<TransactionDetailPage />}
           />
-          <Route
-            path="app/accounts"
-            element={
-              <RoutePage
-                eyebrow="Your money"
-                title="Accounts"
-                description="Cash, banks, wallets and card balances will be calculated from your journal."
-                icon="▤"
-              />
-            }
-          />
+          <Route path="app/accounts" element={<AccountsPage />} />
           <Route
             path="app/accounts/:accountId"
-            element={
-              <RoutePage
-                eyebrow="Account overview"
-                title="Account details"
-                description="See a saved account, its balance and its chronological activity."
-                icon="▤"
-              />
-            }
+            element={<AccountDetailPage />}
+          />
+          <Route
+            path="app/accounts/:accountId/pay"
+            element={<CardPaymentPage />}
           />
           <Route
             path="app/accounts/:accountId/statements"
-            element={
-              <RoutePage
-                eyebrow="Credit cards"
-                title="Statements"
-                description="Review manually entered statement amounts and due dates."
-                icon="□"
-              />
-            }
+            element={<CardStatementsPage />}
           />
-          <Route
-            path="app/bills"
-            element={
-              <RoutePage
-                eyebrow="Plan ahead"
-                title="Bills"
-                description="Upcoming reminders will stay separate from posted account balances until you confirm a payment."
-                icon="□"
-              />
-            }
-          />
-          <Route
-            path="app/reports"
-            element={
-              <RoutePage
-                eyebrow="Understand your month"
-                title="Reports"
-                description="Monthly totals and categories will come from the same saved journal as your balances."
-                icon="▥"
-              />
-            }
-          />
+          <Route path="app/bills" element={<BillsPage />} />
+          <Route path="app/reports" element={<ReportsPage />} />
           <Route path="app/settings" element={<SettingsPage />} />
-          <Route
-            path="app/settings/categories"
-            element={
-              <RoutePage
-                eyebrow="Personalize"
-                title="Categories"
-                description="Your income and expense categories will organize records without changing history."
-                icon="◇"
-              />
-            }
-          />
-          <Route path="app/settings/security" element={<LoginPage />} />
+          <Route path="app/settings/categories" element={<CategoriesPage />} />
+          <Route path="app/settings/security" element={<SecurityPage />} />
           <Route path="login" element={<LoginPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="*" element={<NotFoundPage />} />
@@ -1392,10 +5255,25 @@ function App() {
   );
 }
 
+function AuthenticatedApp() {
+  const { profile } = useAuth();
+  return (
+    <PrivacyPreferenceProvider hidden={profile?.user.hideBalances ?? false}>
+      <App />
+    </PrivacyPreferenceProvider>
+  );
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  });
+}
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      <App />
+      <AuthenticatedApp />
     </AuthProvider>
   </React.StrictMode>,
 );
