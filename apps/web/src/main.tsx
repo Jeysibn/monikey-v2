@@ -34,17 +34,35 @@ import "./style.css";
 type Theme = "light" | "dark";
 
 const primaryNavigation = [
-  { label: "Home", to: "/app", symbol: "⌂", end: true },
-  { label: "Activity", to: "/app/activity", symbol: "◷" },
-  { label: "Add", to: "/app/transactions/new", symbol: "+", action: true },
-  { label: "Accounts", to: "/app/accounts", symbol: "▤" },
-];
+  { label: "Home", to: "/app", icon: "home", end: true },
+  { label: "Activity", to: "/app/activity", icon: "activity" },
+  {
+    label: "Add",
+    to: "/app/transactions/new",
+    icon: "add",
+    action: true,
+  },
+  { label: "Accounts", to: "/app/accounts", icon: "accounts" },
+] as const;
 
 const secondaryNavigation = [
-  { label: "Bills", to: "/app/bills", symbol: "□" },
-  { label: "Reports", to: "/app/reports", symbol: "▥" },
-  { label: "Settings", to: "/app/settings", symbol: "⚙" },
-];
+  { label: "Bills", to: "/app/bills", icon: "bills" },
+  { label: "Reports", to: "/app/reports", icon: "reports" },
+  { label: "Settings", to: "/app/settings", icon: "settings" },
+] as const;
+
+type NavigationIcon =
+  | "home"
+  | "activity"
+  | "add"
+  | "accounts"
+  | "bills"
+  | "reports"
+  | "settings"
+  | "collapse"
+  | "expand"
+  | "moon"
+  | "sun";
 
 const pageTitles: Record<string, string> = {
   "/app": "Home",
@@ -319,16 +337,97 @@ function Brand() {
   );
 }
 
+function AppIcon({ name }: { name: NavigationIcon }) {
+  let drawing: React.ReactNode;
+  switch (name) {
+    case "home":
+      drawing = <path d="m3.5 10 8.5-7 8.5 7M5.5 9v11h13V9M9.5 20v-6h3v6" />;
+      break;
+    case "activity":
+      drawing = <path d="M3 12h4l2.5-7 4.5 14 2.5-7H21" />;
+      break;
+    case "add":
+      drawing = <path d="M12 5v14M5 12h14" />;
+      break;
+    case "accounts":
+      drawing = (
+        <>
+          <rect x="3.5" y="4" width="17" height="16" rx="2" />
+          <path d="M7.5 8h9M7.5 12h9M7.5 16h5" />
+        </>
+      );
+      break;
+    case "bills":
+      drawing = (
+        <>
+          <path d="M6 3.5h9l3 3V20H6z" />
+          <path d="M14.5 3.5V7h3.5M9 11h6M9 14.5h6M9 18h4" />
+        </>
+      );
+      break;
+    case "reports":
+      drawing = (
+        <>
+          <path d="M4 20V11M10 20V5M16 20v-8M22 20H2" />
+        </>
+      );
+      break;
+    case "settings":
+      drawing = (
+        <>
+          <circle cx="12" cy="12" r="3" />
+          <path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a7.8 7.8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a7.8 7.8 0 0 1-1.6-.9l-1.7.6-1.4-2.4 1.4-1.1a7.8 7.8 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.6a7.8 7.8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a7.8 7.8 0 0 1 1.6.9l1.7-.6 1.4 2.4-1.4 1.1a7.8 7.8 0 0 1 0 1.8Z" />
+        </>
+      );
+      break;
+    case "collapse":
+      drawing = <path d="m14.5 6-6 6 6 6" />;
+      break;
+    case "expand":
+      drawing = <path d="m9.5 6 6 6-6 6" />;
+      break;
+    case "moon":
+      drawing = (
+        <path d="M19.2 15.1A7.8 7.8 0 0 1 8.9 4.8 8 8 0 1 0 19.2 15Z" />
+      );
+      break;
+    case "sun":
+      drawing = (
+        <>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </>
+      );
+      break;
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="app-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+    >
+      {drawing}
+    </svg>
+  );
+}
+
 function NavigationLink({
   label,
   to,
-  symbol,
+  icon,
   end,
   action = false,
 }: {
   label: string;
   to: string;
-  symbol: string;
+  icon: NavigationIcon;
   end?: boolean;
   action?: boolean;
 }) {
@@ -343,12 +442,13 @@ function NavigationLink({
         `nav-link${isActive ? " is-active" : ""}${action ? " nav-action" : ""}`
       }
       to={to}
+      aria-label={action ? "Add transaction" : label}
+      title={label}
       {...(end ? { end: true } : {})}
-      {...(action ? { "aria-label": "Add transaction" } : {})}
       {...(contextualFrom ? { state: { from: contextualFrom } } : {})}
     >
-      <span className="nav-symbol" aria-hidden="true">
-        {symbol}
+      <span className="nav-symbol">
+        <AppIcon name={icon} />
       </span>
       <span>{label}</span>
     </NavLink>
@@ -357,24 +457,27 @@ function NavigationLink({
 
 function AppShell() {
   const [theme, toggleTheme] = useTheme();
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const location = useLocation();
   const { profile, logout } = useAuth();
   const isOnline = useOnlineStatus();
   const pageTitle =
-    (location.pathname === "/onboarding" &&
-    profile?.onboardingStatus === "READY"
-      ? "Accounts"
-      : pageTitles[location.pathname]) ??
-    (location.pathname.includes("/statements")
-      ? "Statements"
-      : location.pathname.includes("/transactions/")
-        ? "Transaction details"
-        : location.pathname.includes("/accounts/")
-          ? "Account details"
-          : "MoniKey");
+    location.pathname === "/app"
+      ? ""
+      : ((location.pathname === "/onboarding" &&
+        profile?.onboardingStatus === "READY"
+          ? "Accounts"
+          : pageTitles[location.pathname]) ??
+        (location.pathname.includes("/statements")
+          ? "Statements"
+          : location.pathname.includes("/transactions/")
+            ? "Transaction details"
+            : location.pathname.includes("/accounts/")
+              ? "Account details"
+              : "MoniKey"));
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${railCollapsed ? " is-rail-collapsed" : ""}`}>
       <aside className="desktop-rail" aria-label="Main navigation">
         <Brand />
         <nav className="rail-nav" aria-label="Primary">
@@ -390,12 +493,27 @@ function AppShell() {
         </nav>
         <div className="rail-bottom">
           <button
+            className="rail-collapse-button"
+            type="button"
+            aria-label={
+              railCollapsed ? "Expand navigation" : "Collapse navigation"
+            }
+            aria-expanded={!railCollapsed}
+            title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            onClick={() => setRailCollapsed((collapsed) => !collapsed)}
+          >
+            <AppIcon name={railCollapsed ? "expand" : "collapse"} />
+            <span>
+              {railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            </span>
+          </button>
+          <button
             className="theme-button"
             type="button"
             onClick={toggleTheme}
             aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
           >
-            <span aria-hidden="true">{theme === "light" ? "◐" : "☼"}</span>
+            <AppIcon name={theme === "light" ? "moon" : "sun"} />
             <span>{theme === "light" ? "Dark theme" : "Light theme"}</span>
           </button>
           <p className="rail-caption">Personal finance, clearly.</p>
@@ -407,7 +525,11 @@ function AppShell() {
           <div className="mobile-brand-wrap">
             <Brand />
           </div>
-          <div className="desktop-page-title" aria-live="polite">
+          <div
+            className="desktop-page-title"
+            aria-live="polite"
+            aria-hidden={!pageTitle}
+          >
             {pageTitle}
           </div>
           <details className="mobile-more-menu">
@@ -426,20 +548,34 @@ function AppShell() {
             onClick={toggleTheme}
             aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
           >
-            <span aria-hidden="true">{theme === "light" ? "◐" : "☼"}</span>
+            <AppIcon name={theme === "light" ? "moon" : "sun"} />
           </button>
-          <Link
-            className="profile-chip"
-            to={profile ? "/app/settings" : "/login"}
-          >
-            <span className="profile-dot" aria-hidden="true" />
-            <span>
-              {profile ? profile.user.emailNormalized : "Private space"}
-            </span>
-          </Link>
+          <div className="topbar-actions">
+            {profile ? (
+              <button
+                className="topbar-sign-out"
+                type="button"
+                onClick={() => void logout()}
+              >
+                Sign out
+              </button>
+            ) : null}
+            <Link
+              className="profile-chip"
+              to={profile ? "/app/settings" : "/login"}
+            >
+              <span className="profile-dot" aria-hidden="true" />
+              <span>
+                {profile ? profile.user.emailNormalized : "Private space"}
+              </span>
+            </Link>
+          </div>
         </header>
 
-        <main className="page-content" id="main-content">
+        <main
+          className={`page-content${location.pathname === "/app" ? " page-content-dashboard" : ""}`}
+          id="main-content"
+        >
           {!isOnline ? (
             <div className="connection-notice" role="alert">
               <span className="notice-mark" aria-hidden="true">
@@ -451,19 +587,20 @@ function AppShell() {
               </span>
             </div>
           ) : null}
-          <div className="preview-notice" role="status">
-            <span className="notice-mark" aria-hidden="true">
-              i
-            </span>
-            <span>
-              {profile
-                ? "Private session active. Financial records are stored in your journal."
-                : "Foundation preview. Sign-in and financial records are not active yet."}
-            </span>
-          </div>
+          {!profile ? (
+            <div className="preview-notice" role="status">
+              <span className="notice-mark" aria-hidden="true">
+                i
+              </span>
+              <span>
+                Foundation preview. Sign-in and financial records are not active
+                yet.
+              </span>
+            </div>
+          ) : null}
           {profile ? (
             <button
-              className="session-link"
+              className="mobile-session-link"
               type="button"
               onClick={() => void logout()}
             >
@@ -663,7 +800,10 @@ function dashboardAccountType(type: DashboardAccount["type"]): string {
 }
 
 function dashboardActivityAmount(activity: DashboardActivity): string | null {
-  const amount = activity.revision.amountMinor;
+  const amount =
+    activity.transaction.kind === "OPENING_BALANCE"
+      ? activity.revision.openingBalanceMinor
+      : activity.revision.amountMinor;
   return typeof amount === "string" && /^-?\d+$/.test(amount) ? amount : null;
 }
 
@@ -734,10 +874,10 @@ function DashboardHome({ profile }: { profile: Profile }) {
     <section className="dashboard-page" aria-labelledby="page-heading">
       <div className="dashboard-heading">
         <div className="page-intro">
-          <p className="eyebrow">Private dashboard · {profile.user.currency}</p>
-          <h1 id="page-heading">Your money, in balance.</h1>
+          <p className="eyebrow">YOUR FINANCES · {profile.user.currency}</p>
+          <h1 id="page-heading">Overview</h1>
           <p className="page-description">
-            A current view of the accounts and journals that belong to you.
+            Your money, accounts and latest activity.
           </p>
         </div>
         <Link className="dashboard-primary-action" to="/app/transactions/new">
@@ -763,210 +903,227 @@ function DashboardHome({ profile }: { profile: Profile }) {
 
       {summary ? (
         <>
-          <div className="dashboard-hero">
-            <div>
-              <p className="dashboard-label">Available money</p>
-              <div className="dashboard-balance">
-                <PrivacyMask label="available money">
-                  {dashboardMoney(summary.availableMoneyMinor)}
-                </PrivacyMask>
-              </div>
-              <p className="dashboard-helper">
-                Cash, bank, and e-wallet balances · {summary.serverToday}
-              </p>
-            </div>
-            <div className="dashboard-hero-meta">
-              <span className="status-dot" aria-hidden="true" />
-              <span>Posted journal totals</span>
-            </div>
-          </div>
-
-          <div className="dashboard-stat-grid" aria-label="Financial summary">
-            <div className="dashboard-stat">
-              <p className="dashboard-label">Net position</p>
-              <PrivacyMask label="net financial position">
-                {dashboardMoney(summary.netFinancialPositionMinor)}
-              </PrivacyMask>
-              <p className="dashboard-helper">After card debt</p>
-            </div>
-            <div className="dashboard-stat">
-              <p className="dashboard-label">Card debt</p>
-              <PrivacyMask label="card debt">
-                {dashboardMoney(summary.cardDebtMinor)}
-              </PrivacyMask>
-              <p className="dashboard-helper">Current liability balance</p>
-            </div>
-            <div className="dashboard-stat">
-              <p className="dashboard-label">This month</p>
-              <p className="dashboard-stat-line dashboard-income">
-                <span>Income</span>
-                {dashboardMoney(summary.incomeMinor)}
-              </p>
-              <p className="dashboard-stat-line dashboard-expense">
-                <span>Spending</span>
-                {dashboardMoney(summary.spendingMinor)}
-              </p>
-              <p className="dashboard-helper">{summary.month}</p>
-            </div>
-          </div>
-
-          <div className="dashboard-columns">
+          <div className="dashboard-overview-grid">
             <section
-              className="dashboard-panel"
-              aria-labelledby="accounts-heading"
+              className="dashboard-summary-card"
+              aria-label="Financial summary"
             >
-              <div className="dashboard-panel-heading">
+              <div className="dashboard-summary-main">
                 <div>
-                  <p className="dashboard-label">Your accounts</p>
-                  <h2 id="accounts-heading">Balances at a glance</h2>
+                  <p className="dashboard-label">Available money</p>
+                  <div className="dashboard-balance">
+                    <PrivacyMask label="available money">
+                      {dashboardMoney(summary.availableMoneyMinor)}
+                    </PrivacyMask>
+                  </div>
+                  <p className="dashboard-helper">
+                    Cash, bank and e-wallet balances · {summary.serverToday}
+                  </p>
                 </div>
-                <Link className="quiet-link" to="/app/accounts">
-                  View all
-                </Link>
+                <span className="dashboard-hero-meta">
+                  <span className="status-dot" aria-hidden="true" />
+                  Posted journal totals
+                </span>
               </div>
-              {summary.accounts.length ? (
-                <div className="account-list">
-                  {summary.accounts.map((account) => (
-                    <Link
-                      className="account-row"
-                      key={account.id}
-                      to={`/app/accounts/${account.id}`}
-                    >
-                      <span className="account-mark" aria-hidden="true">
-                        {account.type === "CREDIT_CARD" ? "◇" : "•"}
-                      </span>
-                      <span className="account-copy">
-                        <strong>{account.name}</strong>
-                        <span>{dashboardAccountType(account.type)}</span>
-                      </span>
-                      <span className="account-balance">
-                        <PrivacyMask label={`${account.name} balance`}>
-                          {dashboardMoney(account.balanceMinor)}
-                        </PrivacyMask>
-                      </span>
-                    </Link>
-                  ))}
+              <div className="dashboard-stat-grid">
+                <div className="dashboard-stat">
+                  <p className="dashboard-label">Net position</p>
+                  <PrivacyMask label="net financial position">
+                    {dashboardMoney(summary.netFinancialPositionMinor)}
+                  </PrivacyMask>
+                  <p className="dashboard-helper">After card debt</p>
                 </div>
-              ) : (
-                <div className="dashboard-empty">
-                  <p>No accounts yet.</p>
-                  <Link className="quiet-link" to="/onboarding">
-                    Create your first account
+                <div className="dashboard-stat">
+                  <p className="dashboard-label">Card debt</p>
+                  <PrivacyMask label="card debt">
+                    {dashboardMoney(summary.cardDebtMinor)}
+                  </PrivacyMask>
+                  <p className="dashboard-helper">Current liability balance</p>
+                </div>
+                <div className="dashboard-stat dashboard-month-stat">
+                  <p className="dashboard-label">
+                    This month <span>{summary.month}</span>
+                  </p>
+                  <p className="dashboard-stat-line dashboard-income">
+                    <span>Income</span>
+                    {dashboardMoney(summary.incomeMinor)}
+                  </p>
+                  <p className="dashboard-stat-line dashboard-expense">
+                    <span>Spending</span>
+                    {dashboardMoney(summary.spendingMinor)}
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="dashboard-overview-columns">
+            <div className="dashboard-overview-main">
+              <section
+                className="dashboard-panel"
+                aria-labelledby="activity-heading"
+              >
+                <div className="dashboard-panel-heading">
+                  <div>
+                    <p className="dashboard-label">Latest records</p>
+                    <h2 id="activity-heading">Recent activity</h2>
+                  </div>
+                  <Link className="quiet-link" to="/app/activity">
+                    View all
                   </Link>
                 </div>
-              )}
-            </section>
-
-            <section
-              className="dashboard-panel"
-              aria-labelledby="activity-heading"
-            >
-              <div className="dashboard-panel-heading">
-                <div>
-                  <p className="dashboard-label">Latest records</p>
-                  <h2 id="activity-heading">Recent activity</h2>
-                </div>
-                <Link className="quiet-link" to="/app/activity">
-                  View all
-                </Link>
-              </div>
-              {summary.recentActivity.length ? (
-                <div className="activity-list">
-                  {summary.recentActivity.map((activity) => {
-                    const amount = dashboardActivityAmount(activity);
-                    const isIncome = ["INCOME", "REFUND"].includes(
-                      activity.transaction.kind,
-                    );
-                    return (
-                      <Link
-                        className="activity-row"
-                        key={activity.transaction.id}
-                        to={`/app/transactions/${activity.transaction.id}`}
-                      >
-                        <span className="activity-kind" aria-hidden="true">
-                          {isIncome
-                            ? "↑"
-                            : activity.transaction.kind === "EXPENSE"
-                              ? "↓"
-                              : "↔"}
-                        </span>
-                        <span className="activity-copy">
-                          <strong>{dashboardActivityLabel(activity)}</strong>
-                          <span>
-                            {activity.transaction.occurredOn} ·{" "}
-                            {activity.transaction.status === "VOID"
-                              ? "Voided"
-                              : activity.transaction.kind.replaceAll("_", " ")}
-                          </span>
-                        </span>
-                        <span
-                          className={`activity-amount${isIncome ? " is-income" : ""}`}
+                {summary.recentActivity.length ? (
+                  <div className="activity-list">
+                    {summary.recentActivity.slice(0, 6).map((activity) => {
+                      const amount = dashboardActivityAmount(activity);
+                      const isIncome = ["INCOME", "REFUND"].includes(
+                        activity.transaction.kind,
+                      );
+                      return (
+                        <Link
+                          className="activity-row"
+                          key={activity.transaction.id}
+                          to={`/app/transactions/${activity.transaction.id}`}
                         >
-                          {amount ? (
-                            <PrivacyMask label="activity amount">
-                              {dashboardMoney(amount)}
-                            </PrivacyMask>
-                          ) : (
-                            "—"
-                          )}
+                          <span className="activity-kind" aria-hidden="true">
+                            {isIncome
+                              ? "↑"
+                              : activity.transaction.kind === "EXPENSE"
+                                ? "↓"
+                                : "↔"}
+                          </span>
+                          <span className="activity-copy">
+                            <strong>{dashboardActivityLabel(activity)}</strong>
+                            <span>
+                              {activity.transaction.occurredOn} ·{" "}
+                              {activity.transaction.status === "VOID"
+                                ? "Voided"
+                                : activity.transaction.kind.replaceAll(
+                                    "_",
+                                    " ",
+                                  )}
+                            </span>
+                          </span>
+                          <span
+                            className={`activity-amount${isIncome ? " is-income" : ""}`}
+                          >
+                            {amount ? (
+                              <PrivacyMask label="activity amount">
+                                {dashboardMoney(amount)}
+                              </PrivacyMask>
+                            ) : (
+                              "—"
+                            )}
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="dashboard-empty">
+                    <p>Transactions will appear here after you record one.</p>
+                    <Link className="quiet-link" to="/app/transactions/new">
+                      Add a transaction
+                    </Link>
+                  </div>
+                )}
+              </section>
+            </div>
+            <aside className="dashboard-overview-side">
+              <section
+                className="dashboard-panel"
+                aria-labelledby="accounts-heading"
+              >
+                <div className="dashboard-panel-heading">
+                  <div>
+                    <p className="dashboard-label">Your accounts</p>
+                    <h2 id="accounts-heading">Balances at a glance</h2>
+                  </div>
+                  <Link className="quiet-link" to="/app/accounts">
+                    View all
+                  </Link>
+                </div>
+                {summary.accounts.length ? (
+                  <div className="account-list">
+                    {summary.accounts.map((account) => (
+                      <Link
+                        className="account-row"
+                        key={account.id}
+                        to={`/app/accounts/${account.id}`}
+                      >
+                        <span className="account-mark" aria-hidden="true">
+                          {account.type === "CREDIT_CARD" ? "◇" : "•"}
+                        </span>
+                        <span className="account-copy">
+                          <strong>{account.name}</strong>
+                          <span>{dashboardAccountType(account.type)}</span>
+                        </span>
+                        <span className="account-balance">
+                          <PrivacyMask label={`${account.name} balance`}>
+                            {dashboardMoney(account.balanceMinor)}
+                          </PrivacyMask>
                         </span>
                       </Link>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="dashboard-empty">
-                  <p>Transactions will appear here after you record one.</p>
-                  <Link className="quiet-link" to="/app/transactions/new">
-                    Add a transaction
+                    ))}
+                  </div>
+                ) : (
+                  <div className="dashboard-empty">
+                    <p>No accounts yet.</p>
+                    <Link className="quiet-link" to="/onboarding">
+                      Create your first account
+                    </Link>
+                  </div>
+                )}
+              </section>
+
+              <section
+                className="dashboard-panel dashboard-side-bills"
+                aria-labelledby="dashboard-bills-heading"
+              >
+                <div className="dashboard-panel-heading">
+                  <div>
+                    <p className="dashboard-label">Plan ahead</p>
+                    <h2 id="dashboard-bills-heading">Upcoming bills</h2>
+                  </div>
+                  <Link className="quiet-link" to="/app/bills">
+                    View bills
                   </Link>
                 </div>
-              )}
-            </section>
-          </div>
-
-          <section
-            className="dashboard-panel dashboard-bills-panel"
-            aria-labelledby="dashboard-bills-heading"
-          >
-            <div className="dashboard-panel-heading">
-              <div>
-                <p className="dashboard-label">Plan ahead</p>
-                <h2 id="dashboard-bills-heading">Upcoming bills</h2>
-              </div>
-              <Link className="quiet-link" to="/app/bills">
-                View bills
-              </Link>
-            </div>
-            {summary.upcomingBills.length ? (
-              <div className="bill-list">
-                {summary.upcomingBills.map((bill) => (
-                  <div className="bill-row" key={bill.id}>
-                    <div>
-                      <strong>{bill.billName}</strong>
-                      <span>
-                        {bill.dueOn} ·{" "}
-                        {bill.status === "OVERDUE" ? "Overdue" : "Upcoming"}
-                      </span>
-                    </div>
-                    <span>
-                      {bill.expectedAmountMinor ? (
-                        <PrivacyMask label={`${bill.billName} expected bill`}>
-                          {formatPhp(moneyMinor(bill.expectedAmountMinor))}
-                        </PrivacyMask>
-                      ) : (
-                        "Variable amount"
-                      )}
-                    </span>
+                {summary.upcomingBills.length ? (
+                  <div className="bill-list">
+                    {summary.upcomingBills.slice(0, 4).map((bill) => (
+                      <div className="bill-row" key={bill.id}>
+                        <div>
+                          <strong>{bill.billName}</strong>
+                          <span>
+                            {bill.dueOn} · {bill.status.toLowerCase()}
+                          </span>
+                        </div>
+                        <span className="bill-amount">
+                          {bill.expectedAmountMinor ? (
+                            <PrivacyMask
+                              label={`${bill.billName} expected bill`}
+                            >
+                              {dashboardMoney(bill.expectedAmountMinor)}
+                            </PrivacyMask>
+                          ) : (
+                            "Variable amount"
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="dashboard-empty">
-                <p>No upcoming bills.</p>
-              </div>
-            )}
-          </section>
+                ) : (
+                  <div className="dashboard-empty">
+                    <p>No upcoming bills.</p>
+                    <Link className="quiet-link" to="/app/bills">
+                      Manage bills
+                    </Link>
+                  </div>
+                )}
+              </section>
+            </aside>
+          </div>
         </>
       ) : null}
     </section>
