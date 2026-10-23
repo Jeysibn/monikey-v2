@@ -15,6 +15,13 @@ export class LedgerValidationError extends Error {
   }
 }
 
+export class LedgerBalanceInvariantError extends LedgerValidationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LedgerBalanceInvariantError";
+  }
+}
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -22,7 +29,7 @@ export function assertBalancedPostings(
   postings: readonly LedgerPostingInput[],
 ): void {
   if (postings.length < 2) {
-    throw new LedgerValidationError(
+    throw new LedgerBalanceInvariantError(
       "A journal requires at least two postings.",
     );
   }
@@ -68,6 +75,8 @@ export function assertBalancedPostings(
   }
 
   if (debits !== credits) {
-    throw new LedgerValidationError("Journal debits and credits must balance.");
+    throw new LedgerBalanceInvariantError(
+      "Journal debits and credits must balance.",
+    );
   }
 }

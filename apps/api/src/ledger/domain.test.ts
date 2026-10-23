@@ -3,6 +3,7 @@ import test from "node:test";
 import { moneyMinor } from "@monikey/money";
 import {
   assertBalancedPostings,
+  LedgerBalanceInvariantError,
   LedgerValidationError,
   type LedgerPostingInput,
 } from "./domain.js";
@@ -34,7 +35,7 @@ test("accepts exact positive postings that balance", () => {
 test("requires two postings and distinct ledger accounts", () => {
   assert.throws(
     () => assertBalancedPostings([posting(expenseLedgerId, "DEBIT", 1n)]),
-    LedgerValidationError,
+    LedgerBalanceInvariantError,
   );
   assert.throws(
     () =>
@@ -53,7 +54,7 @@ test("rejects unbalanced, non-positive, invalid, and out-of-range postings", () 
         posting(expenseLedgerId, "DEBIT", 2n),
         posting(bankLedgerId, "CREDIT", 1n),
       ]),
-    /must balance/,
+    LedgerBalanceInvariantError,
   );
   assert.throws(
     () =>

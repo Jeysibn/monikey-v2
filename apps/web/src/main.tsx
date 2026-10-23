@@ -62,6 +62,7 @@ const pageTitles: Record<string, string> = {
 
 type Profile = {
   user: {
+    id: string;
     emailNormalized: string;
     timezone: "Asia/Manila";
     currency: "PHP";
@@ -71,6 +72,68 @@ type Profile = {
   serverToday: string;
   onboardingStatus: "NEEDS_FIRST_ACCOUNT" | "READY";
 };
+
+type PendingIdempotencyRecord = {
+  fingerprint: string;
+  key: string;
+};
+
+const pendingTransactionKeys = new Map<string, PendingIdempotencyRecord>();
+
+async function transactionIdempotencyKey(
+  userId: string,
+  payload: unknown,
+): Promise<string> {
+  const fingerprintBytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(payload)),
+  );
+  const fingerprint = Array.from(new Uint8Array(fingerprintBytes), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const storageKey = `monikey-v2.pending-transaction.${userId}`;
+  let pending = pendingTransactionKeys.get(storageKey) ?? null;
+  try {
+    const stored = sessionStorage.getItem(storageKey);
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
+      if (
+        typeof parsed.fingerprint === "string" &&
+        typeof parsed.key === "string"
+      ) {
+        pending = { fingerprint: parsed.fingerprint, key: parsed.key };
+      }
+    }
+  } catch {
+    // Keep the in-memory key when session storage is unavailable.
+  }
+  if (pending?.fingerprint === fingerprint) return pending.key;
+
+  const key = crypto.randomUUID();
+  const next = { fingerprint, key };
+  pendingTransactionKeys.set(storageKey, next);
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {
+    // The current page can still safely retry in memory when storage is blocked.
+  }
+  return key;
+}
+
+function clearTransactionIdempotencyKey(userId: string, key: string): void {
+  const storageKey = `monikey-v2.pending-transaction.${userId}`;
+  if (pendingTransactionKeys.get(storageKey)?.key === key) {
+    pendingTransactionKeys.delete(storageKey);
+  }
+  try {
+    const stored = sessionStorage.getItem(storageKey);
+    if (!stored) return;
+    const pending = JSON.parse(stored) as Partial<PendingIdempotencyRecord>;
+    if (pending.key === key) sessionStorage.removeItem(storageKey);
+  } catch {
+    // The stored retry key is only a convenience; successful API state is final.
+  }
+}
 
 type AuthContextValue = {
   profile: Profile | null;
@@ -298,7 +361,10 @@ function AppShell() {
   const { profile, logout } = useAuth();
   const isOnline = useOnlineStatus();
   const pageTitle =
-    pageTitles[location.pathname] ??
+    (location.pathname === "/onboarding" &&
+    profile?.onboardingStatus === "READY"
+      ? "Accounts"
+      : pageTitles[location.pathname]) ??
     (location.pathname.includes("/statements")
       ? "Statements"
       : location.pathname.includes("/transactions/")
@@ -424,6 +490,8 @@ function RoutePage({
   icon,
   linkTo = "/app",
   linkLabel = "Back to Home",
+  emptyTitle = "Nothing to show yet",
+  emptyDescription = "Saved records appear here when this view has something to show. No sample balances or transactions are added.",
 }: {
   eyebrow: string;
   title: string;
@@ -431,6 +499,8 @@ function RoutePage({
   icon: string;
   linkTo?: string;
   linkLabel?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   return (
     <section className="route-page" aria-labelledby="page-heading">
@@ -444,11 +514,8 @@ function RoutePage({
           {icon}
         </span>
         <div className="empty-copy">
-          <p className="empty-title">Nothing to show yet</p>
-          <p>
-            This area will use your saved records once sign-in and real account
-            workflows are ready. No sample balances or transactions are shown.
-          </p>
+          <p className="empty-title">{emptyTitle}</p>
+          <p>{emptyDescription}</p>
         </div>
         <Link className="quiet-link" to={linkTo}>
           {linkLabel}
@@ -3659,10 +3726,12 @@ function OnboardingPage() {
       <RoutePage
         eyebrow="Your accounts"
         title="Your first account is already set up."
-        description="You can add more accounts from the Accounts area once that workflow is available."
+        description="Your account balances and history are in Accounts. Add another account there whenever you need one."
         icon="✓"
-        linkTo="/app"
-        linkLabel="Go to Home"
+        linkTo="/app/accounts"
+        linkLabel="Go to Accounts"
+        emptyTitle="Your account is ready."
+        emptyDescription="Account balances and history come from your saved journal. Manage your accounts whenever you need to."
       />
     );
   }
@@ -3897,6 +3966,7 @@ function QuickAddPage() {
   const [hasEdited, setHasEdited] = useState(false);
   const sheetRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const returnTo = (location.state as { from?: string } | null)?.from ?? "/app";
   const isSheet = Boolean(
     (location.state as { from?: string } | null)?.from &&
@@ -3909,6 +3979,9 @@ function QuickAddPage() {
       return;
     }
     navigate(returnTo);
+    window.requestAnimationFrame(() => {
+      if (openerRef.current?.isConnected) openerRef.current.focus();
+    });
   }, [hasEdited, navigate, returnTo]);
 
   useEffect(() => {
@@ -3950,7 +4023,11 @@ function QuickAddPage() {
   }, [closeSheet, isSheetReady]);
 
   useLayoutEffect(() => {
-    if (isSheetReady) closeButtonRef.current?.focus();
+    if (!isSheetReady) return;
+    if (document.activeElement instanceof HTMLElement) {
+      openerRef.current = document.activeElement;
+    }
+    closeButtonRef.current?.focus();
   }, [isSheetReady]);
 
   useEffect(() => {
@@ -4067,13 +4144,17 @@ function QuickAddPage() {
         throw new Error("Choose two different accounts.");
       }
       setPending(true);
+      const idempotencyKey = await transactionIdempotencyKey(
+        profile.user.id,
+        body,
+      );
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
         body: JSON.stringify(body),
       });
@@ -4088,6 +4169,7 @@ function QuickAddPage() {
         }
         throw new Error(message);
       }
+      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");
@@ -4114,6 +4196,7 @@ function QuickAddPage() {
     setError("");
     setPending(true);
     try {
+      if (!profile) throw new Error("Your session needs to be refreshed.");
       const amountMinor = parsePositive(amount, "Amount").toString();
       const body =
         mode === "TRANSFER"
@@ -4139,13 +4222,17 @@ function QuickAddPage() {
               occurredOn,
               ...(note.trim() ? { note: note.trim() } : {}),
             };
+      const idempotencyKey = await transactionIdempotencyKey(
+        profile.user.id,
+        body,
+      );
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
         credentials: "include",
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
         body: JSON.stringify(body),
       });
@@ -4157,6 +4244,7 @@ function QuickAddPage() {
           payload?.error?.message ?? "The transaction could not be saved.",
         );
       }
+      clearTransactionIdempotencyKey(profile.user.id, idempotencyKey);
       setAmount("");
       setFee("");
       setNote("");

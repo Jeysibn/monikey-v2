@@ -14,4 +14,4 @@ Create and update requests require session authentication, same-origin/CSRF vali
 
 ## Historical records
 
-Archiving sets `archived_at`; active lists omit archived categories unless `includeArchived=true`. Stable IDs and `ledger_accounts` mappings remain. Existing transaction category references therefore continue to identify their original category in history and reports. Future transaction commands must reject archived categories; no such commands are part of P2-06.
+Archiving sets `archived_at`; active lists omit archived categories unless `includeArchived=true`. Stable IDs and `ledger_accounts` mappings remain. Existing transaction category references therefore continue to identify their original category in history and reports. Current income, expense, bill, and card-payment commands reject archived categories while preserving historical labels and totals. PostgreSQL integration and actual-API browser tests cover category owner isolation, duplicate handling, archive/restore, and historical references.

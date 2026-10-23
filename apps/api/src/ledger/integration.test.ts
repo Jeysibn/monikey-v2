@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { moneyMinor } from "@monikey/money";
 import { LedgerNotFoundError, postBalancedJournal } from "./service.js";
 import { LedgerValidationError } from "./domain.js";
+import { getLedgerInvariantFailures } from "./invariant-metrics.js";
 import { requireDatabaseUrl } from "../test-support/database-url.js";
 
 const databaseUrl = requireDatabaseUrl();
@@ -113,6 +114,7 @@ test("posts one audited balanced journal within its caller transaction", async (
     );
     assert.equal(audit.rowCount, 1);
 
+    const invariantFailuresBefore = getLedgerInvariantFailures();
     await assert.rejects(
       postBalancedJournal(client, {
         userId: ownerId,
@@ -133,6 +135,7 @@ test("posts one audited balanced journal within its caller transaction", async (
       }),
       LedgerValidationError,
     );
+    assert.equal(getLedgerInvariantFailures(), invariantFailuresBefore + 1);
 
     await assert.rejects(
       postBalancedJournal(client, {

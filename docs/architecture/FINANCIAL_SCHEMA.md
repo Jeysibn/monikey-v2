@@ -1,6 +1,6 @@
 # Financial schema contract
 
-Status: implemented through Phase 4. This document translates sections 4 and 6 of `MONIKEY_V2_MASTER_PLAN.md` into the PostgreSQL schema contract.
+Status: the financial schema supports the implemented Phase 2–4 domain; Phase 5 reports and exports derive from that data without a separate finance model. Production Kubernetes resources are maintained separately under `deploy/`. This document translates sections 4 and 6 of `MONIKEY_V2_MASTER_PLAN.md` into the PostgreSQL schema contract.
 
 ## Ownership
 

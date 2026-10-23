@@ -600,12 +600,14 @@ export const BillOccurrenceResponseSchema = z.object({
 export const TransactionCreateResponseSchema = z.object({
   transaction: TransactionSchema,
   account: FinancialAccountSchema,
+  requestId: z.string(),
 });
 
 export const TransferCreateResponseSchema = z.object({
   transaction: TransactionSchema,
   sourceAccount: FinancialAccountSchema,
   destinationAccount: FinancialAccountSchema,
+  requestId: z.string(),
 });
 
 export const CardPaymentResponseSchema = z.object({

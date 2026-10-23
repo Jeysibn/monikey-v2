@@ -8,7 +8,7 @@ import {
   updateCardStatement,
   CardStatementConflictError,
 } from "./card-statements.js";
-import { createCardPayment } from "./transactions.js";
+import { createCardPayment, createIncomeOrExpense } from "./transactions.js";
 import { requireDatabaseUrl } from "./test-support/database-url.js";
 
 const pool = new Pool({ connectionString: requireDatabaseUrl() });
@@ -73,6 +73,33 @@ test("card statements retain manual amounts and allocation history", async () =>
     assert.ok(afterPayment);
     assert.equal(afterPayment.allocatedMinor, "40000");
     assert.equal(afterPayment.remainingDueMinor, "60000");
+
+    const foodCategory = await client.query<{ id: string }>(
+      `SELECT id FROM categories
+        WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Food'`,
+      [userId],
+    );
+    assert.ok(foodCategory.rows[0]?.id);
+    await createIncomeOrExpense(
+      client,
+      userId,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: card.id,
+        categoryId: foodCategory.rows[0]!.id,
+        amountMinor: "25000",
+        occurredOn: "2026-10-22",
+        note: "Purchase after statement",
+      },
+      "2026-10-22",
+    );
+    const afterNewPurchase = (
+      await listCardStatements(client, userId, card.id)
+    ).find((statement) => statement.id === created.id);
+    assert.ok(afterNewPurchase);
+    assert.equal(afterNewPurchase.amountDueMinor, "100000");
+    assert.equal(afterNewPurchase.allocatedMinor, "40000");
+    assert.equal(afterNewPurchase.remainingDueMinor, "60000");
 
     await assert.rejects(
       updateCardStatement(client, userId, card.id, created.id, {
