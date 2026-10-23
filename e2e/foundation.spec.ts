@@ -471,7 +471,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     await route.fulfill({ response });
   });
   await page.getByRole("button", { name: "Record expense" }).click();
-  await expect(page.locator(".form-error")).toHaveText(
+  await expect(page.locator(".form-error")).toContainText(
     "Injected response loss after database commit.",
   );
   await page.reload();
@@ -1684,6 +1684,483 @@ test("quick add asks before recording an expense that makes an account negative"
   expect((await accountAfter.json()).account.balanceMinor).toBe("-500");
 });
 
+test("Quick Add retains multiple unresolved submissions across intervening entries and refresh", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "quickadd-retry@example.test",
+      password: "CI-only-quickadd-retry-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const suffix = randomUUID();
+  const accountResponse = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `quick-add-multiple-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Quick Add Retry ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+  const categoriesResponse = await page.request.get(`${api}/categories`);
+  const food = (await categoriesResponse.json()).categories.find(
+    (category: { kind: string; name: string }) =>
+      category.kind === "EXPENSE" && category.name === "Food",
+  );
+  expect(food?.id).toBeTruthy();
+
+  let firstKey = "";
+  let secondKey = "";
+  let retryKey = "";
+  let firstTransactionId = "";
+  let lostResponse = false;
+  let bAttempt = 0;
+  let firstBKey = "";
+  await page.route("**/api/v1/transactions", async (route) => {
+    const requestBody = route.request().postDataJSON() as {
+      amountMinor: string;
+      note?: string;
+    };
+    const key = route.request().headers()["idempotency-key"];
+    if (requestBody.note === "separate B" && ++bAttempt === 1) {
+      firstBKey = key;
+      await route.abort("timedout");
+      return;
+    }
+    const response = await route.fetch();
+    const result = await response.json();
+    if (requestBody.note === "unresolved A" && !lostResponse) {
+      lostResponse = true;
+      firstKey = key;
+      firstTransactionId = result.transaction.id;
+      expect(response.status()).toBe(201);
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected response loss after database commit." },
+        }),
+      });
+      return;
+    }
+    if (requestBody.note === "separate B") {
+      secondKey = key;
+      expect(key).toBe(firstBKey);
+    }
+    if (requestBody.note === "unresolved A") {
+      retryKey = key;
+      expect(response.status()).toBe(201);
+      expect(result.transaction.id).toBe(firstTransactionId);
+    }
+    await route.fulfill({ response });
+  });
+
+  await page.goto("/app/transactions/new");
+  await expect(
+    page.getByRole("heading", { name: "Record it while it is fresh." }),
+  ).toBeVisible();
+  const amount = page.locator("#quick-add-amount");
+  const account = page.locator(".quick-add-card select").nth(0);
+  const category = page.locator(".quick-add-card select").nth(1);
+  await amount.fill("10.00");
+  await account.selectOption(accountId);
+  await category.selectOption({ label: "Food" });
+  await page.getByLabel("Note Optional").fill("unresolved A");
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "result could not be confirmed",
+  );
+
+  await amount.fill("5.00");
+  await page.getByLabel("Note Optional").fill("separate B");
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(secondKey).toBeTruthy();
+  expect(secondKey).not.toBe(firstKey);
+
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Record it while it is fresh." }),
+  ).toBeVisible();
+  await amount.fill("10.00");
+  await page.locator(".quick-add-card select").nth(0).selectOption(accountId);
+  await page
+    .locator(".quick-add-card select")
+    .nth(1)
+    .selectOption({ label: "Food" });
+  await page.getByLabel("Note Optional").fill("unresolved A");
+  await page.getByRole("button", { name: "Record expense" }).click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(retryKey).toBe(firstKey);
+  await page.unroute("**/api/v1/transactions");
+
+  const accountAfter = await page.request.get(`${api}/accounts/${accountId}`);
+  expect(accountAfter.status()).toBe(200);
+  expect((await accountAfter.json()).account.balanceMinor).toBe("98500");
+});
+
+test("card payment recovers a committed lost response with the same key", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "card-payment-ui@example.test",
+      password: "CI-only-card-payment-ui-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const suffix = randomUUID();
+  const createAccount = async (
+    type: "BANK" | "CREDIT_CARD",
+    name: string,
+    openingBalanceMinor: string,
+  ) => {
+    const response = await page.request.post(`${api}/accounts`, {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `card-payment-ui-${suffix}-${type}`,
+      },
+      data: {
+        type,
+        name: `${name} ${suffix}`,
+        openingBalanceMinor,
+        ...(type === "CREDIT_CARD" ? { creditLimitMinor: "500000" } : {}),
+      },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).account as { id: string };
+  };
+  const funding = await createAccount("BANK", "Payment Funding", "500000");
+  const card = await createAccount("CREDIT_CARD", "Payment Card", "100000");
+
+  let firstKey = "";
+  let retryKey = "";
+  let transactionId = "";
+  let paymentBody: Record<string, unknown> = {};
+  let retryObserved = false;
+  let secondPaymentKey = "";
+  let secondPaymentTransactionId = "";
+  let requestAttempt = 0;
+  await page.route(
+    `**/api/v1/credit-cards/${card.id}/payments`,
+    async (route) => {
+      const key = route.request().headers()["idempotency-key"];
+      requestAttempt += 1;
+      if (requestAttempt === 1) {
+        firstKey = key;
+        await route.abort("timedout");
+        return;
+      }
+      const response = await route.fetch();
+      const result = await response.json();
+      expect(response.status()).toBe(201);
+      if (requestAttempt === 2) {
+        expect(key).toBe(firstKey);
+        transactionId = result.transaction.id;
+        paymentBody = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { message: "Injected response loss after database commit." },
+          }),
+        });
+        return;
+      }
+      if (!retryObserved) {
+        retryObserved = true;
+        retryKey = key;
+        expect(result.transaction.id).toBe(transactionId);
+      } else {
+        secondPaymentKey = key;
+        secondPaymentTransactionId = result.transaction.id;
+      }
+      await route.fulfill({ response });
+    },
+  );
+
+  await page.goto(`/app/accounts/${card.id}/pay`);
+  const amount = page.getByLabel("Payment amount *");
+  const fundingSelect = page.getByLabel("Funding account *");
+  const date = page.locator(".card-payment-card input[type=date]");
+  await amount.fill("50.00");
+  await fundingSelect.selectOption(funding.id);
+  const selectedDate = await date.inputValue();
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "result could not be confirmed",
+  );
+
+  await page.reload();
+  await expect(amount).toBeVisible();
+  await amount.fill("50.00");
+  await fundingSelect.selectOption(funding.id);
+  await date.fill(selectedDate);
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.getByRole("status")).toContainText("Card payment posted.");
+  expect(retryKey).toBe(firstKey);
+
+  const repeatedPaymentRequests = await Promise.all(
+    [0, 1].map(() =>
+      page.request.post(`${api}/credit-cards/${card.id}/payments`, {
+        headers: {
+          origin,
+          "x-csrf-token": csrfToken,
+          "idempotency-key": firstKey,
+        },
+        data: paymentBody,
+      }),
+    ),
+  );
+  expect(repeatedPaymentRequests.map((response) => response.status())).toEqual([
+    201, 201,
+  ]);
+  const repeatedResults = await Promise.all(
+    repeatedPaymentRequests.map((response) => response.json()),
+  );
+  expect(repeatedResults.map((result) => result.transaction.id)).toEqual([
+    transactionId,
+    transactionId,
+  ]);
+
+  await amount.fill("10.00");
+  await page.getByLabel("Note Optional").fill("Second legitimate payment");
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.getByRole("status")).toContainText("Card payment posted.");
+  expect(secondPaymentKey).toBeTruthy();
+  expect(secondPaymentKey).not.toBe(firstKey);
+  expect(secondPaymentTransactionId).not.toBe(transactionId);
+  await page.unroute(`**/api/v1/credit-cards/${card.id}/payments`);
+
+  const cardAfter = await page.request.get(`${api}/accounts/${card.id}`);
+  const fundingAfter = await page.request.get(`${api}/accounts/${funding.id}`);
+  expect((await cardAfter.json()).account.balanceMinor).toBe("94000");
+  expect((await fundingAfter.json()).account.balanceMinor).toBe("494000");
+
+  const mismatchedReplay = await page.request.post(
+    `${api}/credit-cards/${card.id}/payments`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": firstKey,
+      },
+      data: {
+        fundingAccountId: funding.id,
+        amountMinor: "5001",
+        occurredOn: selectedDate,
+      },
+    },
+  );
+  expect(mismatchedReplay.status()).toBe(409);
+  expect(
+    (await (await page.request.get(`${api}/accounts/${card.id}`)).json())
+      .account.balanceMinor,
+  ).toBe("94000");
+});
+
+test("Dashboard ignores an older refresh that finishes after newer ledger data", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "dashboard-refresh@example.test",
+      password: "CI-only-dashboard-refresh-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByText("Balances at a glance")).toBeVisible();
+
+  const suffix = randomUUID();
+  const accountResponse = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `dashboard-refresh-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Dashboard Refresh ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+  const categoryResponse = await page.request.get(
+    `${api}/categories?kind=EXPENSE`,
+  );
+  const category = (await categoryResponse.json()).categories.find(
+    (item: { name: string }) => item.name === "Food",
+  );
+  const note = `New dashboard record ${suffix}`;
+
+  let releaseOlder!: () => void;
+  let olderReady!: () => void;
+  const olderRequest = new Promise<void>((resolve) => (olderReady = resolve));
+  const release = new Promise<void>((resolve) => (releaseOlder = resolve));
+  let requestCount = 0;
+  await page.route("**/api/v1/dashboard/summary", async (route) => {
+    const response = await route.fetch();
+    if (++requestCount === 1) {
+      olderReady();
+      await release;
+    }
+    await route.fulfill({ response });
+  });
+  const refresh = page.locator(".dashboard-heading-actions button").first();
+  await refresh.click();
+  await olderRequest;
+
+  const expenseResponse = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `dashboard-expense-${suffix}`,
+    },
+    data: {
+      kind: "EXPENSE",
+      sourceAccountId: accountId,
+      categoryId: category.id,
+      amountMinor: "1000",
+      occurredOn: "2026-10-24",
+      note,
+    },
+  });
+  expect(expenseResponse.status()).toBe(201);
+
+  await refresh.click();
+  await expect(page.getByText(note, { exact: true })).toBeVisible();
+  releaseOlder();
+  await expect(page.getByText(note, { exact: true })).toBeVisible();
+  await page.unroute("**/api/v1/dashboard/summary");
+});
+
+test("Accounts marks failed refreshes stale and Retry reloads real balances", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "accounts-stale@example.test",
+      password: "CI-only-accounts-stale-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const account = await page.request.post(apiUrl("/accounts"), {
+    headers: {
+      origin: webOrigin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `accounts-stale-refresh-${randomUUID()}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Stale refresh ${randomUUID()}`,
+      openingBalanceMinor: "20000",
+    },
+  });
+  expect(account.status()).toBe(201);
+  await page.goto("/app/accounts");
+  await expect(page.getByRole("heading", { name: "Accounts" })).toBeVisible();
+  await expect(
+    page.locator(".accounts-list .account-detail-row").first(),
+  ).toBeVisible();
+
+  let failedOnce = false;
+  await page.route("**/api/v1/accounts*includeArchived=true", async (route) => {
+    if (!failedOnce) {
+      failedOnce = true;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected temporary refresh failure." },
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator(".dashboard-heading-actions button").first().click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Account balances may be out of date",
+  );
+  await expect(page.getByRole("alert")).toContainText("remain visible");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/v1/accounts*includeArchived=true");
+});
+
+test("Quick Add refreshes the Manila business date when opened and preserves a chosen date", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "manila-date@example.test",
+      password: "CI-only-manila-date-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "manila-date@example.test" }),
+  ).toBeVisible();
+
+  await page.route("**/api/v1/me", async (route) => {
+    const response = await route.fetch();
+    const profile = await response.json();
+    profile.serverToday = "2030-01-02";
+    await route.fulfill({ response, json: profile });
+  });
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Add transaction" })
+    .click();
+  const date = page.locator(".quick-add-card input[type=date]");
+  await expect(date).toHaveValue("2030-01-02");
+  await date.fill("2030-01-01");
+  await page.getByLabel("Amount").fill("5.00");
+  await expect(date).toHaveValue("2030-01-01");
+  await page.unroute("**/api/v1/me");
+});
+
 test("expense and income commands are balanced and retry-safe", async ({
   page,
 }) => {
@@ -2179,7 +2656,10 @@ test("reports keep month data isolated and retry the selected month", async ({
   await page.goto("/app/transactions/new");
   const amountInput = page.getByLabel("Amount");
   await expect(amountInput).toBeVisible();
-  expect((await amountInput.boundingBox())?.y).toBeLessThan(420);
+  const amountInputTop = await amountInput.evaluate(
+    (element) => element.getBoundingClientRect().top,
+  );
+  expect(amountInputTop).toBeLessThan(420);
   await page.goto("/app/activity");
   const filterToggle = page.getByRole("button", { name: /Filters/ });
   await expect(filterToggle).toHaveAttribute("aria-expanded", "false");

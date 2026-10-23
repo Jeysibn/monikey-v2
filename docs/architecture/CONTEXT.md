@@ -34,6 +34,20 @@ docs/           Portable architecture, ADRs, runbooks, and QA evidence
 
 The ledger module will own journal writes. Transactions and bills will orchestrate domain operations through it; routes and frontend code must not write postings or independently calculate balances.
 
+The web client uses small feature-level request and submission helpers rather
+than a global state library. `useLatestResource` scopes fetched data to its
+owner key, ignores older completions, and exposes refresh failure as stale
+data. `pending-submissions` stores only a payload fingerprint, idempotency key,
+and creation time in session storage. Quick Add and credit-card payments reuse
+that key for the same unresolved request and remove it only after confirmed
+success (or a terminal client error). The API remains the authority: its
+user-scoped PostgreSQL idempotency record stores the canonical request hash and
+replay response in the same transaction as the ledger operation.
+
+Manila business dates are calculated by the API on each `/me` response. The
+Quick Add route fetches that value when opened so a long-lived tab does not
+reuse yesterday's date after midnight; user-selected dates are kept as-is.
+
 ## Current implementation state
 
 The repository now contains the authenticated React/Vite PWA, Fastify API, PostgreSQL schema and migrations, exact-money and API-contract packages, ledger-backed account/transaction/card/bill/report flows, owner-scoped exports and settings, and Docker Compose environments. Local validation covers strict typing/builds, PostgreSQL integration, and desktop/mobile Playwright journeys against the actual API. Phase 6 also has Kubernetes, backup, monitoring, and release templates with local validation.
