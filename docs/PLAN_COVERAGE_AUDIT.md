@@ -2,6 +2,11 @@
 
 Updated: 2026-10-23 (FIN-014 and FIN-016 regression coverage)
 
+Owner update (2026-10-24): Dependabot update automation was removed at the
+owner's request. The repository no longer has a Dependabot configuration;
+open Dependabot update PRs are being closed. GitHub automated security fixes
+and vulnerability alerts were already disabled.
+
 This audit maps the approved `MONIKEY_V2_MASTER_PLAN.md` to the current V2
 repository. It distinguishes implementation evidence from owner, device, and
 production gates. A passing local check does not close a gate that the plan
