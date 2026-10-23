@@ -7,6 +7,24 @@ const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
   .split("\0")
   .filter(Boolean);
 
+const historicalPathByObject = new Map();
+for (const entry of execFileSync("git", ["rev-list", "--objects", "--all"], {
+  encoding: "utf8",
+}).split("\n")) {
+  const match = /^([0-9a-f]{40,64})\s+(.+)$/.exec(entry);
+  if (match && !historicalPathByObject.has(match[1])) {
+    historicalPathByObject.set(match[1], match[2]);
+  }
+}
+
+const historicalObjectIds = [...historicalPathByObject.keys()];
+const historicalBlobs = historicalObjectIds.length
+  ? execFileSync("git", ["cat-file", "--batch"], {
+      input: `${historicalObjectIds.join("\n")}\n`,
+      maxBuffer: 256 * 1024 * 1024,
+    })
+  : Buffer.alloc(0);
+
 const rules = [
   {
     name: "private key material",
@@ -30,6 +48,20 @@ const rules = [
 ];
 
 const findings = [];
+const reported = new Set();
+function scanText(path, source) {
+  if (source.includes("\0")) return;
+  for (const rule of rules) {
+    if (rule.pattern.test(source)) {
+      const finding = `${path}: ${rule.name}`;
+      if (!reported.has(finding)) {
+        reported.add(finding);
+        findings.push(finding);
+      }
+    }
+  }
+}
+
 for (const file of trackedFiles) {
   let source;
   try {
@@ -37,10 +69,29 @@ for (const file of trackedFiles) {
   } catch {
     continue;
   }
-  if (source.includes("\0")) continue;
-  for (const rule of rules) {
-    if (rule.pattern.test(source)) findings.push(`${file}: ${rule.name}`);
+  scanText(file, source);
+}
+
+let offset = 0;
+for (let index = 0; index < historicalObjectIds.length; index += 1) {
+  const headerEnd = historicalBlobs.indexOf(0x0a, offset);
+  if (headerEnd < 0) break;
+  const header = historicalBlobs.toString("utf8", offset, headerEnd);
+  offset = headerEnd + 1;
+  const [objectId, objectType, rawSize] = header.split(" ");
+  const size = Number(rawSize);
+  if (objectType !== "blob" || !Number.isSafeInteger(size) || size < 0) {
+    continue;
   }
+  const contentEnd = offset + size;
+  if (contentEnd > historicalBlobs.length) break;
+  if (objectId === historicalObjectIds[index]) {
+    scanText(
+      historicalPathByObject.get(objectId) ?? "<historical blob>",
+      historicalBlobs.toString("utf8", offset, contentEnd),
+    );
+  }
+  offset = contentEnd + 1;
 }
 
 if (findings.length > 0) {
@@ -50,5 +101,5 @@ if (findings.length > 0) {
 }
 
 console.log(
-  `Secret scan passed: ${trackedFiles.length} tracked files checked.`,
+  `Secret scan passed: ${trackedFiles.length} tracked files and ${historicalObjectIds.length} reachable Git objects checked.`,
 );

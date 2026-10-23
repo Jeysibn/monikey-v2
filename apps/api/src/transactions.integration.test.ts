@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
 import test, { after } from "node:test";
 import { Pool } from "pg";
-import { createFinancialAccount, readFinancialAccount } from "./accounts.js";
+import fc from "fast-check";
+import {
+  archiveFinancialAccount,
+  createFinancialAccount,
+  readFinancialAccount,
+} from "./accounts.js";
 import {
   createAdjustment,
   createCardPayment,
@@ -14,7 +20,11 @@ import {
   TransactionConflictError,
   TransactionNotFoundError,
 } from "./transactions.js";
+import { listTransactions } from "./transactions.js";
+import { ensureDefaultCategories } from "./categories.js";
+import { runIdempotently } from "./idempotency.js";
 import { requireDatabaseUrl } from "./test-support/database-url.js";
+import { readMonthlyReport } from "./reports.js";
 
 const databaseUrl = requireDatabaseUrl();
 const pool = new Pool({ connectionString: databaseUrl });
@@ -37,7 +47,11 @@ test("income and expense commands post balanced journals and derive balances", a
     const account = await createFinancialAccount(
       client,
       userId,
-      { type: "BANK", name: "Transaction bank", openingBalanceMinor: "100000" },
+      {
+        type: "BANK",
+        name: "Transaction bank",
+        openingBalanceMinor: "1000000",
+      },
       "2026-10-22",
     );
     await createFinancialAccount(
@@ -78,7 +92,7 @@ test("income and expense commands post balanced journals and derive balances", a
       "2026-10-22",
     );
     assert.equal(expense.transaction.kind, "EXPENSE");
-    assert.equal(expense.account.balanceMinor, "75000");
+    assert.equal(expense.account.balanceMinor, "975000");
 
     const income = await createIncomeOrExpense(
       client,
@@ -87,13 +101,13 @@ test("income and expense commands post balanced journals and derive balances", a
         kind: "INCOME",
         sourceAccountId: account.id,
         categoryId: incomeCategory.id,
-        amountMinor: "40000",
+        amountMinor: "400000",
         occurredOn: "2026-10-22",
       },
       "2026-10-22",
     );
     assert.equal(income.transaction.kind, "INCOME");
-    assert.equal(income.account.balanceMinor, "115000");
+    assert.equal(income.account.balanceMinor, "1375000");
 
     const journals = await client.query<{
       operation_kind: string;
@@ -122,8 +136,8 @@ test("income and expense commands post balanced journals and derive balances", a
       {
         operation_kind: "INCOME",
         posting_count: "2",
-        debit_total: "40000",
-        credit_total: "40000",
+        debit_total: "400000",
+        credit_total: "400000",
       },
     ]);
 
@@ -151,7 +165,7 @@ test("income and expense commands post balanced journals and derive balances", a
           kind: "EXPENSE",
           sourceAccountId: account.id,
           categoryId: expenseCategory.id,
-          amountMinor: "999999",
+          amountMinor: "2259999",
           occurredOn: "2026-10-22",
         },
         "2026-10-22",
@@ -165,7 +179,7 @@ test("income and expense commands post balanced journals and derive balances", a
         kind: "EXPENSE",
         sourceAccountId: account.id,
         categoryId: expenseCategory.id,
-        amountMinor: "999999",
+        amountMinor: "2259999",
         occurredOn: "2026-10-22",
         acknowledgeNegativeBalance: true,
       },
@@ -234,6 +248,198 @@ test("income and expense commands post balanced journals and derive balances", a
   }
 });
 
+test("activity cursor preserves PostgreSQL timestamp precision for tied entries", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    await ensureDefaultCategories(client, userId);
+    const account = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "BANK",
+        name: "Activity cursor bank",
+        openingBalanceMinor: "1000",
+      },
+      "2026-10-22",
+    );
+    const category = await client.query<{ id: string }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Food'`,
+      [userId],
+    );
+    assert.ok(category.rows[0]?.id);
+    const expected = new Set<string>();
+    for (let index = 0; index < 3; index += 1) {
+      const created = await createIncomeOrExpense(
+        client,
+        userId,
+        {
+          kind: "EXPENSE",
+          sourceAccountId: account.id,
+          categoryId: category.rows[0]!.id,
+          amountMinor: "1",
+          occurredOn: "2026-10-22",
+          note: `Tied activity ${index}`,
+        },
+        "2026-10-22",
+      );
+      expected.add(created.transaction.id);
+    }
+
+    const actual = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await listTransactions(client, userId, {
+        limit: 1,
+        kind: "EXPENSE",
+        cursor,
+      });
+      for (const item of page.activity) actual.add(item.transaction.id);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor && actual.size < 10);
+
+    assert.deepEqual(actual, expected);
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
+test("randomized posting references reject archived, foreign, and missing resources", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owners = await client.query<{ owner: string; other: string }>(
+      `SELECT
+         (SELECT id FROM users WHERE email_normalized = 'second@example.test') AS owner,
+         (SELECT id FROM users WHERE email_normalized = 'owner@example.test') AS other`,
+    );
+    const ownerId = owners.rows[0]?.owner;
+    const otherOwnerId = owners.rows[0]?.other;
+    assert.ok(ownerId);
+    assert.ok(otherOwnerId);
+
+    const activeAccount = await createFinancialAccount(
+      client,
+      ownerId,
+      {
+        type: "CASH",
+        name: "Posting reference active",
+        openingBalanceMinor: "1000",
+      },
+      "2026-10-23",
+    );
+    const archivedAccount = await createFinancialAccount(
+      client,
+      ownerId,
+      {
+        type: "BANK",
+        name: "Posting reference archived",
+        openingBalanceMinor: "1000",
+      },
+      "2026-10-23",
+    );
+    const foreignAccount = await createFinancialAccount(
+      client,
+      otherOwnerId,
+      {
+        type: "CASH",
+        name: "Posting reference foreign",
+        openingBalanceMinor: "1000",
+      },
+      "2026-10-23",
+    );
+    const categories = await client.query<{ id: string }>(
+      `SELECT id FROM categories
+        WHERE user_id = $1 AND kind = 'EXPENSE' ORDER BY name LIMIT 1`,
+      [ownerId],
+    );
+    const activeCategory = categories.rows[0]?.id;
+    assert.ok(activeCategory);
+    const foreignCategory = await client.query<{ id: string }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND kind = 'EXPENSE' ORDER BY name LIMIT 1`,
+      [otherOwnerId],
+    );
+    assert.ok(foreignCategory.rows[0]?.id);
+    const archivedCategory = await client.query<{ id: string }>(
+      `INSERT INTO categories (user_id, kind, name, sort_order)
+       VALUES ($1, 'EXPENSE', 'Posting reference archived', 100)
+       RETURNING id`,
+      [ownerId],
+    );
+    assert.ok(archivedCategory.rows[0]?.id);
+    await client.query(
+      `UPDATE categories SET archived_at = now()
+        WHERE user_id = $1 AND id = $2`,
+      [ownerId, archivedCategory.rows[0]!.id],
+    );
+    await archiveFinancialAccount(client, ownerId, archivedAccount.id);
+
+    const invalidAccounts = [
+      foreignAccount.id,
+      archivedAccount.id,
+      randomUUID(),
+    ];
+    const invalidCategories = [
+      foreignCategory.rows[0]!.id,
+      archivedCategory.rows[0]!.id,
+      randomUUID(),
+    ];
+    const requestFor = (sourceAccountId: string, categoryId: string) => ({
+      kind: "EXPENSE" as const,
+      sourceAccountId,
+      categoryId,
+      amountMinor: "1",
+      occurredOn: "2026-10-23",
+    });
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom(...invalidAccounts),
+        async (sourceAccountId) => {
+          await assert.rejects(
+            createIncomeOrExpense(
+              client,
+              ownerId,
+              requestFor(sourceAccountId, activeCategory),
+              "2026-10-23",
+            ),
+            TransactionNotFoundError,
+          );
+        },
+      ),
+      { numRuns: 30 },
+    );
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom(...invalidCategories),
+        async (categoryId) => {
+          await assert.rejects(
+            createIncomeOrExpense(
+              client,
+              ownerId,
+              requestFor(activeAccount.id, categoryId),
+              "2026-10-23",
+            ),
+            TransactionNotFoundError,
+          );
+        },
+      ),
+      { numRuns: 30 },
+    );
+
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
 test("transfer commands move balances and post optional fees as spending", async () => {
   const client = await pool.connect();
   try {
@@ -246,7 +452,11 @@ test("transfer commands move balances and post optional fees as spending", async
     const source = await createFinancialAccount(
       client,
       userId,
-      { type: "BANK", name: "Transfer source", openingBalanceMinor: "100000" },
+      {
+        type: "BANK",
+        name: "Transfer source",
+        openingBalanceMinor: "1000000",
+      },
       "2026-10-22",
     );
     const destination = await createFinancialAccount(
@@ -267,6 +477,11 @@ test("transfer commands move balances and post optional fees as spending", async
     const feeCategory = categories.rows.find((row) => row.kind === "EXPENSE");
     assert.ok(feeCategory?.id);
 
+    const totalsBeforeTransfer = await readMonthlyReport(
+      client,
+      userId,
+      "2026-10",
+    );
     const moved = await createTransfer(
       client,
       userId,
@@ -274,13 +489,30 @@ test("transfer commands move balances and post optional fees as spending", async
         kind: "TRANSFER",
         fromAccountId: source.id,
         toAccountId: destination.id,
-        amountMinor: "20000",
+        amountMinor: "100000",
         occurredOn: "2026-10-22",
       },
       "2026-10-22",
     );
-    assert.equal(moved.sourceAccount.balanceMinor, "80000");
-    assert.equal(moved.destinationAccount.balanceMinor, "20000");
+    assert.equal(moved.sourceAccount.balanceMinor, "900000");
+    assert.equal(moved.destinationAccount.balanceMinor, "100000");
+    const totalsAfterTransfer = await readMonthlyReport(
+      client,
+      userId,
+      "2026-10",
+    );
+    assert.deepEqual(
+      {
+        incomeMinor: totalsAfterTransfer.incomeMinor,
+        netExpensesMinor: totalsAfterTransfer.netExpensesMinor,
+        netCashFlowMinor: totalsAfterTransfer.netCashFlowMinor,
+      },
+      {
+        incomeMinor: totalsBeforeTransfer.incomeMinor,
+        netExpensesMinor: totalsBeforeTransfer.netExpensesMinor,
+        netCashFlowMinor: totalsBeforeTransfer.netCashFlowMinor,
+      },
+    );
 
     const withFee = await createTransfer(
       client,
@@ -289,15 +521,15 @@ test("transfer commands move balances and post optional fees as spending", async
         kind: "TRANSFER",
         fromAccountId: source.id,
         toAccountId: destination.id,
-        amountMinor: "10000",
+        amountMinor: "100000",
         feeMinor: "1500",
         feeCategoryId: feeCategory.id,
         occurredOn: "2026-10-22",
       },
       "2026-10-22",
     );
-    assert.equal(withFee.sourceAccount.balanceMinor, "68500");
-    assert.equal(withFee.destinationAccount.balanceMinor, "30000");
+    assert.equal(withFee.sourceAccount.balanceMinor, "798500");
+    assert.equal(withFee.destinationAccount.balanceMinor, "200000");
 
     const journal = await client.query<{
       operation_kind: string;
@@ -319,10 +551,17 @@ test("transfer commands move balances and post optional fees as spending", async
       {
         operation_kind: "TRANSFER",
         posting_count: "3",
-        debit_total: "11500",
-        credit_total: "11500",
+        debit_total: "101500",
+        credit_total: "101500",
       },
     ]);
+    const totalsAfterFeeTransfer = await readMonthlyReport(
+      client,
+      userId,
+      "2026-10",
+    );
+    assert.equal(totalsAfterFeeTransfer.incomeMinor, "0");
+    assert.equal(totalsAfterFeeTransfer.netExpensesMinor, "1500");
 
     const originalExpense = await createIncomeOrExpense(
       client,
@@ -331,12 +570,12 @@ test("transfer commands move balances and post optional fees as spending", async
         kind: "EXPENSE",
         sourceAccountId: source.id,
         categoryId: feeCategory.id,
-        amountMinor: "5000",
+        amountMinor: "15000",
         occurredOn: "2026-10-22",
       },
       "2026-10-22",
     );
-    assert.equal(originalExpense.account.balanceMinor, "63500");
+    assert.equal(originalExpense.account.balanceMinor, "783500");
     const refund = await createRefund(
       client,
       userId,
@@ -344,7 +583,7 @@ test("transfer commands move balances and post optional fees as spending", async
         kind: "REFUND",
         sourceAccountId: destination.id,
         refundedTransactionId: originalExpense.transaction.id,
-        amountMinor: "1000",
+        amountMinor: "10000",
         occurredOn: "2026-10-22",
         note: "Merchant refund",
       },
@@ -355,7 +594,85 @@ test("transfer commands move balances and post optional fees as spending", async
       refund.transaction.refundedTransactionId,
       originalExpense.transaction.id,
     );
-    assert.equal(refund.account.balanceMinor, "31000");
+    assert.equal(refund.account.balanceMinor, "210000");
+
+    const alternateExpenseCategory = await client.query<{ id: string }>(
+      `SELECT id FROM categories
+        WHERE user_id = $1 AND kind = 'EXPENSE' AND id <> $2
+        ORDER BY name
+        LIMIT 1`,
+      [userId, feeCategory.id],
+    );
+    assert.ok(alternateExpenseCategory.rows[0]?.id);
+
+    const refundHistoryBeforeMutation = await client.query<{
+      journals: string;
+      revisions: string;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM journals
+           WHERE user_id = $1 AND transaction_id IN ($2, $3))::text AS journals,
+         (SELECT count(*) FROM transaction_revisions
+           WHERE user_id = $1 AND transaction_id IN ($2, $3))::text AS revisions`,
+      [userId, originalExpense.transaction.id, refund.transaction.id],
+    );
+
+    await assert.rejects(
+      editIncomeOrExpense(
+        client,
+        userId,
+        originalExpense.transaction.id,
+        {
+          kind: "EXPENSE",
+          sourceAccountId: source.id,
+          categoryId: feeCategory.id,
+          amountMinor: "5000",
+          occurredOn: "2026-10-22",
+          reason: "Lower than the linked refund",
+        },
+        "2026-10-22",
+      ),
+      TransactionConflictError,
+    );
+    await assert.rejects(
+      editIncomeOrExpense(
+        client,
+        userId,
+        originalExpense.transaction.id,
+        {
+          kind: "EXPENSE",
+          sourceAccountId: source.id,
+          categoryId: alternateExpenseCategory.rows[0]!.id,
+          amountMinor: "15000",
+          occurredOn: "2026-10-22",
+          reason: "Move linked expense category",
+        },
+        "2026-10-22",
+      ),
+      TransactionConflictError,
+    );
+    await assert.rejects(
+      deleteTransaction(client, userId, originalExpense.transaction.id, {
+        reason: "Void expense with a posted refund",
+      }),
+      TransactionConflictError,
+    );
+
+    const refundHistoryAfterMutation = await client.query<{
+      journals: string;
+      revisions: string;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM journals
+           WHERE user_id = $1 AND transaction_id IN ($2, $3))::text AS journals,
+         (SELECT count(*) FROM transaction_revisions
+           WHERE user_id = $1 AND transaction_id IN ($2, $3))::text AS revisions`,
+      [userId, originalExpense.transaction.id, refund.transaction.id],
+    );
+    assert.deepEqual(
+      refundHistoryAfterMutation.rows,
+      refundHistoryBeforeMutation.rows,
+    );
 
     const increased = await createAdjustment(
       client,
@@ -370,7 +687,7 @@ test("transfer commands move balances and post optional fees as spending", async
       },
       "2026-10-22",
     );
-    assert.equal(increased.account.balanceMinor, "64000");
+    assert.equal(increased.account.balanceMinor, "784000");
     const decreased = await createAdjustment(
       client,
       userId,
@@ -383,7 +700,7 @@ test("transfer commands move balances and post optional fees as spending", async
       },
       "2026-10-22",
     );
-    assert.equal(decreased.account.balanceMinor, "63000");
+    assert.equal(decreased.account.balanceMinor, "783000");
     await assert.rejects(
       createAdjustment(
         client,
@@ -625,6 +942,124 @@ test("opposite-direction transfers serialize without deadlock or balance drift",
   }
 });
 
+test("a PostgreSQL failure during the second transfer leg rolls back the whole action", async () => {
+  const client = await pool.connect();
+  const suffix = randomUUID().replaceAll("-", "");
+  const functionName = `monikey_fail_transfer_${suffix}`;
+  const triggerName = `monikey_fail_transfer_${suffix}`;
+  const note = `Injected transfer rollback ${suffix}`;
+  const idempotencyKey = `transfer-rollback-${suffix}`;
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const source = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "BANK",
+        name: `Transfer rollback source ${suffix}`,
+        openingBalanceMinor: "100000",
+      },
+      "2026-10-22",
+    );
+    const destination = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "EWALLET",
+        name: `Transfer rollback destination ${suffix}`,
+        openingBalanceMinor: "75000",
+      },
+      "2026-10-22",
+    );
+
+    await client.query(`
+      CREATE FUNCTION ${functionName}() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.user_id = '${userId}'::uuid AND NEW.direction = 'DEBIT' THEN
+          RAISE EXCEPTION 'injected transfer posting failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$
+    `);
+    await client.query(`
+      CREATE TRIGGER ${triggerName}
+      BEFORE INSERT ON postings
+      FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+    `);
+
+    await client.query("SAVEPOINT transfer_attempt");
+    await assert.rejects(
+      runIdempotently(
+        client,
+        userId,
+        idempotencyKey,
+        {
+          kind: "TRANSFER",
+          fromAccountId: source.id,
+          toAccountId: destination.id,
+          amountMinor: "12500",
+          occurredOn: "2026-10-22",
+          note,
+        },
+        () =>
+          createTransfer(
+            client,
+            userId,
+            {
+              kind: "TRANSFER",
+              fromAccountId: source.id,
+              toAccountId: destination.id,
+              amountMinor: "12500",
+              occurredOn: "2026-10-22",
+              note,
+            },
+            "2026-10-22",
+          ),
+      ),
+      /injected transfer posting failure/,
+    );
+
+    // The source credit was inserted before the trigger rejected the
+    // destination debit. Rolling back the failed command must remove its
+    // transaction, revision, journal, first posting, and audit events.
+    await client.query("ROLLBACK TO SAVEPOINT transfer_attempt");
+
+    const transferRows = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM transactions
+        WHERE user_id = $1 AND note = $2`,
+      [userId, note],
+    );
+    assert.equal(transferRows.rows[0]?.count, "0");
+    const idempotencyRows = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM idempotency_keys
+        WHERE user_id = $1 AND key_hash = $2`,
+      [userId, createHash("sha256").update(idempotencyKey).digest("hex")],
+    );
+    assert.equal(idempotencyRows.rows[0]?.count, "0");
+    assert.equal(
+      (await readFinancialAccount(client, userId, source.id)).balanceMinor,
+      "100000",
+    );
+    assert.equal(
+      (await readFinancialAccount(client, userId, destination.id)).balanceMinor,
+      "75000",
+    );
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    client.release();
+  }
+});
+
 test("card purchases increase liability and payments settle it without new spending", async () => {
   const client = await pool.connect();
   try {
@@ -679,6 +1114,55 @@ test("card purchases increase liability and payments settle it without new spend
       "100000",
     );
 
+    const refund = await createRefund(
+      client,
+      userId,
+      {
+        kind: "REFUND",
+        sourceAccountId: card.id,
+        refundedTransactionId: purchase.transaction.id,
+        amountMinor: "30000",
+        occurredOn: "2026-10-22",
+      },
+      "2026-10-22",
+    );
+    assert.equal(refund.account.balanceMinor, "70000");
+    assert.equal(
+      (await readMonthlyReport(client, userId, "2026-10")).netExpensesMinor,
+      "50000",
+    );
+    const refundJournal = await client.query<{
+      debit_account: string;
+      debit_amount: string;
+      credit_account: string;
+      credit_amount: string;
+    }>(
+      `SELECT
+         (SELECT la.financial_account_id::text
+            FROM postings p
+            JOIN ledger_accounts la ON la.user_id = p.user_id AND la.id = p.ledger_account_id
+           WHERE p.user_id = j.user_id AND p.journal_id = j.id AND p.direction = 'DEBIT') AS debit_account,
+         (SELECT p.amount_minor::text FROM postings p
+           WHERE p.user_id = j.user_id AND p.journal_id = j.id AND p.direction = 'DEBIT') AS debit_amount,
+         (SELECT la.type::text
+            FROM postings p
+            JOIN ledger_accounts la ON la.user_id = p.user_id AND la.id = p.ledger_account_id
+           WHERE p.user_id = j.user_id AND p.journal_id = j.id AND p.direction = 'CREDIT') AS credit_account,
+         (SELECT p.amount_minor::text FROM postings p
+           WHERE p.user_id = j.user_id AND p.journal_id = j.id AND p.direction = 'CREDIT') AS credit_amount
+       FROM journals j
+       WHERE j.user_id = $1 AND j.transaction_id = $2`,
+      [userId, refund.transaction.id],
+    );
+    assert.deepEqual(refundJournal.rows, [
+      {
+        debit_account: card.id,
+        debit_amount: "30000",
+        credit_account: "EXPENSE",
+        credit_amount: "30000",
+      },
+    ]);
+
     const payment = await createCardPayment(
       client,
       userId,
@@ -690,7 +1174,7 @@ test("card purchases increase liability and payments settle it without new spend
       },
       "2026-10-22",
     );
-    assert.equal(payment.cardAccount.balanceMinor, "70000");
+    assert.equal(payment.cardAccount.balanceMinor, "40000");
     assert.equal(payment.fundingAccount.balanceMinor, "70000");
 
     const journal = await client.query<{

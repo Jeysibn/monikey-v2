@@ -8,7 +8,7 @@ The Reports screen uses a responsive summary-card layout and an accessible categ
 
 ## CSV export
 
-`GET /api/v1/exports/transactions.csv` exports only the authenticated owner’s current transaction revisions. Optional `from` and `to` dates bound the export. Every field is quoted, line endings are stable, and text cells beginning with spreadsheet formula characters, including after leading whitespace/control characters, receive a leading apostrophe before quoting. Numeric minor-unit and revision fields stay exact decimal strings, including negative amounts, so no value is rounded or truncated.
+`GET /api/v1/exports/transactions.csv` exports only the authenticated owner’s current transaction revisions. Optional `from` and `to` dates bound the export. Every field is quoted, line endings are stable, and text cells beginning with spreadsheet formula characters, including after leading whitespace, C0 controls, or C1 controls, receive a leading apostrophe before quoting. Numeric minor-unit and revision fields stay exact decimal strings, including negative amounts, so no value is rounded or truncated.
 
 ## JSON export
 

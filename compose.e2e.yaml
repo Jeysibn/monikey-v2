@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: monikey_e2e
+      POSTGRES_USER: monikey
+      POSTGRES_PASSWORD: test-only
+    ports:
+      - "127.0.0.1:15432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "db:migrate", "--workspace", "@monikey/api"]
+    environment:
+      DATABASE_URL: postgresql://monikey:test-only@db:5432/monikey_e2e?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "dev", "--workspace", "@monikey/api"]
+    environment:
+      API_PORT: 3000
+      NODE_ENV: test
+      APP_ORIGIN: http://localhost:18080
+      DATABASE_URL: postgresql://monikey:test-only@db:5432/monikey_e2e?schema=public
+    ports:
+      - "13000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.production
+    ports:
+      - "18080:8080"
+    depends_on:
+      api:
+        condition: service_healthy

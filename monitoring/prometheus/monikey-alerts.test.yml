@@ -1,0 +1,189 @@
+rule_files:
+  - monikey-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: journal invariant alert stays quiet until the counter increases
+    interval: 1m
+    input_series:
+      - series: monikey_ledger_invariant_failures_total{job="monikey-v2-api"}
+        values: 0+0x11 1+0x3
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: MoniKeyLedgerInvariantFailure
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: MoniKeyLedgerInvariantFailure
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-api
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey rejected or detected an unbalanced journal
+              description: A journal balance invariant failed in the last ten minutes; inspect redacted API logs and transaction traces.
+
+  - name: missing and overdue backup alerts follow their intended windows
+    interval: 1m
+    input_series:
+      - series: monikey_backup_last_success_timestamp_seconds{job="monikey-v2-backup"}
+        values: 0+0x1600
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: MoniKeyBackupMissing
+        exp_alerts: []
+      - eval_time: 26h16m
+        alertname: MoniKeyBackupMissing
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey PostgreSQL backup is overdue
+              description: No successful MoniKey backup has been reported for 26 hours.
+
+  - name: recent successful backup remains clear of the overdue alert
+    interval: 1m
+    input_series:
+      - series: monikey_backup_last_success_timestamp_seconds{job="monikey-v2-backup"}
+        values: 0+60x30
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: MoniKeyBackupMissing
+        exp_alerts: []
+
+  - name: absent backup series alerts after its grace period
+    interval: 1m
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: MoniKeyBackupMissing
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: MoniKeyBackupMissing
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey PostgreSQL backup is overdue
+              description: No successful MoniKey backup has been reported for 26 hours.
+
+  - name: failed backup run alerts after five minutes
+    interval: 1m
+    input_series:
+      - series: monikey_backup_last_run_success{job="monikey-v2-backup"}
+        values: 1+0x3 0+0x8
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: MoniKeyBackupFailed
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: MoniKeyBackupFailed
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey PostgreSQL backup failed
+              description: The latest MoniKey backup attempt failed validation.
+
+  - name: invalid backup metrics alert after five minutes
+    interval: 1m
+    input_series:
+      - series: monikey_backup_metrics_file_valid{job="monikey-v2-backup"}
+        values: 1+0x2 0+0x8
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: MoniKeyBackupMetricsInvalid
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: MoniKeyBackupMetricsInvalid
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey backup metrics file is missing or invalid
+              description: Check the backup PVC mount, file permissions, and backup exporter logs.
+
+  - name: low backup volume space alerts after fifteen minutes
+    interval: 1m
+    input_series:
+      - series: monikey_backup_volume_available_bytes{job="monikey-v2-backup"}
+        values: 5+0x20
+      - series: monikey_backup_volume_size_bytes{job="monikey-v2-backup"}
+        values: 100+0x20
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: MoniKeyBackupVolumeNearlyFull
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: MoniKeyBackupVolumeNearlyFull
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: warning
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey backup volume may not fit the next archive
+              description: Free space is below ten percent or smaller than the last successful archive. Check backup retention and host storage capacity.
+
+  - name: backup archive headroom alerts when free bytes cannot fit the last archive
+    interval: 1m
+    input_series:
+      - series: monikey_backup_volume_available_bytes{job="monikey-v2-backup"}
+        values: 15+0x20
+      - series: monikey_backup_volume_size_bytes{job="monikey-v2-backup"}
+        values: 100+0x20
+      - series: monikey_backup_last_archive_size_bytes{job="monikey-v2-backup"}
+        values: 20+0x20
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: MoniKeyBackupVolumeNearlyFull
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: MoniKeyBackupVolumeNearlyFull
+        exp_alerts:
+          - exp_labels:
+              job: monikey-v2-backup
+              severity: warning
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey backup volume may not fit the next archive
+              description: Free space is below ten percent or smaller than the last successful archive. Check backup retention and host storage capacity.
+
+  - name: scheduled and pre-migration backup Job failures alert
+    interval: 1m
+    input_series:
+      - series: kube_job_status_failed{namespace="monikey-v2",job_name="monikey-v2-pre-migration-backup"}
+        values: 0+0x1 1+0x3
+      - series: kube_job_status_failed{namespace="monikey-v2",job_name="monikey-v2-postgres-backup-11223344"}
+        values: 0+0x1 1+0x3
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MoniKeyBackupJobFailed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: MoniKeyBackupJobFailed
+        exp_alerts:
+          - exp_labels:
+              job_name: monikey-v2-pre-migration-backup
+              namespace: monikey-v2
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey PostgreSQL backup Job failed
+              description: Review the scheduled or pre-migration backup Job logs; a migration must not proceed without a validated archive.
+          - exp_labels:
+              job_name: monikey-v2-postgres-backup-11223344
+              namespace: monikey-v2
+              severity: critical
+              service: monikey-v2
+            exp_annotations:
+              summary: MoniKey PostgreSQL backup Job failed
+              description: Review the scheduled or pre-migration backup Job logs; a migration must not proceed without a validated archive.

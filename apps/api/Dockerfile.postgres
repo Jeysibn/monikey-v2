@@ -1,0 +1,7 @@
+FROM postgres:17.11-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+
+# Kubernetes always runs this container as UID/GID 70, so the upstream
+# root-only gosu path is unused. Removing it eliminates its bundled Go CVEs.
+RUN rm -f /usr/local/bin/gosu
+
+USER 70:70

@@ -48,7 +48,7 @@ export default typescriptEslint.config(
     },
   },
   {
-    files: ["scripts/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "apps/backup-metrics/**/*.mjs"],
     languageOptions: {
       globals: { ...nodeGlobals, ...browserGlobals },
     },

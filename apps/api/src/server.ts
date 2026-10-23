@@ -92,17 +92,20 @@ import {
 } from "./transactions.js";
 import { readDashboardSummary } from "./dashboard.js";
 import {
-  listExportTransactions,
   readMonthlyReport,
-  transactionsCsv,
+  streamTransactionsCsv,
+  streamTransactionsJsonArray,
 } from "./reports.js";
 import { runIdempotently } from "./idempotency.js";
 import argon2 from "argon2";
 import type { HashOptions } from "argon2";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { z } from "zod";
+import { registerMetrics } from "./metrics.js";
+import { recordDatabaseLedgerInvariantFailure } from "./ledger/invariant-metrics.js";
 
 const port = Number(process.env.API_PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
@@ -195,7 +198,9 @@ app.addHook("onSend", (request, reply, _payload, done) => {
     request.url.startsWith("/api/v1/reports") ||
     request.url.startsWith("/api/v1/exports")
   ) {
-    reply.header("Cache-Control", "no-store");
+    if (!reply.getHeader("Cache-Control")) {
+      reply.header("Cache-Control", "private, no-store");
+    }
   }
   done();
 });
@@ -257,6 +262,7 @@ app.setNotFoundHandler((request, reply) =>
     },
   }),
 );
+registerMetrics(app, pool);
 app.get("/healthz", { schema: { hide: true } }, async () => ({
   status: "ok",
 }));
@@ -371,6 +377,7 @@ async function withDatabaseTransaction<T>(
     await client.query("COMMIT");
     return result;
   } catch (error) {
+    recordDatabaseLedgerInvariantFailure(error);
     await client.query("ROLLBACK");
     throw error;
   } finally {
@@ -388,6 +395,38 @@ async function withDatabaseConnection<T>(
   } finally {
     client.release();
   }
+}
+
+function databaseReadStream(
+  produce: (client: PoolClient) => AsyncIterable<string>,
+): Readable {
+  const configuredPool = pool;
+  if (!configuredPool) throw new Error("Database is not configured.");
+
+  const body = (async function* () {
+    const client = await configuredPool.connect();
+    let transactionOpen = false;
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      transactionOpen = true;
+      yield* produce(client);
+      await client.query("COMMIT");
+      transactionOpen = false;
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        transactionOpen = false;
+      }
+      throw error;
+    } finally {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+      client.release();
+    }
+  })();
+
+  return Readable.from(body, { objectMode: false });
 }
 
 function safeHashEqual(actual: string, expected: string): boolean {
@@ -612,7 +651,7 @@ app.post(
       sameSite: "lax",
       maxAge: sessionMaxAgeSeconds,
     });
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return reply.code(200).send({ csrfToken });
   },
 );
@@ -743,13 +782,9 @@ app.get(
   async (request, reply) => {
     if (!(await requireSession(request, reply))) return;
     const query = ExportQuerySchema.parse(request.query);
-    const csv = await withDatabaseConnection((client) =>
-      listExportTransactions(
-        client,
-        ownerUserId(request),
-        query.from,
-        query.to,
-      ),
+    const userId = ownerUserId(request);
+    const csv = databaseReadStream((client) =>
+      streamTransactionsCsv(client, userId, query.from, query.to),
     );
     reply
       .header("Cache-Control", "private, no-store")
@@ -758,7 +793,7 @@ app.get(
         "Content-Disposition",
         'attachment; filename="monikey-transactions.csv"',
       );
-    return reply.send(transactionsCsv(csv));
+    return reply.send(csv);
   },
 );
 
@@ -778,52 +813,36 @@ app.get(
   async (request, reply) => {
     if (!(await requireSession(request, reply))) return;
     const query = ExportQuerySchema.parse(request.query);
-    const exported = await withDatabaseConnection(async (client) => {
-      const [user, accounts, categories, transactions, bills] =
-        await Promise.all([
-          client.query<{ timezone: string; currency: string }>(
-            `SELECT timezone, currency FROM user_preferences WHERE user_id = $1`,
-            [ownerUserId(request)],
-          ),
-          listFinancialAccounts(client, ownerUserId(request), true),
-          listCategories(client, ownerUserId(request), {
-            includeArchived: true,
-          }),
-          listExportTransactions(
-            client,
-            ownerUserId(request),
-            query.from,
-            query.to,
-          ),
-          listBills(client, ownerUserId(request), true),
-        ]);
+    const userId = ownerUserId(request);
+    const exported = databaseReadStream(async function* (client) {
+      const [user, accounts, categories, bills] = await Promise.all([
+        client.query<{ timezone: string; currency: string }>(
+          `SELECT timezone, currency FROM user_preferences WHERE user_id = $1`,
+          [userId],
+        ),
+        listFinancialAccounts(client, userId, true),
+        listCategories(client, userId, {
+          includeArchived: true,
+        }),
+        listBills(client, userId, true),
+      ]);
       const statements = (
         await Promise.all(
           accounts
             .filter((account) => account.type === "CREDIT_CARD")
             .map((account) =>
-              listCardStatements(
-                client,
-                ownerUserId(request),
-                account.id,
-                true,
-              ),
+              listCardStatements(client, userId, account.id, true),
             ),
         )
       ).flat();
-      return {
-        schemaVersion: "monikey-v2.export.v1" as const,
-        generatedAt: new Date().toISOString(),
-        owner: {
-          timezone: (user.rows[0]?.timezone ?? "Asia/Manila") as "Asia/Manila",
-          currency: (user.rows[0]?.currency ?? "PHP") as "PHP",
+      yield `{"schemaVersion":"monikey-v2.export.v1","generatedAt":${JSON.stringify(new Date().toISOString())},"owner":${JSON.stringify(
+        {
+          timezone: user.rows[0]?.timezone ?? "Asia/Manila",
+          currency: user.rows[0]?.currency ?? "PHP",
         },
-        accounts,
-        categories,
-        transactions,
-        bills,
-        cardStatements: statements,
-      };
+      )},"accounts":${JSON.stringify(accounts)},"categories":${JSON.stringify(categories)},"transactions":[`;
+      yield* streamTransactionsJsonArray(client, userId, query.from, query.to);
+      yield `],"bills":${JSON.stringify(bills)},"cardStatements":${JSON.stringify(statements)}}`;
     });
     reply
       .header("Cache-Control", "private, no-store")
@@ -952,7 +971,7 @@ app.patch(
           ),
       ),
     );
-    return reply.send(result.value);
+    return reply.send({ ...result.value, requestId: request.id });
   },
 );
 
@@ -1033,7 +1052,7 @@ app.get(
         maxAge: sessionMaxAgeSeconds,
       });
     }
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { csrfToken };
   },
 );
@@ -1123,7 +1142,7 @@ app.post(
       sameSite: "lax",
       maxAge: sessionMaxAgeSeconds,
     });
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { csrfToken };
   },
 );
@@ -1158,7 +1177,7 @@ app.get(
         WHERE u.id = $1`,
       [ownerUserId(request)],
     );
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return {
       user: result.rows[0],
       serverToday: serverTodayInManila(),
@@ -1672,7 +1691,7 @@ app.post(
                 )),
       })),
     );
-    return reply.code(201).send(result.value);
+    return reply.code(201).send({ ...result.value, requestId: request.id });
   },
 );
 
@@ -2154,7 +2173,7 @@ app.get(
         ORDER BY last_seen_at DESC`,
       [ownerUserId(request), request.authContext!.sessionId],
     );
-    reply.header("Cache-Control", "no-store");
+    reply.header("Cache-Control", "private, no-store");
     return { sessions: sessions.rows };
   },
 );

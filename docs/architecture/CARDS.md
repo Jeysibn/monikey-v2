@@ -12,7 +12,7 @@ An expense may use a credit card source. The category receives a debit and the c
 
 ## Statements
 
-Statements are manually entered issuer snapshots. They store statement and payment due dates, optional period dates, the actual amount due, and an optional note. They do not create ledger postings. A payment can allocate part or all of its amount to one statement; allocations are positive, owner-scoped, unique per payment/statement pair, and cannot exceed the remaining statement amount. Editing a statement only changes the snapshot and audit event.
+Statements are manually entered issuer snapshots. They store statement and payment due dates, optional period dates, the actual amount due, and an optional note. They do not create ledger postings. A payment can allocate part or all of its amount to one statement; allocations are positive, owner-scoped, unique per payment/statement pair, and cannot exceed the remaining statement amount. The payment command locks the statement while checking and writing its allocation, so concurrent payments cannot collectively exceed the snapshot due. Editing a statement only changes the snapshot and audit event.
 
 ## UI
 

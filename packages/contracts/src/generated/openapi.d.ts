@@ -882,6 +882,7 @@ export interface paths {
                     dueDay: number | null;
                     archivedAt: string | null;
                   };
+                  requestId: string;
                 }
               | {
                   transaction: {
@@ -936,6 +937,7 @@ export interface paths {
                     dueDay: number | null;
                     archivedAt: string | null;
                   };
+                  requestId: string;
                 };
           };
         };
@@ -3381,6 +3383,7 @@ export interface paths {
                 dueDay: number | null;
                 archivedAt: string | null;
               };
+              requestId: string;
             };
           };
         };

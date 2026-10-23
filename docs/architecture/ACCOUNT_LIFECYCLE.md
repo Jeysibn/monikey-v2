@@ -19,3 +19,5 @@ The account, ledger mapping, transaction, immutable revision, journal, postings,
 Balances are read from positive `BIGINT` postings, accumulated as PostgreSQL `numeric` and serialized as decimal strings. Assets use debits minus credits; card liabilities use credits minus debits. No mutable account-balance column exists.
 
 Archive updates `archived_at` and preserves the account, ledger mapping, balance, transactions, and journal history. Default account lists exclude archived accounts; `includeArchived=true` and account detail can read them. Archiving does not reverse a balance or delete history.
+
+When an owner with `READY` onboarding state opens `/onboarding` directly, the page points to `/app/accounts`, where additional accounts can be created. Its page title and empty-panel message describe the completed account setup; first-account onboarding remains reserved for owners with `NEEDS_FIRST_ACCOUNT`.

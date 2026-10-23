@@ -39,6 +39,7 @@ type ActivityCursor = {
 
 type TransactionActivityRow = TransactionMutationRow & {
   createdAt: Date;
+  createdAtCursor: string;
 };
 
 export type TransactionRecord = {
@@ -796,7 +797,6 @@ export async function createRefund(
     ],
   );
 
-  const isCard = source.type === "CREDIT_CARD";
   await postBalancedJournal(client, {
     userId,
     transactionId: transaction.id,
@@ -804,7 +804,8 @@ export async function createRefund(
     postings: [
       {
         ledgerAccountId: source.ledgerAccountId,
-        direction: isCard ? "CREDIT" : "DEBIT",
+        // Both a bank refund receipt and a card liability reduction are debits.
+        direction: "DEBIT",
         amountMinor: amount,
       },
       {
@@ -1200,6 +1201,25 @@ export async function editIncomeOrExpense(
   }
   const oldAmount = moneyMinor(oldAmountValue);
   const newAmount = moneyMinor(request.amountMinor);
+  if (transaction.kind === "EXPENSE") {
+    const alreadyRefunded = await readRefundedAmount(
+      client,
+      userId,
+      transactionId,
+    );
+    if (alreadyRefunded > 0n) {
+      if (newAmount < alreadyRefunded) {
+        throw new TransactionConflictError(
+          "The expense cannot be reduced below its posted refund total. Void or edit linked refunds first.",
+        );
+      }
+      if (request.categoryId !== transaction.categoryId) {
+        throw new TransactionConflictError(
+          "The category cannot change while posted refunds are linked to this expense. Void linked refunds first.",
+        );
+      }
+    }
+  }
   const currentNewAccount = await readFinancialAccount(
     client,
     userId,
@@ -1341,6 +1361,14 @@ export async function deleteTransaction(
   if (transaction.kind === "OPENING_BALANCE") {
     throw new TransactionConflictError(
       "Opening balances cannot be voided from the transaction command.",
+    );
+  }
+  if (
+    transaction.kind === "EXPENSE" &&
+    (await readRefundedAmount(client, userId, transactionId)) > 0n
+  ) {
+    throw new TransactionConflictError(
+      "An expense with posted refunds cannot be voided. Void its linked refunds first.",
     );
   }
   const reversal = await reverseActiveJournal(client, userId, transactionId);
@@ -1486,6 +1514,7 @@ export async function listTransactions(
             t.refunded_transaction_id AS "refundedTransactionId",
             t.note,
             t.created_at AS "createdAt",
+            t.created_at::text AS "createdAtCursor",
             r.after_json AS "afterJson"
        FROM transactions t
        JOIN transaction_revisions r
@@ -1537,7 +1566,7 @@ export async function listTransactions(
       hasMore && last
         ? encodeActivityCursor({
             occurredOn: last.occurredOn,
-            createdAt: last.createdAt.toISOString(),
+            createdAt: last.createdAtCursor,
             id: last.id,
           })
         : null,

@@ -16,6 +16,8 @@ const suites = [
   "test:cards",
   "test:bills",
   "test:reports",
+  "test:idempotency",
+  "test:transfer-crash",
 ];
 
 for (const suite of suites) {

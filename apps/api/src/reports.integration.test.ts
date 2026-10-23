@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { Pool } from "pg";
+import type { PoolClient } from "pg";
 import { createFinancialAccount } from "./accounts.js";
 import {
   csvCell,
-  listExportTransactions,
   readMonthlyReport,
+  type ExportTransaction,
+  streamExportTransactionPages,
+  streamTransactionsCsv,
+  streamTransactionsJsonArray,
   transactionsCsv,
 } from "./reports.js";
 import { createIncomeOrExpense, createRefund } from "./transactions.js";
@@ -13,6 +17,24 @@ import { requireDatabaseUrl } from "./test-support/database-url.js";
 
 const pool = new Pool({ connectionString: requireDatabaseUrl() });
 after(async () => pool.end());
+
+async function collectExportRows(
+  client: PoolClient,
+  userId: string,
+  from: string,
+  to: string,
+): Promise<ExportTransaction[]> {
+  const rows: ExportTransaction[] = [];
+  for await (const page of streamExportTransactionPages(
+    client,
+    userId,
+    from,
+    to,
+  )) {
+    rows.push(...page);
+  }
+  return rows;
+}
 
 test("monthly report nets refunds and exports owner-scoped exact minor units", async () => {
   const client = await pool.connect();
@@ -49,7 +71,7 @@ test("monthly report nets refunds and exports owner-scoped exact minor units", a
         kind: "EXPENSE",
         sourceAccountId: account.id,
         categoryId: food.id,
-        amountMinor: "20000",
+        amountMinor: "25000",
         occurredOn: "2025-01-10",
       },
       "2026-10-22",
@@ -61,7 +83,7 @@ test("monthly report nets refunds and exports owner-scoped exact minor units", a
         kind: "INCOME",
         sourceAccountId: account.id,
         categoryId: salary.id,
-        amountMinor: "50000",
+        amountMinor: "400000",
         occurredOn: "2025-01-11",
       },
       "2026-10-22",
@@ -73,41 +95,119 @@ test("monthly report nets refunds and exports owner-scoped exact minor units", a
         kind: "REFUND",
         sourceAccountId: account.id,
         refundedTransactionId: expense.transaction.id,
-        amountMinor: "5000",
+        amountMinor: "10000",
         occurredOn: "2025-02-01",
       },
       "2026-10-22",
     );
     const report = await readMonthlyReport(client, userId, "2025-01");
-    assert.equal(report.incomeMinor, "50000");
-    assert.equal(report.netExpensesMinor, "20000");
-    assert.equal(report.netCashFlowMinor, "30000");
+    assert.equal(report.incomeMinor, "400000");
+    assert.equal(report.netExpensesMinor, "25000");
+    assert.equal(report.netCashFlowMinor, "375000");
     assert.equal(
       report.categories.find((row) => row.categoryId === food.id)?.amountMinor,
-      "20000",
+      "25000",
     );
     const refundMonth = await readMonthlyReport(client, userId, "2025-02");
     assert.equal(refundMonth.incomeMinor, "0");
-    assert.equal(refundMonth.netExpensesMinor, "-5000");
-    assert.equal(refundMonth.netCashFlowMinor, "5000");
+    assert.equal(refundMonth.netExpensesMinor, "-10000");
+    assert.equal(refundMonth.netCashFlowMinor, "10000");
     assert.equal(
       refundMonth.categories.find((row) => row.categoryId === food.id)
         ?.amountMinor,
-      "-5000",
+      "-10000",
     );
 
-    const exported = await listExportTransactions(
+    const exported = await collectExportRows(
       client,
       userId,
       "2025-01-01",
       "2025-01-31",
     );
     assert.ok(exported.some((row) => row.id === expense.transaction.id));
+
+    await createIncomeOrExpense(
+      client,
+      userId,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: account.id,
+        categoryId: food.id,
+        amountMinor: "125",
+        occurredOn: "2025-01-10",
+        note: "\u0085=stream-safe",
+      },
+      "2026-10-22",
+    );
+    const expectedRows = await collectExportRows(
+      client,
+      userId,
+      "2025-01-01",
+      "2025-01-31",
+    );
+    const streamedPages: string[] = [];
+    for await (const page of streamExportTransactionPages(
+      client,
+      userId,
+      "2025-01-01",
+      "2025-01-31",
+      1,
+    )) {
+      assert.equal(page.length, 1);
+      streamedPages.push(page[0]!.id);
+    }
+    assert.deepEqual(
+      streamedPages,
+      expectedRows.map((row) => row.id),
+    );
+
+    const csvChunks: string[] = [];
+    for await (const chunk of streamTransactionsCsv(
+      client,
+      userId,
+      "2025-01-01",
+      "2025-01-31",
+      1,
+    )) {
+      csvChunks.push(chunk);
+    }
+    const streamedCsv = csvChunks.join("");
+    assert.match(streamedCsv, /'\u0085=stream-safe/);
+    assert.match(streamedCsv, /\r\n$/);
+
+    const jsonChunks: string[] = [];
+    for await (const chunk of streamTransactionsJsonArray(
+      client,
+      userId,
+      "2025-01-01",
+      "2025-01-31",
+      1,
+    )) {
+      jsonChunks.push(chunk);
+    }
+    const streamedJson = JSON.parse(`[${jsonChunks.join("")}]`) as {
+      id: string;
+      amountMinor: string;
+    }[];
+    assert.deepEqual(
+      streamedJson.map((row) => row.id),
+      expectedRows.map((row) => row.id),
+    );
+    assert.ok(streamedJson.every((row) => typeof row.amountMinor === "string"));
+
     const csv = transactionsCsv([
       { ...exported[0]!, note: "=unsafe", currentRevision: 1 },
     ]);
     assert.match(csv, /'=unsafe/);
     assert.equal(csvCell(" \t=unsafe"), '"\' \t=unsafe"');
+    for (const marker of ["=", "+", "-", "@"] as const) {
+      for (const prefix of ["\u0085", "\u007f", "\u009f", "\u00a0\t"]) {
+        assert.equal(
+          csvCell(`${prefix}${marker}unsafe`),
+          `"'${prefix}${marker}unsafe"`,
+        );
+      }
+    }
     assert.equal(csvCell("-500", false), '"-500"');
     assert.match(csv, /\r\n$/);
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");

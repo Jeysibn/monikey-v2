@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "bootstrap-owner": "tsx src/bootstrap-owner.ts",
     "seed-e2e-user": "tsx src/seed-e2e-user.ts",
-    "test:unit": "tsx --test src/ledger/domain.test.ts src/repository.guardrails.test.ts",
+    "seed-scale-review": "tsx src/seed-scale-review.ts",
+    "test:unit": "tsx --test src/ledger/domain.test.ts src/repository.guardrails.test.ts src/metrics.test.ts",
     "test:invariants": "tsx --test src/finance-invariants.test.ts",
     "test:ledger": "tsx --test src/ledger/integration.test.ts",
     "test:accounts": "tsx --test src/accounts.integration.test.ts",
@@ -19,6 +20,8 @@
     "test:bills": "tsx --test src/bills.integration.test.ts",
     "test:reports": "tsx --test src/reports.integration.test.ts",
     "test:transactions": "tsx --test src/transactions.integration.test.ts src/dashboard.integration.test.ts",
+    "test:transfer-crash": "tsx --test src/transfer-crash.integration.test.ts",
+    "test:idempotency": "tsx --test src/idempotency.integration.test.ts",
     "db:generate": "prisma generate --config ../../prisma.config.js",
     "db:migrate": "prisma migrate deploy --config ../../prisma.config.js"
   },
