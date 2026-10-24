@@ -51,7 +51,10 @@ test("explicit retries reuse one identity while identical new actions stay disti
 
   clearPendingSubmission(userId, operation, first.key);
   assert.deepEqual(
-    listPendingSubmissions(userId, operation).map(({ id, key }) => ({ id, key })),
+    listPendingSubmissions(userId, operation).map(({ id, key }) => ({
+      id,
+      key,
+    })),
     [second],
   );
 });
@@ -77,7 +80,10 @@ test("an edited saved retry is rejected and cannot reuse its idempotency key", a
     /do not match the saved attempt/,
   );
   assert.deepEqual(
-    listPendingSubmissions(userId, operation).map(({ id, key }) => ({ id, key })),
+    listPendingSubmissions(userId, operation).map(({ id, key }) => ({
+      id,
+      key,
+    })),
     [original],
   );
 });

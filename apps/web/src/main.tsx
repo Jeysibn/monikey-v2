@@ -3163,10 +3163,10 @@ function CardPaymentPage() {
     payloadMatches: paymentPayloadMatches,
     refresh: refreshPaymentSubmissions,
   } = usePendingSubmissionMatches(
-      profile?.user.id,
-      paymentOperation,
-      paymentPayload,
-    );
+    profile?.user.id,
+    paymentOperation,
+    paymentPayload,
+  );
   const previousPaymentPayload = useRef(paymentPayloadSnapshot);
   useEffect(() => {
     if (previousPaymentPayload.current !== paymentPayloadSnapshot) {
@@ -4817,11 +4817,13 @@ function QuickAddPage() {
     setLoading(true);
     setReferencesError("");
     try {
-      const [accountResult, categoryResult, currentProfile] = await Promise.all([
-        apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
-        apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
-        apiRequest<Profile>("/me"),
-      ]);
+      const [accountResult, categoryResult, currentProfile] = await Promise.all(
+        [
+          apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
+          apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+          apiRequest<Profile>("/me"),
+        ],
+      );
       if (sequence !== loadSequence.current) return;
       setBusinessToday(currentProfile.serverToday);
       if (!dateEditedRef.current && !hasEditedRef.current)
