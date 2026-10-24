@@ -2754,7 +2754,7 @@ test("account creation recovers a committed opening balance with its original ke
   await page.getByLabel("Opening balance *").fill("123.45");
   await page.getByText("Check a saved attempt", { exact: true }).click();
   await page.getByRole("button", { name: /Retry saved attempt/ }).click();
-  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByRole("button", { name: "Retry account creation" }).click();
   await expect(page.locator(".form-success")).toContainText(
     "ledger-backed opening balance",
   );

@@ -4513,7 +4513,6 @@ function BillsPage() {
               className="text-input"
               type="date"
               value={startOn}
-              max={businessToday}
               onChange={(event) => {
                 startOnEdited.current = true;
                 setStartOn(event.currentTarget.value);
