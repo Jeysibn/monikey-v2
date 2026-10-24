@@ -1,5 +1,10 @@
 # MoniKey V2
 
+> **Starter branch:** This branch is being re-scoped as MoniKey Starter, an
+> entry-level single-process application. Start with
+> [`docs/starter/README.md`](docs/starter/README.md), not the V2 deployment
+> guides below. The V2 material is preserved as reference only.
+
 MoniKey V2 is a single-user personal finance tracker built from scratch with a mobile-first React/Vite web/PWA frontend, a Fastify API, and PostgreSQL. It is PHP-denominated and stores money as exact integer minor units serialized as decimal strings; its immutable double-entry journal is the financial source of truth.
 
 ## Current state

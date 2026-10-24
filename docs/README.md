@@ -17,6 +17,7 @@ validation reports.
 | How is a release prepared?            | [Release flow](release/RELEASE_FLOW.md), [readiness](release/PHASE6_READINESS.md), and [owner checklist](release/OWNER_REVIEW_CHECKLIST.md) |
 | How are operations performed?         | [Runbooks](runbooks/)                                                                                                                       |
 | What changed over time?               | [Changelog](CHANGELOG.md)                                                                                                                   |
+| What is the entry-level Starter?      | [Starter overview](starter/README.md), [plan](starter/PLAN.md), and [top-level design](starter/TLD.md)                                      |
 
 ## Layout and ownership
 
@@ -28,6 +29,7 @@ docs/
   development/    Repeatable testing instructions and implementation status
   release/        Release workflow, readiness, and owner gates
   runbooks/       Operational procedures
+  starter/        Entry-level MoniKey plan, design, and user flows
   qa/             Acceptance mappings and dated review evidence
     YYYY-MM-DD/   Reports and their screenshot assets
     history/      Preserved earlier validation record
