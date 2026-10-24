@@ -106,7 +106,7 @@ flowchart LR
 
 - Implemented route structure: `apps/web/src/main.tsx`.
 - Responsive tokens and navigation rules: `docs/design/DESIGN_SYSTEM.md`.
-- Current browser captures: `docs/RELEASE_REVIEW.md`.
+- Current browser captures: `docs/qa/2026-10-23/RELEASE_REVIEW.md`.
 - Automated route review covers five widths, two themes, keyboard traversal,
   reduced motion, and axe WCAG 2.0 A/AA plus 2.2 AA tagged rules. Automated
   coverage does not approve these flows or replace screen-reader/device review.

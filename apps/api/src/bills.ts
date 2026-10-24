@@ -4,6 +4,7 @@ import type {
   BillOccurrenceRecord,
   BillPatchRequest,
 } from "@monikey/contracts";
+import { FinancialDateSchema } from "@monikey/contracts";
 import { moneyMinor } from "@monikey/money";
 import {
   createIncomeOrExpense,
@@ -41,6 +42,14 @@ export class BillConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "BillConflictError";
+  }
+}
+
+export class BillValidationError extends Error {
+  readonly statusCode = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = "BillValidationError";
   }
 }
 
@@ -191,6 +200,7 @@ export async function updateBill(
   userId: string,
   billId: string,
   patch: BillPatchRequest,
+  effectiveDate: string,
 ): Promise<BillRecord> {
   const current = await readBillRow(client, userId, billId, true);
   if (patch.categoryId !== undefined)
@@ -251,6 +261,24 @@ export async function updateBill(
      VALUES ($1, $1, 'BILL', $2, 'UPDATED', $3::jsonb)`,
     [userId, billId, JSON.stringify({ fields: Object.keys(patch) })],
   );
+  const scheduleChanged = [
+    "amountMode",
+    "defaultAmountMinor",
+    "dueDay",
+    "startOn",
+    "endOn",
+    "status",
+  ].some((field) => Object.hasOwn(patch, field));
+  if (scheduleChanged) {
+    // The locked rule row serializes this cleanup against occurrence generation.
+    await client.query(
+      `DELETE FROM bill_occurrences
+        WHERE user_id = $1 AND bill_id = $2
+          AND due_on >= date_trunc('month', $3::date)::date
+          AND status IN ('UPCOMING', 'OVERDUE')`,
+      [userId, billId, effectiveDate],
+    );
+  }
   return readBillRow(client, userId, billId);
 }
 
@@ -285,6 +313,7 @@ export async function ensureBillOccurrences(
   to: string,
   serverToday: string,
 ) {
+  assertOccurrenceWindow(from, to);
   const bills = await client.query<{
     id: string;
     dueDay: number;
@@ -294,7 +323,8 @@ export async function ensureBillOccurrences(
   }>(
     `SELECT id, due_day AS "dueDay", start_on::text AS "startOn",
             end_on::text AS "endOn", default_amount_minor::text AS "defaultAmountMinor"
-       FROM bills WHERE user_id = $1 AND status = 'ACTIVE'`,
+       FROM bills WHERE user_id = $1 AND status = 'ACTIVE'
+       ORDER BY id FOR SHARE`,
     [userId],
   );
   const first = monthKey(from);
@@ -310,7 +340,14 @@ export async function ensureBillOccurrences(
         await client.query(
           `INSERT INTO bill_occurrences
              (user_id, bill_id, due_on, expected_amount_minor)
-           VALUES ($1, $2, $3::date, $4::bigint)
+           SELECT $1, $2, $3::date, $4::bigint
+            WHERE NOT EXISTS (
+              SELECT 1 FROM bill_occurrences terminal
+               WHERE terminal.user_id = $1 AND terminal.bill_id = $2
+                 AND terminal.due_on >= date_trunc('month', $3::date)::date
+                 AND terminal.due_on < (date_trunc('month', $3::date) + interval '1 month')::date
+                 AND terminal.status IN ('PAID', 'SKIPPED')
+            )
            ON CONFLICT (user_id, bill_id, due_on) DO NOTHING`,
           [userId, bill.id, dueOn, bill.defaultAmountMinor],
         );
@@ -326,6 +363,31 @@ export async function ensureBillOccurrences(
   );
 }
 
+const maximumOccurrenceWindowDays = 366;
+
+export function assertOccurrenceWindow(from: string, to: string): void {
+  if (
+    !FinancialDateSchema.safeParse(from).success ||
+    !FinancialDateSchema.safeParse(to).success
+  ) {
+    throw new BillValidationError(
+      "Occurrence dates must be valid calendar dates.",
+    );
+  }
+  const fromTime = Date.parse(`${from}T00:00:00.000Z`);
+  const toTime = Date.parse(`${to}T00:00:00.000Z`);
+  if (
+    !Number.isFinite(fromTime) ||
+    !Number.isFinite(toTime) ||
+    fromTime > toTime ||
+    (toTime - fromTime) / 86_400_000 > maximumOccurrenceWindowDays
+  ) {
+    throw new BillValidationError(
+      "Occurrence windows must be ordered and no wider than 366 days.",
+    );
+  }
+}
+
 export async function listBillOccurrences(
   client: PoolClient,
   userId: string,
@@ -333,6 +395,7 @@ export async function listBillOccurrences(
   to: string,
   serverToday: string,
 ): Promise<BillOccurrenceWithBill[]> {
+  assertOccurrenceWindow(from, to);
   await ensureBillOccurrences(client, userId, from, to, serverToday);
   const result = await client.query<BillOccurrenceWithBill>(
     `SELECT o.id, o.bill_id AS "billId", b.name AS "billName",
@@ -421,6 +484,16 @@ export async function payBillOccurrence(
             updated_at = now()
       WHERE user_id = $1 AND id = $2`,
     [userId, occurrenceId, amount.toString(), transaction.transaction.id],
+  );
+  await client.query(
+    `INSERT INTO bill_occurrence_payment_history
+       (user_id, occurrence_id, transaction_id, sequence_number, action, amount_minor)
+     VALUES ($1, $2, $3,
+             (SELECT COALESCE(MAX(sequence_number), 0) + 1
+                FROM bill_occurrence_payment_history
+               WHERE user_id = $1 AND occurrence_id = $2),
+             'POSTED', $4::bigint)`,
+    [userId, occurrenceId, transaction.transaction.id, amount.toString()],
   );
   const updated = await client.query<BillOccurrenceWithBill>(
     `SELECT o.id, o.bill_id AS "billId", b.name AS "billName",

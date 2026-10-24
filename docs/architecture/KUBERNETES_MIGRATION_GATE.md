@@ -62,5 +62,5 @@ only an in-memory `/tmp` mount. `DATABASE_URL` comes from the future encrypted
 - CPU and memory requests/limits are starter values and need measurement on the
   selected environment.
 
-See `docs/runbooks/production-images.md`, `docs/PHASE6_READINESS.md`, and the
+See `docs/runbooks/production-images.md`, `docs/release/PHASE6_READINESS.md`, and the
 master-plan P6-05 acceptance criteria.

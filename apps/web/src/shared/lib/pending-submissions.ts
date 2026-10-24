@@ -135,6 +135,27 @@ export async function beginPendingSubmission(
   return { id, key };
 }
 
+/** Preserve payload-based retry identity for correction, bill, and statement forms. */
+export async function pendingSubmissionKey(
+  userId: string,
+  operation: string,
+  payload: unknown,
+): Promise<string> {
+  const digest = await fingerprint(payload);
+  const existing = readEntries(storageKey(userId, operation)).find(
+    (entry) => entry.fingerprint === digest,
+  );
+  if (existing) return existing.key;
+  return (
+    await beginPendingSubmission(
+      userId,
+      operation,
+      crypto.randomUUID(),
+      payload,
+    )
+  ).key;
+}
+
 export function listPendingSubmissions(
   userId: string,
   operation: string,

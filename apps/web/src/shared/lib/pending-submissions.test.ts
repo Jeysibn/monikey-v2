@@ -5,6 +5,7 @@ import {
   clearPendingSubmission,
   listPendingSubmissions,
   pendingSubmissionMatchesPayload,
+  pendingSubmissionKey,
 } from "./pending-submissions";
 
 test("explicit retries reuse one identity while identical new actions stay distinct", async () => {
@@ -86,4 +87,29 @@ test("an edited saved retry is rejected and cannot reuse its idempotency key", a
     })),
     [original],
   );
+});
+
+test("payload-based correction retries reuse only matching owner and operation keys", async () => {
+  const user = crypto.randomUUID();
+  const operation = "bill:create";
+  const payload = { amountMinor: "10000", name: "Rent" };
+  const key = await pendingSubmissionKey(user, operation, payload);
+  assert.equal(await pendingSubmissionKey(user, operation, payload), key);
+  assert.notEqual(
+    await pendingSubmissionKey(user, operation, {
+      ...payload,
+      amountMinor: "20000",
+    }),
+    key,
+  );
+  assert.notEqual(
+    await pendingSubmissionKey(crypto.randomUUID(), operation, payload),
+    key,
+  );
+  assert.notEqual(
+    await pendingSubmissionKey(user, "statement:create", payload),
+    key,
+  );
+  clearPendingSubmission(user, operation, key);
+  assert.notEqual(await pendingSubmissionKey(user, operation, payload), key);
 });

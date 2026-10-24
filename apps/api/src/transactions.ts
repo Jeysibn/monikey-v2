@@ -732,6 +732,20 @@ export async function createRefund(
     request.sourceAccountId,
   );
   if (source.archivedAt) throw new TransactionNotFoundError();
+  const currentSource = await readFinancialAccount(
+    client,
+    userId,
+    request.sourceAccountId,
+  );
+  if (
+    source.type === "CREDIT_CARD" &&
+    BigInt(currentSource.balanceMinor) < amount &&
+    request.acknowledgeCardCreditBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This refund would create a card credit balance of ${moneyMinor((amount - BigInt(currentSource.balanceMinor)).toString())} minor units on ${currentSource.name}. Confirm the card credit to continue.`,
+    );
+  }
 
   const original = await readOwnedRefundTarget(
     client,
@@ -866,11 +880,22 @@ export async function createAdjustment(
   const current = await readFinancialAccount(client, userId, request.accountId);
   if (
     request.direction === "DECREASE" &&
+    account.type !== "CREDIT_CARD" &&
     BigInt(current.balanceMinor) < amount &&
     request.acknowledgeNegativeBalance !== true
   ) {
     throw new TransactionConflictError(
       `This adjustment would make ${current.name} negative. Confirm the negative balance to continue.`,
+    );
+  }
+  if (
+    account.type === "CREDIT_CARD" &&
+    request.direction === "DECREASE" &&
+    BigInt(current.balanceMinor) < amount &&
+    request.acknowledgeCardCreditBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This adjustment would create a card credit balance of ${moneyMinor((amount - BigInt(current.balanceMinor)).toString())} minor units on ${current.name}. Confirm the card credit to continue.`,
     );
   }
 
@@ -1020,7 +1045,7 @@ export async function createCardPayment(
     const allocated = await client.query<{ amount: string }>(
       `SELECT COALESCE(sum(amount_minor), 0)::text AS amount
          FROM card_statement_allocations
-        WHERE user_id = $1 AND statement_id = $2`,
+        WHERE user_id = $1 AND statement_id = $2 AND reversed_at IS NULL`,
       [userId, request.statementId],
     );
     const remaining =
@@ -1044,6 +1069,15 @@ export async function createCardPayment(
   ) {
     throw new TransactionConflictError(
       `This payment would make ${currentFunding.name} negative. Confirm the negative balance to continue.`,
+    );
+  }
+  const currentCard = await readFinancialAccount(client, userId, cardAccountId);
+  if (
+    BigInt(currentCard.balanceMinor) < amount &&
+    request.acknowledgeCardCreditBalance !== true
+  ) {
+    throw new TransactionConflictError(
+      `This payment would create a card credit balance of ${moneyMinor((amount - BigInt(currentCard.balanceMinor)).toString())} minor units on ${currentCard.name}. Confirm the card credit to continue.`,
     );
   }
 
@@ -1175,6 +1209,7 @@ export async function editIncomeOrExpense(
     oldSourceAccountId,
     request.sourceAccountId,
   ]);
+  const oldAccount = accounts.get(oldSourceAccountId)!;
   const newAccount = accounts.get(request.sourceAccountId)!;
   if (newAccount.archivedAt) throw new TransactionNotFoundError();
   if (newAccount.type === "CREDIT_CARD" && request.kind !== "EXPENSE") {
@@ -1201,6 +1236,31 @@ export async function editIncomeOrExpense(
   }
   const oldAmount = moneyMinor(oldAmountValue);
   const newAmount = moneyMinor(request.amountMinor);
+  for (const candidate of new Set([
+    oldSourceAccountId,
+    request.sourceAccountId,
+  ])) {
+    const candidateAccount = accounts.get(candidate)!;
+    if (candidateAccount.type !== "CREDIT_CARD") continue;
+    const current = await readFinancialAccount(client, userId, candidate);
+    let projected = BigInt(current.balanceMinor);
+    if (candidate === oldSourceAccountId && oldAccount.type === "CREDIT_CARD") {
+      // Reversing a card expense reduces its liability balance. Card balances
+      // can be negative after an overpayment, so this can increase the credit.
+      projected -= oldAmount;
+    }
+    if (
+      candidate === request.sourceAccountId &&
+      newAccount.type === "CREDIT_CARD"
+    ) {
+      projected += newAmount;
+    }
+    if (projected < 0n && request.acknowledgeCardCreditBalance !== true) {
+      throw new TransactionConflictError(
+        `This correction would create a card credit balance of ${moneyMinor((-projected).toString())} minor units on ${current.name}. Confirm the card credit to continue.`,
+      );
+    }
+  }
   if (transaction.kind === "EXPENSE") {
     const alreadyRefunded = await readRefundedAmount(
       client,
@@ -1220,20 +1280,23 @@ export async function editIncomeOrExpense(
       }
     }
   }
-  const currentNewAccount = await readFinancialAccount(
-    client,
-    userId,
+  for (const candidateId of new Set([
+    oldSourceAccountId,
     request.sourceAccountId,
-  );
-  let projectedBalance = BigInt(currentNewAccount.balanceMinor);
-  if (request.kind === "EXPENSE" && newAccount.type !== "CREDIT_CARD") {
-    if (oldSourceAccountId === request.sourceAccountId) {
-      projectedBalance += oldAmount;
+  ])) {
+    const candidateAccount = accounts.get(candidateId)!;
+    if (candidateAccount.type === "CREDIT_CARD") continue;
+    const current = await readFinancialAccount(client, userId, candidateId);
+    let projectedBalance = BigInt(current.balanceMinor);
+    if (candidateId === oldSourceAccountId) {
+      projectedBalance += request.kind === "EXPENSE" ? oldAmount : -oldAmount;
     }
-    projectedBalance -= newAmount;
+    if (candidateId === request.sourceAccountId) {
+      projectedBalance += request.kind === "EXPENSE" ? -newAmount : newAmount;
+    }
     if (projectedBalance < 0n && request.acknowledgeNegativeBalance !== true) {
       throw new TransactionConflictError(
-        `This expense would make ${currentNewAccount.name} negative. Confirm the negative balance to continue.`,
+        `This correction would make ${current.name} negative by ${moneyMinor((-projectedBalance).toString())} minor units. Confirm the negative balance to continue.`,
       );
     }
   }
@@ -1262,6 +1325,35 @@ export async function editIncomeOrExpense(
       request.reason,
     ],
   );
+  const linkedOccurrence = await client.query<{ id: string }>(
+    `SELECT id FROM bill_occurrences
+      WHERE user_id = $1 AND paid_transaction_id = $2
+      FOR UPDATE`,
+    [userId, transactionId],
+  );
+  if (linkedOccurrence.rows[0]) {
+    await client.query(
+      `UPDATE bill_occurrences
+          SET actual_amount_minor = $3::bigint, updated_at = now()
+        WHERE user_id = $1 AND id = $2 AND status = 'PAID'`,
+      [userId, linkedOccurrence.rows[0].id, newAmount.toString()],
+    );
+    await client.query(
+      `INSERT INTO bill_occurrence_payment_history
+         (user_id, occurrence_id, transaction_id, sequence_number, action, amount_minor)
+       VALUES ($1, $2, $3,
+               (SELECT COALESCE(MAX(sequence_number), 0) + 1
+                  FROM bill_occurrence_payment_history
+                 WHERE user_id = $1 AND occurrence_id = $2),
+               'EDITED', $4::bigint)`,
+      [
+        userId,
+        linkedOccurrence.rows[0].id,
+        transactionId,
+        newAmount.toString(),
+      ],
+    );
+  }
   const updated = await client.query<{
     id: string;
     kind: TransactionKind;
@@ -1346,6 +1438,7 @@ export async function deleteTransaction(
   userId: string,
   transactionId: string,
   request: TransactionDeleteRequest,
+  serverToday: string,
 ): Promise<TransactionRecord> {
   const transaction = await readTransactionForMutation(
     client,
@@ -1371,6 +1464,127 @@ export async function deleteTransaction(
       "An expense with posted refunds cannot be voided. Void its linked refunds first.",
     );
   }
+  const after = transaction.afterJson;
+  const originalAmountText = after.amountMinor;
+  if (typeof originalAmountText !== "string") {
+    throw new TransactionConflictError(
+      "This transaction cannot be reversed because its amount is unavailable.",
+    );
+  }
+  const originalAmount = moneyMinor(originalAmountText);
+  const originalFee =
+    typeof after.feeMinor === "string" ? moneyMinor(after.feeMinor) : 0n;
+  const accountIdFields = [
+    "sourceAccountId",
+    "accountId",
+    "fromAccountId",
+    "toAccountId",
+    "fundingAccountId",
+    "cardAccountId",
+  ] as const;
+  const accountIds = accountIdFields
+    .map((field) => after[field])
+    .filter((value): value is string => typeof value === "string");
+  const lockedAccounts = await lockAccountsInOrder(client, userId, accountIds);
+  const projectedDeltas = new Map<string, bigint>();
+  const addProjectedDelta = (id: unknown, delta: bigint) => {
+    if (typeof id !== "string") return;
+    projectedDeltas.set(id, (projectedDeltas.get(id) ?? 0n) + delta);
+  };
+  switch (transaction.kind) {
+    case "EXPENSE":
+      addProjectedDelta(
+        after.sourceAccountId,
+        lockedAccounts.get(String(after.sourceAccountId))?.type ===
+          "CREDIT_CARD"
+          ? -originalAmount
+          : originalAmount,
+      );
+      break;
+    case "INCOME":
+      addProjectedDelta(after.sourceAccountId, -originalAmount);
+      break;
+    case "TRANSFER":
+      addProjectedDelta(after.fromAccountId, originalAmount + originalFee);
+      addProjectedDelta(after.toAccountId, -originalAmount);
+      break;
+    case "REFUND":
+      addProjectedDelta(
+        after.sourceAccountId,
+        lockedAccounts.get(String(after.sourceAccountId))?.type ===
+          "CREDIT_CARD"
+          ? originalAmount
+          : -originalAmount,
+      );
+      break;
+    case "ADJUSTMENT": {
+      const direction = after.direction;
+      const account = lockedAccounts.get(String(after.accountId));
+      const increasesBalance = direction === "INCREASE";
+      const reversalDelta =
+        account?.type === "CREDIT_CARD"
+          ? increasesBalance
+            ? originalAmount
+            : -originalAmount
+          : increasesBalance
+            ? -originalAmount
+            : originalAmount;
+      addProjectedDelta(after.accountId, reversalDelta);
+      break;
+    }
+    case "CARD_PAYMENT":
+      addProjectedDelta(after.cardAccountId, originalAmount);
+      addProjectedDelta(after.fundingAccountId, originalAmount);
+      break;
+  }
+
+  const creditBreaches: Array<{ name: string; amountMinor: bigint }> = [];
+  const overdraftBreaches: Array<{ name: string; amountMinor: bigint }> = [];
+  for (const [accountId, delta] of projectedDeltas) {
+    const account = lockedAccounts.get(accountId);
+    if (!account) throw new TransactionNotFoundError();
+    const current = await readFinancialAccount(client, userId, accountId);
+    const projected = BigInt(current.balanceMinor) + delta;
+    if (account.type === "CREDIT_CARD" && projected < 0n) {
+      creditBreaches.push({ name: current.name, amountMinor: -projected });
+    } else if (account.type !== "CREDIT_CARD" && projected < 0n) {
+      overdraftBreaches.push({ name: current.name, amountMinor: -projected });
+    }
+  }
+  if (creditBreaches.length && request.acknowledgeCardCreditBalance !== true) {
+    const breach = creditBreaches[0]!;
+    throw new TransactionConflictError(
+      `This reversal would create a card credit balance of ${moneyMinor(breach.amountMinor.toString())} minor units on ${breach.name}. Confirm the card credit to continue.`,
+    );
+  }
+  if (overdraftBreaches.length && request.acknowledgeNegativeBalance !== true) {
+    const breach = overdraftBreaches[0]!;
+    throw new TransactionConflictError(
+      `This reversal would make ${breach.name} negative by ${moneyMinor(breach.amountMinor.toString())} minor units. Confirm the negative balance to continue.`,
+    );
+  }
+  const allocation = await client.query<{
+    id: string;
+    statementId: string;
+  }>(
+    `SELECT id, statement_id AS "statementId"
+       FROM card_statement_allocations
+      WHERE user_id = $1 AND transaction_id = $2 AND reversed_at IS NULL
+      FOR UPDATE`,
+    [userId, transactionId],
+  );
+  const linkedOccurrence = await client.query<{
+    id: string;
+    dueOn: string;
+    actualAmountMinor: string;
+  }>(
+    `SELECT id, due_on::text AS "dueOn",
+            actual_amount_minor::text AS "actualAmountMinor"
+       FROM bill_occurrences
+      WHERE user_id = $1 AND paid_transaction_id = $2
+      FOR UPDATE`,
+    [userId, transactionId],
+  );
   const reversal = await reverseActiveJournal(client, userId, transactionId);
   const nextVersion = transaction.currentRevision + 1;
   const beforeJson = revisionCommandFromRow(transaction);
@@ -1409,6 +1623,49 @@ export async function deleteTransaction(
   const updatedTransaction = updated.rows[0];
   if (!updatedTransaction)
     throw new TransactionValidationError("Unable to void transaction.");
+  for (const activeAllocation of allocation.rows) {
+    await client.query(
+      `UPDATE card_statement_allocations
+          SET reversed_at = now(), reversal_reason = $4
+        WHERE user_id = $1 AND id = $2 AND transaction_id = $3
+          AND reversed_at IS NULL`,
+      [userId, activeAllocation.id, transactionId, request.reason],
+    );
+    await client.query(
+      `INSERT INTO audit_events
+         (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)
+       VALUES ($1, $1, 'CARD_STATEMENT_ALLOCATION', $2, 'REVERSED', $3::jsonb)`,
+      [
+        userId,
+        activeAllocation.id,
+        JSON.stringify({
+          statementId: activeAllocation.statementId,
+          transactionId,
+          reason: request.reason,
+        }),
+      ],
+    );
+  }
+  for (const occurrence of linkedOccurrence.rows) {
+    await client.query(
+      `INSERT INTO bill_occurrence_payment_history
+         (user_id, occurrence_id, transaction_id, sequence_number, action, amount_minor)
+       VALUES ($1, $2, $3,
+               (SELECT COALESCE(MAX(sequence_number), 0) + 1
+                  FROM bill_occurrence_payment_history
+                 WHERE user_id = $1 AND occurrence_id = $2),
+               'VOIDED', $4::bigint)`,
+      [userId, occurrence.id, transactionId, occurrence.actualAmountMinor],
+    );
+    await client.query(
+      `UPDATE bill_occurrences
+          SET status = CASE WHEN due_on < $3::date THEN 'OVERDUE' ELSE 'UPCOMING' END,
+              actual_amount_minor = NULL, paid_transaction_id = NULL,
+              paid_at = NULL, updated_at = now()
+        WHERE user_id = $1 AND id = $2 AND status = 'PAID'`,
+      [userId, occurrence.id, serverToday],
+    );
+  }
   await client.query(
     `INSERT INTO audit_events
        (user_id, actor_id, entity_type, entity_id, action, safe_metadata_json)

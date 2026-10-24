@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+/** Validate proleptic Gregorian dates before they reach a PostgreSQL cast. */
+export const FinancialDateSchema = z.iso
+  .date({ error: "Enter a valid calendar date." })
+  .superRefine((value, context) => {
+    const year = Number(value.slice(0, 4));
+    if (year < 1) {
+      context.addIssue({
+        code: "custom",
+        message: "Enter a valid calendar date.",
+      });
+    }
+  });
+
 export const HealthResponseSchema = z.object({
   status: z.enum(["ok", "degraded"]),
   database: z.enum(["connected", "unconfigured", "unavailable"]),
@@ -40,7 +53,7 @@ export const MeResponseSchema = z.object({
     theme: z.enum(["system", "light", "dark"]),
     hideBalances: z.boolean(),
   }),
-  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  serverToday: FinancialDateSchema,
   onboardingStatus: z.enum(["NEEDS_FIRST_ACCOUNT", "READY"]),
 });
 
@@ -68,6 +81,32 @@ export const FinancialAccountTypeSchema = z.enum([
 ]);
 
 const MinorUnitsStringSchema = z.string().regex(/^(0|[1-9]\d{0,18})$/);
+
+export const BillOccurrenceQuerySchema = z
+  .object({
+    from: FinancialDateSchema.optional(),
+    to: FinancialDateSchema.optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (query.from && query.to) {
+      const from = Date.parse(`${query.from}T00:00:00.000Z`);
+      const to = Date.parse(`${query.to}T00:00:00.000Z`);
+      if (from > to) {
+        context.addIssue({
+          code: "custom",
+          message: "The occurrence window must be ordered.",
+          path: ["from"],
+        });
+      } else if ((to - from) / 86_400_000 > 366) {
+        context.addIssue({
+          code: "custom",
+          message: "Occurrence windows cannot be wider than 366 days.",
+          path: ["to"],
+        });
+      }
+    }
+  });
 
 export const FinancialAccountCreateRequestBaseSchema = z
   .object({
@@ -235,7 +274,7 @@ export const TransferCreateRequestSchema = z
     amountMinor: MinorUnitsStringSchema,
     feeMinor: MinorUnitsStringSchema.optional(),
     feeCategoryId: z.string().uuid().optional(),
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    occurredOn: FinancialDateSchema,
     note: z.string().trim().max(500).optional(),
     acknowledgeNegativeBalance: z.boolean().optional(),
   })
@@ -275,8 +314,10 @@ export const RefundCreateRequestSchema = z
     sourceAccountId: z.string().uuid(),
     refundedTransactionId: z.string().uuid(),
     amountMinor: MinorUnitsStringSchema,
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    occurredOn: FinancialDateSchema,
     note: z.string().trim().max(500).optional(),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+    acknowledgeCardCreditBalance: z.boolean().optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -289,9 +330,10 @@ export const AdjustmentCreateRequestSchema = z
     accountId: z.string().uuid(),
     direction: z.enum(["INCREASE", "DECREASE"]),
     amountMinor: MinorUnitsStringSchema,
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    occurredOn: FinancialDateSchema,
     note: z.string().trim().max(500).optional(),
     acknowledgeNegativeBalance: z.boolean().optional(),
+    acknowledgeCardCreditBalance: z.boolean().optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -303,16 +345,15 @@ export const CardPaymentCreateRequestSchema = z
     fundingAccountId: z.string().uuid(),
     statementId: z.string().uuid().optional(),
     amountMinor: MinorUnitsStringSchema,
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    occurredOn: FinancialDateSchema,
     note: z.string().trim().max(500).optional(),
     acknowledgeNegativeBalance: z.boolean().optional(),
+    acknowledgeCardCreditBalance: z.boolean().optional(),
   })
   .strict()
   .superRefine((request, context) => {
     addPositiveMinorUnitIssues(request.amountMinor, ["amountMinor"], context);
   });
-
-const FinancialDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const CardStatementCreateRequestSchema = z
   .object({
@@ -559,9 +600,10 @@ export const TransactionCreateRequestSchema = z
     sourceAccountId: z.string().uuid(),
     categoryId: z.string().uuid(),
     amountMinor: MinorUnitsStringSchema,
-    occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    occurredOn: FinancialDateSchema,
     note: z.string().trim().max(500).optional(),
     acknowledgeNegativeBalance: z.boolean().optional(),
+    acknowledgeCardCreditBalance: z.boolean().optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -586,7 +628,7 @@ export const TransactionSchema = z.object({
   kind: TransactionKindSchema,
   status: z.enum(["POSTED", "VOID"]),
   currentRevision: z.number().int().positive(),
-  occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  occurredOn: FinancialDateSchema,
   categoryId: z.string().uuid().nullable(),
   refundedTransactionId: z.string().uuid().nullable(),
   note: z.string().nullable(),
@@ -629,7 +671,11 @@ export const TransactionEditRequestSchema =
   });
 
 export const TransactionDeleteRequestSchema = z
-  .object({ reason: z.string().trim().min(1).max(300) })
+  .object({
+    reason: z.string().trim().min(1).max(300),
+    acknowledgeNegativeBalance: z.boolean().optional(),
+    acknowledgeCardCreditBalance: z.boolean().optional(),
+  })
   .strict();
 
 export const TransactionResponseSchema = z.object({
@@ -658,14 +704,8 @@ export const TransactionActivityQuerySchema = z
     status: z.enum(["POSTED", "VOID"]).optional(),
     accountId: z.string().uuid().optional(),
     categoryId: z.string().uuid().optional(),
-    from: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-    to: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
+    from: FinancialDateSchema.optional(),
+    to: FinancialDateSchema.optional(),
   })
   .strict()
   .superRefine((query, context) => {
@@ -691,7 +731,7 @@ export const TransactionActivityItemSchema = z.object({
 export const TransactionActivityResponseSchema = z.object({
   activity: z.array(TransactionActivityItemSchema),
   nextCursor: z.string().nullable(),
-  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  serverToday: FinancialDateSchema,
 });
 
 export const DashboardSummarySchema = z.object({
@@ -704,7 +744,7 @@ export const DashboardSummarySchema = z.object({
   accounts: z.array(FinancialAccountSchema),
   upcomingBills: z.array(BillOccurrenceSchema),
   recentActivity: z.array(TransactionActivityItemSchema),
-  serverToday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  serverToday: FinancialDateSchema,
 });
 
 export const ReportMonthQuerySchema = z
