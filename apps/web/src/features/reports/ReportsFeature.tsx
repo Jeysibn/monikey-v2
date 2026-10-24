@@ -25,6 +25,7 @@ export function ReportsFeature({
   renderMoney: (value: string) => ReactNode;
 }) {
   const [month, setMonth] = useState(initialMonth);
+  const [selectedMonthManually, setSelectedMonthManually] = useState(false);
   const [reportResult, setReportResult] = useState<{
     month: string;
     report: MonthlyReportView;
@@ -36,6 +37,10 @@ export function ReportsFeature({
     reportResult?.month === month && reportResult.report.month === month
       ? reportResult.report
       : null;
+
+  useEffect(() => {
+    if (!selectedMonthManually) setMonth(initialMonth);
+  }, [initialMonth, selectedMonthManually]);
 
   useEffect(() => {
     if (!month) return;
@@ -100,7 +105,10 @@ export function ReportsFeature({
             value={month}
             onChange={(event) => {
               const selectedMonth = event.currentTarget.value;
-              if (selectedMonth) setMonth(selectedMonth);
+              if (selectedMonth) {
+                setSelectedMonthManually(true);
+                setMonth(selectedMonth);
+              }
             }}
           />
         </label>

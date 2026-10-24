@@ -484,7 +484,9 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   const reloadedQuickAddSelects = page.locator(".quick-add-card select");
   await reloadedQuickAddSelects.nth(0).selectOption(onboardingAccountId!);
   await reloadedQuickAddSelects.nth(1).selectOption({ label: "Food" });
-  await page.getByRole("button", { name: "Record expense" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
   expect(injectedResponseLoss).toBe(true);
   expect(firstIdempotencyKey).toBeTruthy();
@@ -766,6 +768,101 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   } finally {
     await secondContext.close();
   }
+});
+
+test("temporary profile refresh failures preserve the session view and recover", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "session-recovery@example.test",
+      password: "CI-only-session-recovery-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+
+  let failed = false;
+  await page.route("**/api/v1/me", async (route) => {
+    if (!failed) {
+      failed = true;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected temporary profile failure." },
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("alert")).toContainText(
+    "financial changes are paused",
+  );
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+  await page.unroute("**/api/v1/me");
+});
+
+test("signing in from another tab clears the previous owner's view", async ({
+  page,
+  context,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const ownerLogin = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(ownerLogin.status()).toBe(200);
+  await page.goto("/app");
+  await expect(
+    page.getByRole("link", { name: "owner@example.test" }),
+  ).toBeVisible();
+
+  const secondTab = await context.newPage();
+  await secondTab.goto("/app");
+  await expect(
+    secondTab.getByRole("link", { name: "owner@example.test" }),
+  ).toBeVisible();
+  await secondTab.getByRole("button", { name: "Sign out" }).click();
+  await expect(
+    secondTab.getByRole("link", { name: "owner@example.test" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "owner@example.test" }),
+  ).toHaveCount(0);
+
+  await secondTab.goto("/login");
+  await secondTab.locator("#login-email").fill("second@example.test");
+  await secondTab
+    .locator("#login-password")
+    .fill("CI-only-second-user-password-never-used");
+  await secondTab.getByRole("button", { name: "Sign in" }).click();
+  await expect(secondTab).toHaveURL(/\/(?:app|onboarding)$/);
+  await expect(
+    secondTab.getByRole("link", { name: "second@example.test" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "second@example.test" }),
+  ).toBeVisible();
+  await secondTab.close();
 });
 
 test("financial accounts preserve opening balances, history, and owner scope", async ({
@@ -1127,8 +1224,8 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     const ownerLogin = await ownerContext.request.post(`${api}/auth/login`, {
       headers: { origin },
       data: {
-        email: "owner@example.test",
-        password: "CI-only-password-never-used-outside-tests",
+        email: "owner-isolation@example.test",
+        password: "CI-only-owner-isolation-password",
       },
     });
     expect(ownerLogin.status()).toBe(200);
@@ -2105,7 +2202,9 @@ test("Quick Add retains multiple unresolved submissions across intervening entri
     .nth(1)
     .selectOption({ label: "Food" });
   await page.getByLabel("Note Optional").fill("unresolved A");
-  await page.getByRole("button", { name: "Record expense" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
   expect(retryKey).toBe(firstKey);
   await page.unroute("**/api/v1/transactions");
@@ -2113,6 +2212,108 @@ test("Quick Add retains multiple unresolved submissions across intervening entri
   const accountAfter = await page.request.get(`${api}/accounts/${accountId}`);
   expect(accountAfter.status()).toBe(200);
   expect((await accountAfter.json()).account.balanceMinor).toBe("98500");
+});
+
+test("Quick Add allows a new identical purchase while the first result is unresolved", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "quickadd-retry@example.test",
+      password: "CI-only-quickadd-retry-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const suffix = randomUUID();
+  const accountResponse = await page.request.post(apiUrl("/accounts"), {
+    headers: {
+      origin: webOrigin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `quick-add-identical-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Identical purchases ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+
+  let firstKey = "";
+  let retryKey = "";
+  let secondKey = "";
+  let firstTransactionId = "";
+  let attempt = 0;
+  await page.route("**/api/v1/transactions", async (route) => {
+    const key = route.request().headers()["idempotency-key"];
+    attempt += 1;
+    if (attempt <= 3) {
+      const response = await route.fetch();
+      const result = await response.json();
+      if (attempt === 1) {
+        firstKey = key;
+        firstTransactionId = result.transaction.id;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { message: "Injected response loss." },
+          }),
+        });
+      } else if (attempt === 2) {
+        secondKey = key;
+        expect(key).not.toBe(firstKey);
+        expect(result.transaction.id).not.toBe(firstTransactionId);
+        await route.fulfill({ response });
+      } else {
+        retryKey = key;
+        expect(key).toBe(firstKey);
+        expect(result.transaction.id).toBe(firstTransactionId);
+        await route.fulfill({ response });
+      }
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/app/transactions/new");
+  const amount = page.locator("#quick-add-amount");
+  const selects = page.locator(".quick-add-card select");
+  const note = page.getByLabel("Note Optional");
+  const submit = page.getByRole("button", { name: "Record expense" });
+  const enterSamePurchase = async () => {
+    await amount.fill("10.00");
+    await selects.nth(0).selectOption(accountId);
+    await selects.nth(1).selectOption({ label: "Food" });
+    await note.fill("Two separate coffee purchases");
+  };
+  await enterSamePurchase();
+  await submit.click();
+  await expect(page.locator(".form-error")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.locator(".pending-recovery summary").click();
+  await page
+    .getByRole("button", { name: "Start a separate transaction" })
+    .click();
+  await submit.click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(secondKey).toBeTruthy();
+  expect(secondKey).not.toBe(firstKey);
+
+  await enterSamePurchase();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(retryKey).toBe(firstKey);
+  await page.unroute("**/api/v1/transactions");
+
+  const account = await page.request.get(apiUrl(`/accounts/${accountId}`));
+  expect((await account.json()).account.balanceMinor).toBe("98000");
 });
 
 test("card payment recovers a committed lost response with the same key", async ({
@@ -2222,7 +2423,9 @@ test("card payment recovers a committed lost response with the same key", async 
   await amount.fill("50.00");
   await fundingSelect.selectOption(funding.id);
   await date.fill(selectedDate);
-  await page.getByRole("button", { name: "Record card payment" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved payment" }).click();
   await expect(page.getByRole("status")).toContainText("Card payment posted.");
   expect(retryKey).toBe(firstKey);
 
@@ -2549,6 +2752,8 @@ test("account creation recovers a committed opening balance with its original ke
   await page.getByRole("button", { name: "Add account" }).click();
   await page.getByLabel("Name *").fill(name);
   await page.getByLabel("Opening balance *").fill("123.45");
+  await page.getByText("Check a saved attempt", { exact: true }).click();
+  await page.getByRole("button", { name: /Retry saved attempt/ }).click();
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.locator(".form-success")).toContainText(
     "ledger-backed opening balance",
@@ -3219,6 +3424,78 @@ test("Accounts marks failed refreshes stale and Retry reloads real balances", as
   await page.unroute("**/api/v1/accounts*includeArchived=true");
 });
 
+test("account creation recovers a committed lost response after refresh", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "accounts-stale@example.test",
+      password: "CI-only-accounts-stale-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  await page.goto("/app/accounts");
+  await page.getByRole("button", { name: "Add account" }).click();
+
+  const suffix = randomUUID();
+  const accountName = `Lost response ${suffix}`;
+  let firstKey = "";
+  let retryKey = "";
+  let firstAccountId = "";
+  let lost = false;
+  await page.route("**/api/v1/accounts", async (route) => {
+    const key = route.request().headers()["idempotency-key"];
+    const response = await route.fetch();
+    const result = await response.json();
+    if (!lost) {
+      lost = true;
+      firstKey = key;
+      firstAccountId = result.account.id;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "Injected response loss." } }),
+      });
+      return;
+    }
+    retryKey = key;
+    expect(key).toBe(firstKey);
+    expect(result.account.id).toBe(firstAccountId);
+    await route.fulfill({ response });
+  });
+
+  await page.getByLabel("Name *").fill(accountName);
+  await page.getByLabel("Opening balance *").fill("125.00");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Name *").fill(accountName);
+  await page.getByLabel("Opening balance *").fill("125.00");
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry account creation" }).click();
+  await expect(page.getByRole("status")).toContainText("Account created");
+  expect(retryKey).toBe(firstKey);
+  await page.unroute("**/api/v1/accounts");
+
+  const accounts = await page.request.get(
+    apiUrl("/accounts?includeArchived=true"),
+  );
+  expect(accounts.status()).toBe(200);
+  const matching = (await accounts.json()).accounts.filter(
+    (account: { name: string }) => account.name === accountName,
+  );
+  expect(matching).toHaveLength(1);
+  expect(matching[0].balanceMinor).toBe("12500");
+  expect(csrfToken).toBeTruthy();
+});
+
 test("Quick Add refreshes the Manila business date when opened and preserves a chosen date", async ({
   page,
 }) => {
@@ -3237,10 +3514,11 @@ test("Quick Add refreshes the Manila business date when opened and preserves a c
     page.getByRole("link", { name: "manila-date@example.test" }),
   ).toBeVisible();
 
+  let serverToday = "2030-01-02";
   await page.route("**/api/v1/me", async (route) => {
     const response = await route.fetch();
     const profile = await response.json();
-    profile.serverToday = "2030-01-02";
+    profile.serverToday = serverToday;
     await route.fulfill({ response, json: profile });
   });
   await page
@@ -3249,8 +3527,12 @@ test("Quick Add refreshes the Manila business date when opened and preserves a c
     .click();
   const date = page.locator(".quick-add-card input[type=date]");
   await expect(date).toHaveValue("2030-01-02");
-  await date.fill("2030-01-01");
   await page.getByLabel("Amount").fill("5.00");
+  serverToday = "2030-01-03";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(date).toHaveAttribute("max", "2030-01-03");
+  await expect(date).toHaveValue("2030-01-02");
+  await date.fill("2030-01-01");
   await expect(date).toHaveValue("2030-01-01");
   await page.unroute("**/api/v1/me");
 });
@@ -3703,8 +3985,8 @@ test("reports keep month data isolated and retry the selected month", async ({
   const login = await page.request.post(apiUrl("/auth/login"), {
     headers: { origin: webOrigin },
     data: {
-      email: "owner@example.test",
-      password: "CI-only-password-never-used-outside-tests",
+      email: "reports-snapshot@example.test",
+      password: "CI-only-reports-snapshot-password",
     },
   });
   expect(login.status()).toBe(200);

@@ -72,6 +72,8 @@ reports-snapshot@example.test CI-only-reports-snapshot-password
 statement-create-retry@example.test CI-only-statement-create-retry-password
 transaction-edit-confirm@example.test CI-only-transaction-edit-confirm-password
 unknown-owner@example.test CI-only-unknown-owner-password
+session-recovery@example.test CI-only-session-recovery-password
+owner-isolation@example.test CI-only-owner-isolation-password
 FIXTURES
 ```
 

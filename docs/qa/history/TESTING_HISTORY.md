@@ -44,6 +44,68 @@ commands and results, not the current setup procedure. Use the
   `git diff --check`, and Compose configuration checks passed. No deployment,
   GitOps promotion, or V1 operation occurred.
 
+## Reliability remediation worktree checks — 2026-10-24
+
+- Reviewed `origin/main` at `ff24ae7` and `origin/dev` at `b96900b`; the latter
+  is an ancestor of the former. Work is isolated on
+  `feature/account-session-date-reliability`, based on `origin/dev`.
+- The API already made account creation and opening-balance journals atomic and
+  replayable by idempotency key. The confirmed gap was the web flow's fresh key
+  for an unresolved retry. Account creation, first-account onboarding, Quick
+  Add, and card payments now persist explicit operation IDs and stable API keys
+  in bounded `sessionStorage` state. It stores no transaction/account payloads.
+  Retries are explicit and enabled only after the user re-enters matching
+  details; a new action gets a new key even when its details are identical.
+- Session refresh now treats `401` as invalidation and connectivity, timeout,
+  API, and CSRF-refresh failures as unavailable. Known profile display can stay
+  visible for the same owner, but CSRF is cleared and writes are blocked. Login
+  changes clear owner data before network requests. A `BroadcastChannel`
+  invalidates/revalidates profile state across tabs, route content is keyed by
+  authenticated owner, and account detail/card statement requests ignore stale
+  completions.
+- Manila date refresh remains server-authoritative through `/me`. Quick Add,
+  card payment, and Bills update only untouched form dates; text/input edits no
+  longer cause an overnight date rollover. Quick Add reference loading is
+  ordered, retriable, and invalidated on owner changes. Account detail and card
+  statement loads are likewise request-sequenced.
+- Focused regression coverage checks stable identity versus identical new
+  transactions, mismatched saved retries, Manila midnight/year rollover,
+  account creation with opening balance after a committed lost response,
+  session-network recovery and tab-to-tab owner switching, Dashboard/Accounts
+  refresh races, card payment replay, and Reports month retries.
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm run test:unit`,
+  `npm run test:invariants`, and `npm run test:web:unit` passed. The web unit
+  suite currently covers Manila dates and pending-submission identity semantics.
+- Against a fresh, isolated tmpfs PostgreSQL/API/web Compose stack,
+  `npm run test:integration` passed all nine API suites (19 tests), including
+  the actual-API process-kill transfer rollback. The one-worker full-stack
+  Playwright run passed 35 tests with 19 intentional mobile-project skips
+  across desktop Chromium and Pixel 7 mobile emulation. Added browser coverage
+  includes account creation/opening-balance replay after a lost response,
+  cross-tab owner switching, recovery of multiple pending Quick Add actions,
+  starting an identical legitimate purchase while a previous action remains
+  unresolved and replaying that first action, card payment replay, and
+  deterministic Manila date refresh. The recovery list refreshes after
+  uncertain results, success, and terminal rejection so retry/new-action
+  controls stay current without a page reload.
+- Independent QA reviewed the final session/account replay and pending-list
+  changes after integration; no remaining concrete concern was reported.
+- `npm run review:local` passed the authenticated route checks across 360,
+  390, 768, 1440, and 1920 CSS-pixel widths, light and dark themes, keyboard
+  traversal, reduced motion, and WCAG axe scans. The final run inspected 55
+  route/viewport combinations with zero horizontal overflow, unnamed controls,
+  undersized targets, or axe violations. Home action targets were raised to
+  44px, and on mobile account/bill panels now precede recent activity. Screenshots
+  are stored in `docs/qa/2026-10-24/assets/account-session-date-reliability/` and the mobile
+  and desktop Home captures were visually inspected. The Impeccable static scan
+  reported no primary findings in the edited TSX/CSS files; its generic live
+  URL scan ran unauthenticated and is not treated as app-screen evidence.
+- `npm run deploy:check` remains unverified against the local cluster because
+  cert-manager CRD schemas were unavailable in the local schema cache. This is
+  not evidence of a live-cluster failure; no cluster was contacted or changed.
+- No GitHub Actions workflow, production cluster, live GitOps repository,
+  persistent development database, or V1 resource was modified.
+
 ## Full current-worktree financial and browser acceptance — 2026-10-23
 
 - Rebuilt the isolated `monikey-e2e` stack from this worktree. Its database uses
@@ -367,6 +429,8 @@ reports-snapshot@example.test CI-only-reports-snapshot-password
 statement-create-retry@example.test CI-only-statement-create-retry-password
 transaction-edit-confirm@example.test CI-only-transaction-edit-confirm-password
 unknown-owner@example.test CI-only-unknown-owner-password
+session-recovery@example.test CI-only-session-recovery-password
+owner-isolation@example.test CI-only-owner-isolation-password
 FIXTURES
 COMPOSE_FILE=compose.e2e.yaml \
 COMPOSE_PROJECT_NAME=monikey-e2e \
@@ -494,7 +558,7 @@ Reviewing the scale fixture found that its transaction revisions named one accou
 
 The scale seeder also rejects remote database hosts even when test opt-in and the database name are correct. A remote-host URL was refused before connection; the API typecheck passed after adding this guard.
 
-Compose starts PostgreSQL, runs all migrations to completion, waits for the API readiness endpoint, then serves the web client. Bootstrap the disposable owner and disposable E2E users locally before database-backed tests. The seed command accepts a new email each time, so stateful browser checks can use isolated accounts without exhausting the login throttle. The standard browser fixture expects `owner@example.test`, `second@example.test`, and `sheet@example.test`; the FIN-019 process-crash test uses a separate `crash@example.test` account so its retained archived-account fixtures cannot change browser expectations. CI creates all four with the same restricted seed command. The SQL contract suite verifies account and category checks, composite owner references, append-only postings, positive exact amounts, per-owner idempotency uniqueness, and deferred balanced-journal enforcement. API database tests exercise the ledger writer, account opening balances, category lifecycle, expense/income/transfer/refund/adjustment commands, card liability/payment/statement commands, recurring bill generation/payment, revision commands, and activity query behavior against PostgreSQL, including deterministic day-31 February handling, owner scope, statement allocation limits, and linked bill payments. Playwright covers desktop and Pixel 7 mobile emulation, honest empty-state content, database readiness, private login, secure cookie attributes, CSRF and origin rejection, profile/session recovery, cross-user isolation, preferences, Manila server date despite a skewed browser clock, account, category, transaction creation/replay/conflict, transfer/refund/adjustment flows, card detail/payment and Bills routes, edit/audit/delete flows, ledger-derived balances, rename/archive history, invalid inputs, logout, invalid credentials, and rate limiting. Authenticated identity, financial, and export responses are checked for `Cache-Control: private, no-store`; cross-user CSV and JSON exports are checked for transaction-ID isolation. The local release review authenticates once, reuses the session across its desktop and mobile contexts, and therefore remains repeatable under the API's intentional five-attempt login limiter. Routine validation is local and uses one worker because the acceptance fixtures intentionally share a database state; no GitHub Actions run is needed for these checks.
+Compose starts PostgreSQL, runs all migrations to completion, waits for the API readiness endpoint, then serves the web client. Bootstrap the disposable owner and disposable E2E users locally before database-backed tests. The seed command accepts a new email each time, so stateful browser checks can use isolated accounts without exhausting the login throttle. The standard browser fixture expects `owner@example.test`, `second@example.test`, and `sheet@example.test`; the FIN-019 process-crash test uses a separate `crash@example.test` account so its retained archived-account fixtures cannot change browser expectations. Reliability journeys use separate `accounts-stale`, `quickadd-retry`, `card-payment-ui`, `dashboard-refresh`, `manila-date`, `reports-snapshot`, `session-recovery`, and `owner-isolation` users, as shown in the seed loop above. CI creates the four standard fixture users with the same restricted seed command. The SQL contract suite verifies account and category checks, composite owner references, append-only postings, positive exact amounts, per-owner idempotency uniqueness, and deferred balanced-journal enforcement. API database tests exercise the ledger writer, account opening balances, category lifecycle, expense/income/transfer/refund/adjustment commands, card liability/payment/statement commands, recurring bill generation/payment, revision commands, and activity query behavior against PostgreSQL, including deterministic day-31 February handling, owner scope, statement allocation limits, and linked bill payments. Playwright covers desktop and Pixel 7 mobile emulation, honest empty-state content, database readiness, private login, secure cookie attributes, CSRF and origin rejection, profile/session recovery, cross-user isolation, preferences, Manila server date despite a skewed browser clock, account, category, transaction creation/replay/conflict, transfer/refund/adjustment flows, card detail/payment and Bills routes, edit/audit/delete flows, ledger-derived balances, rename/archive history, invalid inputs, logout, invalid credentials, and rate limiting. Authenticated identity, financial, and export responses are checked for `Cache-Control: private, no-store`; cross-user CSV and JSON exports are checked for transaction-ID isolation. The local release review authenticates once, reuses the session across its desktop and mobile contexts, and therefore remains repeatable under the API's intentional five-attempt login limiter. Routine validation is local and uses one worker because the acceptance fixtures intentionally share a database state; no GitHub Actions run is needed for these checks.
 
 The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for focused integration suites. The checked-in `compose.local-test.yaml` override exposes the normal disposable stack's API and PostgreSQL ports only when local host-driven integration or Playwright tests need them; the base Compose topology exposes only the web port.
 
