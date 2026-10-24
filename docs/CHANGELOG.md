@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-10-24 — Organize repository documentation and tooling
+
+- Grouped current development and release guides separately from dated QA reports.
+- Added documentation, QA, and script indexes with explicit placement conventions.
+- Kept the complete testing history while extracting a current testing guide and fixture setup.
+- Colocated review screenshots with their dated QA evidence; retained all assets.
+- Grouped scripts by checks, database, release, security, testing, and assets; updated npm, CI, imports, root resolution, and documentation paths.
+- Preserved the existing financial implementation, schema migration history, and application behavior.
+- Validation: `npm run validate`, Compose checks, live API contract parity, and the relocated PostgreSQL migration-upgrade command passed. Local Markdown links and relative script imports resolve; 79 relocated screenshots retain their Git contents and 87 application/schema/test files match the cleanup baseline. Kubernetes schema validation remains blocked by unavailable local cert-manager schemas/tools.
+
+## 2026-10-24 — Correct linked card and bill history, confirmations, and retries
+
+- Voiding a card payment now reverses its statement allocation atomically; bill
+  payment edits and voids update the linked occurrence and append payment
+  history in the same ledger transaction.
+- Bill schedule edits reconcile unpaid current/future occurrences under a rule
+  lock while retaining paid/skipped occurrences. Calendar dates and requested
+  occurrence windows are validated and capped at 366 days. Bills and dashboard
+  reads hold the rule lock through occurrence generation and result materialization,
+  so concurrent schedule changes cannot leave stale due dates.
+- Card credit creation now has a dedicated acknowledgement across card
+  payments, refunds, adjustments, expense edits, and reversal paths. Bill
+  overdraft confirmation displays the exact submitted amount. Combined
+  overdraft/card-credit approvals are retained independently; transaction
+  edit and reversal confirmations show exact named account projections and
+  include income source-account reversals.
+- Bill edit/status/archive/restore actions now retain pending/error state, and
+  bill, opening-balance account, and statement create forms preserve idempotency
+  keys for unresolved requests. Calendar-date validation and field-level HTTP
+  errors cover bill occurrence, Activity, and CSV export query filters.
+  Generated OpenAPI declarations reflect the changed request contracts.
+- Migration `20261024000000_linked_corrections_and_occurrences` records
+  allocation reversals and bill occurrence payment history.
+
 ## 2026-10-23 — Re-run full current-worktree financial acceptance
 
 - Rebuilt the isolated tmpfs PostgreSQL/API/web stack and passed all nine
@@ -48,7 +82,7 @@
 
 ## 2026-10-23 — Keep the approved plan source authoritative
 
-- Restored the repository and Obsidian plan copies byte-for-byte from the user-supplied master plan. Current implementation status remains in `docs/IMPLEMENTATION_STATUS.md`.
+- Restored the repository and Obsidian plan copies byte-for-byte from the user-supplied master plan. Current implementation status remains in `docs/development/IMPLEMENTATION_STATUS.md`.
 - Added the fresh actual-API backup/restore recheck and cleanup evidence to the P6-06 implementation status row. Production gates remain open.
 
 ## 2026-10-23 — Recheck current-worktree backup restore

@@ -59,7 +59,7 @@ jobs:
         id: verify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/verify-release-main.mjs
+        run: node scripts/release/verify-release-main.mjs
 
       - name: Build all release images with the source commit label
         env:
@@ -115,7 +115,7 @@ jobs:
           mkdir -p "$artifact_dir" "$RUNNER_TEMP/syft"
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io \
             --username "$GITHUB_ACTOR" --password-stdin
-          migration_schema_version="$(node scripts/prisma-schema-version.mjs)"
+          migration_schema_version="$(node scripts/database/prisma-schema-version.mjs)"
           printf 'source_commit=%s\nmigration_schema_version=%s\nvalidated_pr=%s\nvalidated_pr_head=%s\n' \
             "$GITHUB_SHA" "$migration_schema_version" "$VALIDATED_PR" "$VALIDATED_PR_HEAD" \
             > "$artifact_dir/release-manifest.txt"
@@ -156,7 +156,7 @@ jobs:
           RELEASE_MANIFEST: ${{ runner.temp }}/monikey-v2-release/release-manifest.txt
           VALIDATED_PR: ${{ steps.verify.outputs.pull_request }}
           VALIDATED_PR_HEAD: ${{ steps.verify.outputs.pull_request_head }}
-        run: node scripts/verify-release-manifest.mjs
+        run: node scripts/release/verify-release-manifest.mjs
 
       - name: Retain digest map, scans, and SPDX SBOMs
         if: always() && steps.release.outcome != 'skipped'

@@ -1,6 +1,8 @@
 import { expect, test, type APIResponse } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { Pool } from "pg";
 import { apiBaseUrl, apiUrl, webOrigin } from "./origins.js";
 
 test("renders the honest home preview without sample finances", async ({
@@ -482,7 +484,9 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   const reloadedQuickAddSelects = page.locator(".quick-add-card select");
   await reloadedQuickAddSelects.nth(0).selectOption(onboardingAccountId!);
   await reloadedQuickAddSelects.nth(1).selectOption({ label: "Food" });
-  await page.getByRole("button", { name: "Record expense" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
   expect(injectedResponseLoss).toBe(true);
   expect(firstIdempotencyKey).toBeTruthy();
@@ -516,6 +520,7 @@ test("private login, session recovery, CSRF protection, and logout work", async 
     .getByLabel("Reason for edit or reversal *")
     .fill("Corrected test receipt");
   await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(page.locator(".confirmation-panel")).toHaveCount(0);
   await expect(page.locator(".form-success")).toHaveText(
     "Transaction updated and re-posted through the ledger.",
   );
@@ -763,6 +768,101 @@ test("private login, session recovery, CSRF protection, and logout work", async 
   } finally {
     await secondContext.close();
   }
+});
+
+test("temporary profile refresh failures preserve the session view and recover", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "session-recovery@example.test",
+      password: "CI-only-session-recovery-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+
+  let failed = false;
+  await page.route("**/api/v1/me", async (route) => {
+    if (!failed) {
+      failed = true;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected temporary profile failure." },
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("alert")).toContainText(
+    "financial changes are paused",
+  );
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "session-recovery@example.test" }),
+  ).toBeVisible();
+  await page.unroute("**/api/v1/me");
+});
+
+test("signing in from another tab clears the previous owner's view", async ({
+  page,
+  context,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const ownerLogin = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "owner@example.test",
+      password: "CI-only-password-never-used-outside-tests",
+    },
+  });
+  expect(ownerLogin.status()).toBe(200);
+  await page.goto("/app");
+  await expect(
+    page.getByRole("link", { name: "owner@example.test" }),
+  ).toBeVisible();
+
+  const secondTab = await context.newPage();
+  await secondTab.goto("/app");
+  await expect(
+    secondTab.getByRole("link", { name: "owner@example.test" }),
+  ).toBeVisible();
+  await secondTab.getByRole("button", { name: "Sign out" }).click();
+  await expect(
+    secondTab.getByRole("link", { name: "owner@example.test" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "owner@example.test" }),
+  ).toHaveCount(0);
+
+  await secondTab.goto("/login");
+  await secondTab.locator("#login-email").fill("second@example.test");
+  await secondTab
+    .locator("#login-password")
+    .fill("CI-only-second-user-password-never-used");
+  await secondTab.getByRole("button", { name: "Sign in" }).click();
+  await expect(secondTab).toHaveURL(/\/(?:app|onboarding)$/);
+  await expect(
+    secondTab.getByRole("link", { name: "second@example.test" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "second@example.test" }),
+  ).toBeVisible();
+  await secondTab.close();
 });
 
 test("financial accounts preserve opening balances, history, and owner scope", async ({
@@ -1124,8 +1224,8 @@ test("financial accounts preserve opening balances, history, and owner scope", a
     const ownerLogin = await ownerContext.request.post(`${api}/auth/login`, {
       headers: { origin },
       data: {
-        email: "owner@example.test",
-        password: "CI-only-password-never-used-outside-tests",
+        email: "owner-isolation@example.test",
+        password: "CI-only-owner-isolation-password",
       },
     });
     expect(ownerLogin.status()).toBe(200);
@@ -1426,6 +1526,303 @@ test("financial accounts preserve opening balances, history, and owner scope", a
       message: "The requested resource was not found.",
     },
   });
+});
+
+test("bill occurrence HTTP validation returns field-level 400 errors", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin },
+    data: {
+      email: "bill-window-validation@example.test",
+      password: "CI-only-bill-window-validation-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+
+  const cases = [
+    {
+      query: { from: "2026-02-31", to: "2026-03-01" },
+      path: "/from",
+      message: "Enter a valid calendar date.",
+    },
+    {
+      query: { from: "2026-03-01", to: "2026-02-28" },
+      path: "/from",
+      message: "The occurrence window must be ordered.",
+    },
+    {
+      query: { from: "2025-01-01", to: "2026-01-03" },
+      path: "/to",
+      message: "Occurrence windows cannot be wider than 366 days.",
+    },
+  ];
+
+  for (const scenario of cases) {
+    const query = new URLSearchParams(scenario.query);
+    const response = await page.request.get(
+      apiUrl(`/bills/occurrences?${query.toString()}`),
+    );
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Request validation failed.",
+    });
+    expect(body.error.details).toContainEqual({
+      path: scenario.path,
+      message: scenario.message,
+    });
+  }
+
+  for (const path of [
+    "/transactions?from=2026-02-31&to=2026-03-01",
+    "/exports/transactions.csv?from=2026-02-31&to=2026-03-01",
+  ]) {
+    const response = await page.request.get(apiUrl(path));
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Request validation failed.",
+    });
+    expect(body.error.details).toContainEqual({
+      path: "/from",
+      message: "Enter a valid calendar date.",
+    });
+  }
+
+  const validLeapDay = await page.request.get(
+    apiUrl("/bills/occurrences?from=2024-02-29&to=2024-02-29"),
+  );
+  expect(validLeapDay.status()).toBe(200);
+});
+
+test("bill occurrence generation serializes rule edits on Bills and Dashboard", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const database = new Pool({
+    connectionString:
+      process.env.PLAYWRIGHT_DATABASE_URL ??
+      "postgresql://monikey@localhost:15432/monikey_e2e?schema=public",
+  });
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "bill-window-validation@example.test",
+      password: "CI-only-bill-window-validation-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().replaceAll("-", "");
+  const today = (await (await page.request.get(`${api}/me`)).json())
+    .serverToday as string;
+  const accountResponse = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `occurrence-race-account-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Occurrence race ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+  const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  const category = (await categories.json()).categories.find(
+    (row: { name: string }) => row.name === "Utilities",
+  );
+  expect(category?.id).toBeTruthy();
+
+  const apiHeaders = (key: string) => ({
+    origin,
+    "x-csrf-token": csrfToken,
+    "idempotency-key": key,
+  });
+  const lockPrefix = 73129;
+  const lockedBillIds: string[] = [];
+  const triggerNames: string[] = [];
+  const control = await database.connect();
+
+  async function waitForBlockedQuery(pattern: string, settled: () => boolean) {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const waiting = await control.query<{ pid: number }>(
+        `SELECT pid FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid()
+            AND datname = current_database()
+            AND state = 'active'
+            AND wait_event_type = 'Lock'
+            AND query ILIKE $1
+          LIMIT 1`,
+        [pattern],
+      );
+      if (waiting.rowCount) return;
+      if (settled()) {
+        throw new Error(
+          `The expected database lock was not observed: ${pattern}`,
+        );
+      }
+      await delay(20);
+    }
+    throw new Error(`Timed out waiting for database lock: ${pattern}`);
+  }
+
+  async function createRule(name: string) {
+    const response = await page.request.post(`${api}/bills`, {
+      headers: apiHeaders(`occurrence-race-bill-${suffix}-${name}`),
+      data: {
+        name: `Occurrence race ${name} ${suffix}`,
+        categoryId: category.id,
+        suggestedAccountId: accountId,
+        amountMode: "FIXED",
+        defaultAmountMinor: "1234",
+        dueDay: 25,
+        startOn: today,
+      },
+    });
+    expect(response.status()).toBe(201);
+    const billId = (await response.json()).bill.id as string;
+    lockedBillIds.push(billId);
+    return billId;
+  }
+
+  async function raceRuleEdit(
+    name: string,
+    readPath: (from: string, to: string) => string,
+    readOccurrences: (body: any, billId: string) => string[],
+  ) {
+    const billId = await createRule(name);
+    const lockKey = Number.parseInt(suffix.slice(0, 8), 16) % 2_000_000_000;
+    const triggerName = `qa_occurrence_gate_${suffix}_${name}`;
+    const functionName = `${triggerName}_fn`;
+    triggerNames.push(triggerName, functionName);
+    await control.query("SELECT pg_advisory_lock($1, $2)", [
+      lockPrefix,
+      lockKey,
+    ]);
+    await control.query(
+      `CREATE FUNCTION public.${functionName}() RETURNS trigger
+       LANGUAGE plpgsql AS $$ BEGIN
+         IF NEW.bill_id = '${billId}'::uuid THEN
+           PERFORM pg_advisory_xact_lock(${lockPrefix}, ${lockKey});
+         END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    await control.query(
+      `CREATE TRIGGER ${triggerName} BEFORE INSERT ON bill_occurrences
+       FOR EACH ROW EXECUTE FUNCTION public.${functionName}()`,
+    );
+
+    const fromDate = `${today.slice(0, 7)}-01`;
+    const [year, month] = today.slice(0, 7).split("-").map(Number);
+    const afterTwoMonths = new Date(Date.UTC(year!, month! + 2, 1));
+    const toDate = new Date(afterTwoMonths.getTime() - 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    let getSettled = false;
+    const generationPromise = page.request
+      .get(`${api}${readPath(fromDate, toDate)}`)
+      .finally(() => {
+        getSettled = true;
+      });
+    await waitForBlockedQuery(
+      "%INSERT INTO bill_occurrences%",
+      () => getSettled,
+    );
+
+    let patchSettled = false;
+    const patchPromise = page.request
+      .patch(`${api}/bills/${billId}`, {
+        headers: apiHeaders(`occurrence-race-patch-${suffix}-${name}`),
+        data: { dueDay: 27 },
+      })
+      .finally(() => {
+        patchSettled = true;
+      });
+    await waitForBlockedQuery(
+      "%SELECT id FROM bills WHERE user_id = $1 AND id = $2 FOR UPDATE%",
+      () => patchSettled,
+    );
+
+    try {
+      expect(patchSettled).toBe(false);
+    } finally {
+      await control.query("SELECT pg_advisory_unlock($1, $2)", [
+        lockPrefix,
+        lockKey,
+      ]);
+    }
+
+    const [generation, patch] = await Promise.all([
+      generationPromise,
+      patchPromise,
+    ]);
+    expect(generation.status()).toBe(200);
+    expect(patch.status()).toBe(200);
+    expect((await patch.json()).bill.dueDay).toBe(27);
+    const firstDates = readOccurrences(await generation.json(), billId);
+    expect(firstDates.length).toBeGreaterThan(0);
+    expect(firstDates.every((date) => date.endsWith("-25"))).toBe(true);
+
+    const nextGeneration = await page.request.get(
+      `${api}${readPath(fromDate, toDate)}`,
+    );
+    expect(nextGeneration.status()).toBe(200);
+    const nextDates = readOccurrences(await nextGeneration.json(), billId);
+    expect(nextDates.length).toBe(firstDates.length);
+    expect(nextDates.every((date) => date.endsWith("-27"))).toBe(true);
+  }
+
+  try {
+    await raceRuleEdit(
+      "occurrences",
+      (from, to) => `/bills/occurrences?from=${from}&to=${to}`,
+      (body, billId) =>
+        body.occurrences
+          .filter(
+            (occurrence: { billId: string }) => occurrence.billId === billId,
+          )
+          .map((occurrence: { dueOn: string }) => occurrence.dueOn),
+    );
+    await raceRuleEdit(
+      "dashboard",
+      () => "/dashboard/summary",
+      (body, billId) =>
+        body.upcomingBills
+          .filter((bill: { billId: string }) => bill.billId === billId)
+          .map((bill: { dueOn: string }) => bill.dueOn),
+    );
+  } finally {
+    for (const name of triggerNames.filter((item) => !item.endsWith("_fn"))) {
+      await control.query(`DROP TRIGGER IF EXISTS ${name} ON bill_occurrences`);
+    }
+    for (const name of triggerNames.filter((item) => item.endsWith("_fn"))) {
+      await control.query(`DROP FUNCTION IF EXISTS public.${name}()`);
+    }
+    if (lockedBillIds.length) {
+      await control.query(
+        `DELETE FROM bill_occurrences WHERE bill_id = ANY($1::uuid[])`,
+        [lockedBillIds],
+      );
+      await control.query(`DELETE FROM bills WHERE id = ANY($1::uuid[])`, [
+        lockedBillIds,
+      ]);
+    }
+    await control.query("SELECT pg_advisory_unlock_all()");
+    control.release();
+    await database.end();
+  }
 });
 
 test("categories seed defaults and retain archived history", async ({
@@ -1805,7 +2202,9 @@ test("Quick Add retains multiple unresolved submissions across intervening entri
     .nth(1)
     .selectOption({ label: "Food" });
   await page.getByLabel("Note Optional").fill("unresolved A");
-  await page.getByRole("button", { name: "Record expense" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
   await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
   expect(retryKey).toBe(firstKey);
   await page.unroute("**/api/v1/transactions");
@@ -1813,6 +2212,108 @@ test("Quick Add retains multiple unresolved submissions across intervening entri
   const accountAfter = await page.request.get(`${api}/accounts/${accountId}`);
   expect(accountAfter.status()).toBe(200);
   expect((await accountAfter.json()).account.balanceMinor).toBe("98500");
+});
+
+test("Quick Add allows a new identical purchase while the first result is unresolved", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "quickadd-retry@example.test",
+      password: "CI-only-quickadd-retry-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const suffix = randomUUID();
+  const accountResponse = await page.request.post(apiUrl("/accounts"), {
+    headers: {
+      origin: webOrigin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `quick-add-identical-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Identical purchases ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+
+  let firstKey = "";
+  let retryKey = "";
+  let secondKey = "";
+  let firstTransactionId = "";
+  let attempt = 0;
+  await page.route("**/api/v1/transactions", async (route) => {
+    const key = route.request().headers()["idempotency-key"];
+    attempt += 1;
+    if (attempt <= 3) {
+      const response = await route.fetch();
+      const result = await response.json();
+      if (attempt === 1) {
+        firstKey = key;
+        firstTransactionId = result.transaction.id;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { message: "Injected response loss." },
+          }),
+        });
+      } else if (attempt === 2) {
+        secondKey = key;
+        expect(key).not.toBe(firstKey);
+        expect(result.transaction.id).not.toBe(firstTransactionId);
+        await route.fulfill({ response });
+      } else {
+        retryKey = key;
+        expect(key).toBe(firstKey);
+        expect(result.transaction.id).toBe(firstTransactionId);
+        await route.fulfill({ response });
+      }
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/app/transactions/new");
+  const amount = page.locator("#quick-add-amount");
+  const selects = page.locator(".quick-add-card select");
+  const note = page.getByLabel("Note Optional");
+  const submit = page.getByRole("button", { name: "Record expense" });
+  const enterSamePurchase = async () => {
+    await amount.fill("10.00");
+    await selects.nth(0).selectOption(accountId);
+    await selects.nth(1).selectOption({ label: "Food" });
+    await note.fill("Two separate coffee purchases");
+  };
+  await enterSamePurchase();
+  await submit.click();
+  await expect(page.locator(".form-error")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.locator(".pending-recovery summary").click();
+  await page
+    .getByRole("button", { name: "Start a separate transaction" })
+    .click();
+  await submit.click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(secondKey).toBeTruthy();
+  expect(secondKey).not.toBe(firstKey);
+
+  await enterSamePurchase();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved transaction" }).click();
+  await expect(page.locator(".form-success")).toHaveText("Transaction saved.");
+  expect(retryKey).toBe(firstKey);
+  await page.unroute("**/api/v1/transactions");
+
+  const account = await page.request.get(apiUrl(`/accounts/${accountId}`));
+  expect((await account.json()).account.balanceMinor).toBe("98000");
 });
 
 test("card payment recovers a committed lost response with the same key", async ({
@@ -1922,7 +2423,9 @@ test("card payment recovers a committed lost response with the same key", async 
   await amount.fill("50.00");
   await fundingSelect.selectOption(funding.id);
   await date.fill(selectedDate);
-  await page.getByRole("button", { name: "Record card payment" }).click();
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry saved payment" }).click();
   await expect(page.getByRole("status")).toContainText("Card payment posted.");
   expect(retryKey).toBe(firstKey);
 
@@ -1983,6 +2486,802 @@ test("card payment recovers a committed lost response with the same key", async 
     (await (await page.request.get(`${api}/accounts/${card.id}`)).json())
       .account.balanceMinor,
   ).toBe("94000");
+});
+
+test("bill rules support edit, archive, restore, and recover status request errors", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "second@example.test",
+      password: "CI-only-second-user-password-never-used",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const accountResponse = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `bill-ui-account-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Bill UI Funding ${suffix}`,
+      openingBalanceMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const accountId = (await accountResponse.json()).account.id as string;
+  const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  const category = (await categories.json()).categories.find(
+    (row: { name: string }) => row.name === "Utilities",
+  );
+  expect(category?.id).toBeTruthy();
+  await page.goto("/app/bills");
+  const billName = `Bill UI ${suffix}`;
+  await page.getByLabel("Name *").fill(billName);
+  await page.getByLabel("Expense category *").selectOption(category.id);
+  await page.getByLabel("Default amount *").fill("12.34");
+  await page.getByLabel("Due day *").fill("15");
+  await page.getByLabel("Start date *").fill("2026-11-01");
+  await page
+    .getByLabel("Suggested funding account Optional")
+    .selectOption(accountId);
+  let billCreateAttempts = 0;
+  const billCreateKeys: string[] = [];
+  await page.route("**/api/v1/bills", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    billCreateKeys.push(route.request().headers()["idempotency-key"] ?? "");
+    billCreateAttempts += 1;
+    if (billCreateAttempts === 1) {
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(201);
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected bill create response loss." },
+        }),
+      });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Create bill" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "Injected bill create response loss.",
+  );
+  await page.reload();
+  await page.goto("/app/bills");
+  await page.getByLabel("Name *").fill(billName);
+  await page.getByLabel("Expense category *").selectOption(category.id);
+  await page.getByLabel("Default amount *").fill("12.34");
+  await page.getByLabel("Due day *").fill("15");
+  await page.getByLabel("Start date *").fill("2026-11-01");
+  await page
+    .getByLabel("Suggested funding account Optional")
+    .selectOption(accountId);
+  await page.getByRole("button", { name: "Create bill" }).click();
+  await expect(page.locator(".form-success")).toContainText("Bill created.");
+  expect(billCreateKeys[1]).toBe(billCreateKeys[0]);
+  await page.unroute("**/api/v1/bills");
+
+  const savedBills = page.locator(
+    'section[aria-labelledby="bill-list-heading"] article.bill-row',
+  );
+  const savedBill = savedBills.filter({ hasText: billName });
+  await expect(savedBill).toBeVisible();
+  await expect(savedBills.filter({ hasText: billName })).toHaveCount(1);
+  await savedBill.getByRole("button", { name: "Edit" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Update reminder details" }),
+  ).toBeVisible();
+  await page.getByLabel("Name *").fill(`${billName} changed`);
+  await page.getByLabel("Default amount *").fill("45.67");
+  await page.getByLabel("Due day *").fill("20");
+  await page.getByRole("button", { name: "Save bill changes" }).click();
+  await expect(page.locator(".form-success")).toContainText(
+    "Bill rule updated.",
+  );
+  const editedBill = savedBills.filter({ hasText: `${billName} changed` });
+  await expect(editedBill).toContainText("Due day 20");
+  await expect(editedBill).toContainText("₱ 45.67");
+
+  let statusAttempts = 0;
+  const statusKeys: string[] = [];
+  await page.route(`**/api/v1/bills/*`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    const body = route.request().postDataJSON() as { status?: string };
+    if (body.status !== "PAUSED") return route.continue();
+    statusKeys.push(route.request().headers()["idempotency-key"] ?? "");
+    statusAttempts += 1;
+    if (statusAttempts === 1) {
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected bill status response loss." },
+        }),
+      });
+    }
+    return route.continue();
+  });
+  await editedBill.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Injected bill status response loss.",
+  );
+  await editedBill.getByRole("button", { name: "Pause" }).click();
+  await expect(editedBill).toContainText("paused");
+  expect(statusKeys[1]).toBe(statusKeys[0]);
+  await page.unroute(`**/api/v1/bills/*`);
+
+  const currentBill = savedBills.filter({ hasText: `${billName} changed` });
+  await currentBill.getByRole("button", { name: "Resume" }).click();
+  await expect(currentBill).toContainText("active");
+  await currentBill.getByRole("button", { name: "Archive" }).click();
+  await expect(
+    savedBills.filter({ hasText: `${billName} changed` }),
+  ).toHaveCount(0);
+  await page.getByLabel("Show archived").check();
+  const archivedBill = savedBills.filter({ hasText: `${billName} changed` });
+  await expect(archivedBill).toContainText("archived");
+  await archivedBill.getByRole("button", { name: "Restore" }).click();
+  await expect(archivedBill).toContainText("active");
+});
+
+test("card payment separately confirms overdraft and card credit", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "card-payment-ui@example.test",
+      password: "CI-only-card-payment-ui-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const create = async (type: "BANK" | "CREDIT_CARD", balance: string) => {
+    const response = await page.request.post(`${api}/accounts`, {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `card-credit-ui-${suffix}-${type}`,
+      },
+      data: {
+        type,
+        name: `Credit UI ${type} ${suffix}`,
+        openingBalanceMinor: balance,
+        ...(type === "CREDIT_CARD" ? { creditLimitMinor: "100000" } : {}),
+      },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).account as { id: string };
+  };
+  const funding = await create("BANK", "1000");
+  const card = await create("CREDIT_CARD", "0");
+  await page.goto(`/app/accounts/${card.id}/pay`);
+  await page.getByLabel("Payment amount *").fill("50.00");
+  await page.getByLabel("Funding account *").selectOption(funding.id);
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.locator(".form-error")).toContainText("funding account");
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 40.00");
+  await page.getByLabel("Payment amount *").fill("51.00");
+  await expect(page.locator(".confirmation-panel")).toHaveCount(0);
+  await page.getByLabel("Payment amount *").fill("50.00");
+  await page.getByRole("button", { name: "Record card payment" }).click();
+  await expect(page.locator(".form-error")).toContainText("funding account");
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 40.00");
+  await page.getByRole("button", { name: "Confirm and pay" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "projected card credit",
+  );
+  await expect(page.locator(".confirmation-panel")).toContainText("₱ 50.00");
+  await expect(page.locator(".confirmation-panel")).toContainText(
+    "overdraft confirmation is retained",
+  );
+  await page.getByRole("button", { name: "Confirm and pay" }).click();
+  await expect(page.getByRole("status")).toContainText("Card payment posted.");
+  const balance = await page.request.get(`${api}/accounts/${card.id}`);
+  await expect(balance.json()).resolves.toMatchObject({
+    account: { balanceMinor: "-5000" },
+  });
+  const fundingBalance = await page.request.get(
+    `${api}/accounts/${funding.id}`,
+  );
+  await expect(fundingBalance.json()).resolves.toMatchObject({
+    account: { balanceMinor: "-4000" },
+  });
+});
+
+test("account creation recovers a committed opening balance with its original key", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "account-create-retry@example.test",
+      password: "CI-only-account-create-retry-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const suffix = randomUUID().slice(0, 8);
+  const name = `Retry opening ${suffix}`;
+  const keys: string[] = [];
+  let attempts = 0;
+  await page.route("**/api/v1/accounts", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push(route.request().headers()["idempotency-key"] ?? "");
+    attempts += 1;
+    if (attempts === 1) {
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(201);
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Injected account response loss." },
+        }),
+      });
+    }
+    return route.continue();
+  });
+
+  await page.goto("/app/accounts");
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Name *").fill(name);
+  await page.getByLabel("Opening balance *").fill("123.45");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "Injected account response loss.",
+  );
+  await page.reload();
+  await page.goto("/app/accounts");
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Name *").fill(name);
+  await page.getByLabel("Opening balance *").fill("123.45");
+  await page.getByText("Check a saved attempt", { exact: true }).click();
+  await page.getByRole("button", { name: /Retry saved attempt/ }).click();
+  await page.getByRole("button", { name: "Retry account creation" }).click();
+  await expect(page.locator(".form-success")).toContainText(
+    "ledger-backed opening balance",
+  );
+  expect(keys[1]).toBe(keys[0]);
+  await page.unroute("**/api/v1/accounts");
+
+  const matches = (
+    await (await page.request.get(`${api}/accounts`)).json()
+  ).accounts.filter((account: { name: string }) => account.name === name);
+  expect(matches).toHaveLength(1);
+  const accountResponse = await page.request.get(
+    `${api}/accounts/${matches[0].id}`,
+  );
+  await expect(accountResponse.json()).resolves.toMatchObject({
+    account: { balanceMinor: "12345" },
+  });
+  const openingJournalCount = execFileSync(
+    "docker",
+    [
+      "compose",
+      "-p",
+      process.env.COMPOSE_PROJECT_NAME ?? "monikey-e2e",
+      "-f",
+      process.env.COMPOSE_FILE ?? "compose.e2e.yaml",
+      "exec",
+      "-T",
+      "db",
+      "psql",
+      "-U",
+      "monikey",
+      "-d",
+      "monikey_e2e",
+      "-Atc",
+      `SELECT count(*) FROM journals j JOIN transaction_revisions r USING (user_id, transaction_id) WHERE r.after_json ->> 'kind' = 'OPENING_BALANCE' AND r.after_json ->> 'accountId' = '${matches[0].id}'`,
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  expect(openingJournalCount).toBe("1");
+});
+
+test("statement creation replays a committed response-loss without duplication", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "statement-create-retry@example.test",
+      password: "CI-only-statement-create-retry-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const accountResponse = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `statement-retry-card-${suffix}`,
+    },
+    data: {
+      type: "CREDIT_CARD",
+      name: `Statement retry card ${suffix}`,
+      openingBalanceMinor: "10000",
+      creditLimitMinor: "100000",
+    },
+  });
+  expect(accountResponse.status()).toBe(201);
+  const cardId = (await accountResponse.json()).account.id as string;
+  const statementDate = "2026-10-20";
+  const paymentDueDate = "2026-11-02";
+  const keys: string[] = [];
+  let attempts = 0;
+  await page.route(
+    `**/api/v1/credit-cards/${cardId}/statements`,
+    async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      keys.push(route.request().headers()["idempotency-key"] ?? "");
+      attempts += 1;
+      if (attempts === 1) {
+        const committed = await route.fetch();
+        expect(committed.status()).toBe(201);
+        return route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { message: "Injected statement response loss." },
+          }),
+        });
+      }
+      return route.continue();
+    },
+  );
+
+  await page.goto(`/app/accounts/${cardId}/statements`);
+  await page.getByLabel("Statement date *").fill(statementDate);
+  await page.getByLabel("Payment due date *").fill(paymentDueDate);
+  await page.getByLabel("Amount due *").fill("321.09");
+  await page.getByRole("button", { name: "Record statement" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "Injected statement response loss.",
+  );
+  await page.reload();
+  await page.goto(`/app/accounts/${cardId}/statements`);
+  await page.getByLabel("Statement date *").fill(statementDate);
+  await page.getByLabel("Payment due date *").fill(paymentDueDate);
+  await page.getByLabel("Amount due *").fill("321.09");
+  await page.getByRole("button", { name: "Record statement" }).click();
+  await expect(page.locator(".form-success")).toContainText(
+    "Statement recorded.",
+  );
+  expect(keys[1]).toBe(keys[0]);
+  await page.unroute(`**/api/v1/credit-cards/${cardId}/statements`);
+
+  const statements = await page.request.get(
+    `${api}/credit-cards/${cardId}/statements`,
+  );
+  await expect(statements.json()).resolves.toMatchObject({
+    statements: [
+      expect.objectContaining({
+        statementDate,
+        paymentDueDate,
+        amountDueMinor: "32109",
+        remainingDueMinor: "32109",
+      }),
+    ],
+  });
+  const balance = await page.request.get(`${api}/accounts/${cardId}`);
+  await expect(balance.json()).resolves.toMatchObject({
+    account: { balanceMinor: "10000" },
+  });
+});
+
+test("transaction correction and reversal show projected card and asset balances", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "transaction-edit-confirm@example.test",
+      password: "CI-only-transaction-edit-confirm-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const createAccount = async (
+    type: "BANK" | "CREDIT_CARD",
+    name: string,
+    balance: string,
+    key: string,
+  ) => {
+    const response = await page.request.post(`${api}/accounts`, {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `edit-credit-account-${suffix}-${key}`,
+      },
+      data: {
+        type,
+        name,
+        openingBalanceMinor: balance,
+        ...(type === "CREDIT_CARD" ? { creditLimitMinor: "100000" } : {}),
+      },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).account as { id: string; name: string };
+  };
+  const funding = await createAccount(
+    "BANK",
+    `Credit funding ${suffix}`,
+    "100000",
+    "funding",
+  );
+  const bank = await createAccount(
+    "BANK",
+    `Correction bank ${suffix}`,
+    "100",
+    "target",
+  );
+  const card = await createAccount(
+    "CREDIT_CARD",
+    `Correction card ${suffix}`,
+    "0",
+    "card",
+  );
+  const today = (await (await page.request.get(`${api}/me`)).json())
+    .serverToday as string;
+  const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  const category = (await categories.json()).categories.find(
+    (row: { name: string }) => row.name === "Food",
+  );
+  expect(category?.id).toBeTruthy();
+  const payCredit = await page.request.post(
+    `${api}/credit-cards/${card.id}/payments`,
+    {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `edit-credit-overpay-${suffix}`,
+      },
+      data: {
+        fundingAccountId: funding.id,
+        amountMinor: "5000",
+        occurredOn: today,
+        acknowledgeCardCreditBalance: true,
+      },
+    },
+  );
+  expect(payCredit.status()).toBe(201);
+  const purchase = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `edit-credit-purchase-${suffix}`,
+    },
+    data: {
+      kind: "EXPENSE",
+      sourceAccountId: card.id,
+      categoryId: category.id,
+      amountMinor: "1000",
+      occurredOn: today,
+    },
+  });
+  expect(purchase.status()).toBe(201);
+  const purchaseId = (await purchase.json()).transaction.id as string;
+  const refund = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `edit-credit-refund-${suffix}`,
+    },
+    data: {
+      kind: "REFUND",
+      sourceAccountId: card.id,
+      refundedTransactionId: purchaseId,
+      amountMinor: "1000",
+      occurredOn: today,
+      acknowledgeCardCreditBalance: true,
+    },
+  });
+  expect(refund.status()).toBe(201);
+
+  await page.goto(`/app/transactions/${purchaseId}`);
+  await page.getByLabel("Amount *").fill("50.00");
+  await page.getByLabel("Account *").selectOption(bank.id);
+  await page
+    .getByPlaceholder("Corrected receipt or duplicate entry")
+    .fill("Move corrected expense to bank");
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(page.locator(".form-error")).toContainText(
+    "projected card credit",
+  );
+  await expect(page.locator(".confirmation-panel")).toContainText(card.name);
+  await expect(page.locator(".confirmation-panel")).toContainText("₱ 60.00");
+  await page
+    .getByRole("button", { name: "Confirm card credit and save" })
+    .click();
+  await expect(page.locator(".confirmation-panel")).toContainText(bank.name);
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 49.00");
+  await expect(page.locator(".confirmation-panel")).toContainText("₱ 60.00");
+  await page
+    .getByRole("button", { name: "Confirm both balances and save" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Transaction updated");
+  await expect(
+    (await page.request.get(`${api}/accounts/${bank.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "-4900" } });
+  await expect(
+    (await page.request.get(`${api}/accounts/${card.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "-6000" } });
+
+  const reversalPurchase = await page.request.post(`${api}/transactions`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `edit-credit-reversal-purchase-${suffix}`,
+    },
+    data: {
+      kind: "EXPENSE",
+      sourceAccountId: card.id,
+      categoryId: category.id,
+      amountMinor: "500",
+      occurredOn: today,
+    },
+  });
+  expect(reversalPurchase.status()).toBe(201);
+  const reversalPurchaseId = (await reversalPurchase.json()).transaction
+    .id as string;
+  await page.goto(`/app/transactions/${reversalPurchaseId}`);
+  await page
+    .getByPlaceholder("Corrected receipt or duplicate entry")
+    .fill("Reverse card purchase");
+  await page.getByRole("button", { name: "Reverse transaction" }).click();
+  await expect(page.locator(".field-hint[role=alert]")).toContainText(
+    card.name,
+  );
+  await expect(page.locator(".field-hint[role=alert]")).toContainText(
+    "₱ 60.00",
+  );
+  await page
+    .getByRole("button", { name: "Confirm card credit and reverse" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Transaction reversed");
+});
+
+test("income edits and reversals require exact overdraft confirmation", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "income-edit-confirm@example.test",
+      password: "CI-only-income-edit-confirm-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const today = (await (await page.request.get(`${api}/me`)).json())
+    .serverToday as string;
+  const createBank = async (name: string, key: string) => {
+    const response = await page.request.post(`${api}/accounts`, {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `income-edit-bank-${suffix}-${key}`,
+      },
+      data: { type: "BANK", name, openingBalanceMinor: "0" },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).account as { id: string; name: string };
+  };
+  const sameAccount = await createBank(`Income bank ${suffix}`, "same");
+  const categories = await page.request.get(`${api}/categories`);
+  const categoryRows = (await categories.json()).categories;
+  const incomeCategory = categoryRows.find(
+    (row: { kind: string; name: string }) =>
+      row.kind === "INCOME" && row.name === "Salary",
+  );
+  const expenseCategory = categoryRows.find(
+    (row: { kind: string; name: string }) =>
+      row.kind === "EXPENSE" && row.name === "Food",
+  );
+  expect(incomeCategory?.id).toBeTruthy();
+  expect(expenseCategory?.id).toBeTruthy();
+  const postTransaction = async (
+    kind: "INCOME" | "EXPENSE",
+    accountId: string,
+    amountMinor: string,
+    key: string,
+  ) => {
+    const response = await page.request.post(`${api}/transactions`, {
+      headers: {
+        origin,
+        "x-csrf-token": csrfToken,
+        "idempotency-key": `income-edit-tx-${suffix}-${key}`,
+      },
+      data: {
+        kind,
+        sourceAccountId: accountId,
+        categoryId: kind === "INCOME" ? incomeCategory.id : expenseCategory.id,
+        amountMinor,
+        occurredOn: today,
+      },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).transaction.id as string;
+  };
+
+  const incomeId = await postTransaction(
+    "INCOME",
+    sameAccount.id,
+    "10000",
+    "same-income",
+  );
+  await postTransaction("EXPENSE", sameAccount.id, "9000", "same-spend");
+  await page.goto(`/app/transactions/${incomeId}`);
+  await page.getByLabel("Amount *").fill("5.00");
+  await page
+    .getByPlaceholder("Corrected receipt or duplicate entry")
+    .fill("Correct income receipt");
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(page.locator(".confirmation-panel")).toContainText(
+    sameAccount.name,
+  );
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 85.00");
+  await page
+    .getByRole("button", { name: "Confirm negative balance and save" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Transaction updated");
+  await expect(
+    (await page.request.get(`${api}/accounts/${sameAccount.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "-8500" } });
+
+  await page
+    .getByPlaceholder("Corrected receipt or duplicate entry")
+    .fill("Reverse corrected income");
+  await page.getByRole("button", { name: "Reverse transaction" }).click();
+  await expect(page.locator(".field-hint[role=alert]")).toContainText(
+    sameAccount.name,
+  );
+  await expect(page.locator(".field-hint[role=alert]")).toContainText(
+    "-₱ 90.00",
+  );
+  await page
+    .getByRole("button", { name: "Confirm negative balance and reverse" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Transaction reversed");
+  await expect(
+    (await page.request.get(`${api}/accounts/${sameAccount.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "-9000" } });
+
+  const oldAccount = await createBank(`Moved income source ${suffix}`, "old");
+  const newAccount = await createBank(`Moved income target ${suffix}`, "new");
+  const movedIncomeId = await postTransaction(
+    "INCOME",
+    oldAccount.id,
+    "10000",
+    "moved-income",
+  );
+  await postTransaction("EXPENSE", oldAccount.id, "9500", "moved-spend");
+  await page.goto(`/app/transactions/${movedIncomeId}`);
+  await page.getByLabel("Amount *").fill("5.00");
+  await page.getByLabel("Account *").selectOption(newAccount.id);
+  await page
+    .getByPlaceholder("Corrected receipt or duplicate entry")
+    .fill("Move income to corrected account");
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(page.locator(".confirmation-panel")).toContainText(
+    oldAccount.name,
+  );
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 95.00");
+  await page
+    .getByRole("button", { name: "Confirm negative balance and save" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Transaction updated");
+  await expect(
+    (await page.request.get(`${api}/accounts/${oldAccount.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "-9500" } });
+  await expect(
+    (await page.request.get(`${api}/accounts/${newAccount.id}`)).json(),
+  ).resolves.toMatchObject({ account: { balanceMinor: "500" } });
+});
+
+test("bill payment shows the projected overdraft and requires confirmation", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const origin = webOrigin;
+  const api = apiBaseUrl;
+  const login = await page.request.post(`${api}/auth/login`, {
+    headers: { origin },
+    data: {
+      email: "overdraft-check@example.test",
+      password: "CI-only-overdraft-check-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const csrfToken = (await login.json()).csrfToken as string;
+  const suffix = randomUUID().slice(0, 8);
+  const account = await page.request.post(`${api}/accounts`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `bill-overdraft-account-${suffix}`,
+    },
+    data: {
+      type: "BANK",
+      name: `Bill overdraft ${suffix}`,
+      openingBalanceMinor: "100",
+    },
+  });
+  expect(account.status()).toBe(201);
+  const accountId = (await account.json()).account.id as string;
+  const categories = await page.request.get(`${api}/categories?kind=EXPENSE`);
+  const category = (await categories.json()).categories.find(
+    (row: { name: string }) => row.name === "Utilities",
+  );
+  const bill = await page.request.post(`${api}/bills`, {
+    headers: {
+      origin,
+      "x-csrf-token": csrfToken,
+      "idempotency-key": `bill-overdraft-rule-${suffix}`,
+    },
+    data: {
+      name: `Bill overdraft ${suffix}`,
+      categoryId: category.id,
+      amountMode: "VARIABLE",
+      dueDay: 15,
+      startOn: "2026-10-01",
+      suggestedAccountId: accountId,
+    },
+  });
+  expect(bill.status()).toBe(201);
+  await page.goto("/app/bills");
+  const occurrence = page
+    .locator(
+      'section[aria-labelledby="occurrence-heading"] article.occurrence-row',
+    )
+    .filter({ hasText: `Bill overdraft ${suffix}` })
+    .filter({ hasText: "2026-10-15" });
+  await expect(occurrence).toBeVisible();
+  await occurrence.getByRole("button", { name: "Pay" }).click();
+  await occurrence.getByRole("combobox").selectOption(accountId);
+  await occurrence.getByPlaceholder("Amount").fill("12.34");
+  await occurrence.getByRole("button", { name: "Confirm pay" }).click();
+  await expect(page.locator(".form-error")).toContainText("negative balance");
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 11.34");
+  await occurrence.getByPlaceholder("Amount").fill("15.00");
+  await expect(page.locator(".confirmation-panel")).toHaveCount(0);
+  await occurrence.getByPlaceholder("Amount").fill("12.34");
+  await occurrence.getByRole("button", { name: "Confirm pay" }).click();
+  await expect(page.locator(".confirmation-panel")).toContainText("-₱ 11.34");
+  await page
+    .getByRole("button", { name: "Confirm negative balance and pay" })
+    .click();
+  await expect(page.getByRole("status")).toContainText("marked paid");
+  await expect(occurrence).toContainText("paid");
 });
 
 test("Dashboard ignores an older refresh that finishes after newer ledger data", async ({
@@ -2125,6 +3424,78 @@ test("Accounts marks failed refreshes stale and Retry reloads real balances", as
   await page.unroute("**/api/v1/accounts*includeArchived=true");
 });
 
+test("account creation recovers a committed lost response after refresh", async ({
+  page,
+}) => {
+  test.skip(test.info().project.name !== "desktop-chromium");
+  const login = await page.request.post(apiUrl("/auth/login"), {
+    headers: { origin: webOrigin },
+    data: {
+      email: "accounts-stale@example.test",
+      password: "CI-only-accounts-stale-password",
+    },
+  });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  await page.goto("/app/accounts");
+  await page.getByRole("button", { name: "Add account" }).click();
+
+  const suffix = randomUUID();
+  const accountName = `Lost response ${suffix}`;
+  let firstKey = "";
+  let retryKey = "";
+  let firstAccountId = "";
+  let lost = false;
+  await page.route("**/api/v1/accounts", async (route) => {
+    const key = route.request().headers()["idempotency-key"];
+    const response = await route.fetch();
+    const result = await response.json();
+    if (!lost) {
+      lost = true;
+      firstKey = key;
+      firstAccountId = result.account.id;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "Injected response loss." } }),
+      });
+      return;
+    }
+    retryKey = key;
+    expect(key).toBe(firstKey);
+    expect(result.account.id).toBe(firstAccountId);
+    await route.fulfill({ response });
+  });
+
+  await page.getByLabel("Name *").fill(accountName);
+  await page.getByLabel("Opening balance *").fill("125.00");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "result could not be confirmed",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Name *").fill(accountName);
+  await page.getByLabel("Opening balance *").fill("125.00");
+  await page.locator(".pending-recovery summary").click();
+  await page.getByRole("button", { name: "Retry saved attempt" }).click();
+  await page.getByRole("button", { name: "Retry account creation" }).click();
+  await expect(page.getByRole("status")).toContainText("Account created");
+  expect(retryKey).toBe(firstKey);
+  await page.unroute("**/api/v1/accounts");
+
+  const accounts = await page.request.get(
+    apiUrl("/accounts?includeArchived=true"),
+  );
+  expect(accounts.status()).toBe(200);
+  const matching = (await accounts.json()).accounts.filter(
+    (account: { name: string }) => account.name === accountName,
+  );
+  expect(matching).toHaveLength(1);
+  expect(matching[0].balanceMinor).toBe("12500");
+  expect(csrfToken).toBeTruthy();
+});
+
 test("Quick Add refreshes the Manila business date when opened and preserves a chosen date", async ({
   page,
 }) => {
@@ -2143,10 +3514,11 @@ test("Quick Add refreshes the Manila business date when opened and preserves a c
     page.getByRole("link", { name: "manila-date@example.test" }),
   ).toBeVisible();
 
+  let serverToday = "2030-01-02";
   await page.route("**/api/v1/me", async (route) => {
     const response = await route.fetch();
     const profile = await response.json();
-    profile.serverToday = "2030-01-02";
+    profile.serverToday = serverToday;
     await route.fulfill({ response, json: profile });
   });
   await page
@@ -2155,8 +3527,12 @@ test("Quick Add refreshes the Manila business date when opened and preserves a c
     .click();
   const date = page.locator(".quick-add-card input[type=date]");
   await expect(date).toHaveValue("2030-01-02");
-  await date.fill("2030-01-01");
   await page.getByLabel("Amount").fill("5.00");
+  serverToday = "2030-01-03";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(date).toHaveAttribute("max", "2030-01-03");
+  await expect(date).toHaveValue("2030-01-02");
+  await date.fill("2030-01-01");
   await expect(date).toHaveValue("2030-01-01");
   await page.unroute("**/api/v1/me");
 });
@@ -2609,8 +3985,8 @@ test("reports keep month data isolated and retry the selected month", async ({
   const login = await page.request.post(apiUrl("/auth/login"), {
     headers: { origin: webOrigin },
     data: {
-      email: "owner@example.test",
-      password: "CI-only-password-never-used-outside-tests",
+      email: "reports-snapshot@example.test",
+      password: "CI-only-reports-snapshot-password",
     },
   });
   expect(login.status()).toBe(200);

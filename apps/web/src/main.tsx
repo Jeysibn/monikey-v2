@@ -1,7 +1,5 @@
 import React, {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -29,12 +27,26 @@ import {
   ReferenceSelect,
 } from "./components";
 import { formatPhp, moneyMinor, parsePhpMinor } from "@monikey/money";
+import {
+  AuthProvider,
+  useAuth,
+  type Profile,
+} from "./features/identity/AuthProvider";
 import { ReportsFeature } from "./features/reports/ReportsFeature";
 import { useLatestResource } from "./shared/hooks/use-latest-resource";
 import {
+  ApiRequestError,
+  apiRequest,
+  isTerminalClientError,
+} from "./shared/lib/api-request";
+import { usePendingSubmissionMatches } from "./shared/hooks/use-pending-submission-matches";
+import { scheduleManilaMidnightRefresh } from "./shared/lib/manila-time";
+import {
+  beginPendingSubmission,
   clearPendingSubmission,
   pendingSubmissionKey,
 } from "./shared/lib/pending-submissions";
+import { PendingSubmissionRecovery } from "./shared/components/PendingSubmissionRecovery";
 import "./style.css";
 
 type Theme = "light" | "dark";
@@ -83,151 +95,6 @@ const pageTitles: Record<string, string> = {
   "/login": "Sign in",
   "/onboarding": "First account",
 };
-
-type Profile = {
-  user: {
-    id: string;
-    emailNormalized: string;
-    timezone: "Asia/Manila";
-    currency: "PHP";
-    theme: Theme | "system";
-    hideBalances: boolean;
-  };
-  serverToday: string;
-  onboardingStatus: "NEEDS_FIRST_ACCOUNT" | "READY";
-};
-
-type AuthContextValue = {
-  profile: Profile | null;
-  loading: boolean;
-  csrfToken: string | null;
-  login: (email: string, password: string) => Promise<Profile>;
-  logout: () => Promise<void>;
-  refreshProfile: () => Promise<Profile | null>;
-  createFirstAccount: (request: {
-    type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
-    name: string;
-    openingBalanceMinor: string;
-    institution?: string;
-  }) => Promise<void>;
-};
-
-const AuthContext = createContext<AuthContextValue | null>(null);
-
-class ApiRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiRequestError";
-  }
-}
-
-function isTerminalClientError(status: number): boolean {
-  return (
-    status >= 400 &&
-    status < 500 &&
-    status !== 401 &&
-    status !== 409 &&
-    status !== 429
-  );
-}
-
-async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, {
-    ...init,
-    credentials: "include",
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...init.headers,
-    },
-  });
-  const payload = (await response.json().catch(() => null)) as
-    | (T & { error?: { message?: string } })
-    | null;
-  if (!response.ok) {
-    throw new ApiRequestError(
-      payload?.error?.message ?? "The request could not be completed.",
-      response.status,
-    );
-  }
-  return payload as T;
-}
-
-function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [csrfToken, setCsrfToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refreshProfile = useCallback(async () => {
-    try {
-      const result = await apiRequest<Profile>("/me");
-      const csrf = await apiRequest<{ csrfToken: string }>("/auth/csrf");
-      setCsrfToken(csrf.csrfToken);
-      setProfile(result);
-      return result;
-    } catch {
-      setProfile(null);
-      setCsrfToken(null);
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshProfile().finally(() => setLoading(false));
-  }, [refreshProfile]);
-
-  const value = useMemo<AuthContextValue>(
-    () => ({
-      profile,
-      loading,
-      csrfToken,
-      async login(email, password) {
-        const login = await apiRequest<{ csrfToken: string }>("/auth/login", {
-          method: "POST",
-          body: JSON.stringify({ email, password }),
-        });
-        setCsrfToken(login.csrfToken);
-        const nextProfile = await apiRequest<Profile>("/me");
-        setProfile(nextProfile);
-        return nextProfile;
-      },
-      async logout() {
-        if (csrfToken) {
-          await apiRequest("/auth/logout", {
-            method: "POST",
-            headers: { "x-csrf-token": csrfToken },
-          });
-        }
-        setProfile(null);
-        setCsrfToken(null);
-      },
-      refreshProfile,
-      async createFirstAccount(request) {
-        if (!csrfToken) throw new Error("Your session needs to be refreshed.");
-        await apiRequest("/onboarding/first-account", {
-          method: "POST",
-          headers: {
-            "x-csrf-token": csrfToken,
-            "idempotency-key": crypto.randomUUID(),
-          },
-          body: JSON.stringify(request),
-        });
-        await refreshProfile();
-      },
-    }),
-    [csrfToken, loading, profile, refreshProfile],
-  );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error("AuthProvider is required.");
-  return context;
-}
 
 function useOnlineStatus(): boolean {
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -424,8 +291,9 @@ function AppShell() {
   const [theme, toggleTheme] = useTheme();
   const [railCollapsed, setRailCollapsed] = useState(false);
   const location = useLocation();
-  const { profile, logout } = useAuth();
+  const { profile, logout, sessionStatus, retrySession } = useAuth();
   const isOnline = useOnlineStatus();
+  const [signOutError, setSignOutError] = useState("");
   const pageTitle =
     location.pathname === "/app"
       ? ""
@@ -440,6 +308,60 @@ function AppShell() {
             : location.pathname.includes("/accounts/")
               ? "Account details"
               : "MoniKey"));
+
+  useEffect(() => {
+    const handleOnline = () => {
+      if (sessionStatus === "unavailable") void retrySession();
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [retrySession, sessionStatus]);
+
+  useEffect(() => {
+    if (!profile) return;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        await retrySession();
+      } finally {
+        refreshing = false;
+      }
+    };
+    const handleResume = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const cancelMidnightRefresh = scheduleManilaMidnightRefresh(() => {
+      void refresh();
+    });
+    window.addEventListener("focus", handleResume);
+    document.addEventListener("visibilitychange", handleResume);
+    return () => {
+      cancelMidnightRefresh();
+      window.removeEventListener("focus", handleResume);
+      document.removeEventListener("visibilitychange", handleResume);
+    };
+  }, [profile?.user.id, retrySession]);
+
+  useEffect(() => {
+    if (!profile) return;
+    const dateSensitiveRoute =
+      location.pathname === "/app/transactions/new" ||
+      location.pathname === "/app/bills" ||
+      location.pathname === "/app/reports" ||
+      /\/app\/accounts\/[^/]+\/pay$/.test(location.pathname);
+    if (dateSensitiveRoute) void retrySession();
+  }, [location.pathname, profile?.user.id, retrySession]);
+
+  const handleLogout = () => {
+    setSignOutError("");
+    void logout().catch(() =>
+      setSignOutError(
+        "Your device cleared this session, but MoniKey could not confirm sign-out with the server. Reconnect and sign in again to verify it.",
+      ),
+    );
+  };
 
   return (
     <div className={`app-shell${railCollapsed ? " is-rail-collapsed" : ""}`}>
@@ -509,7 +431,7 @@ function AppShell() {
                 <button
                   className="mobile-menu-sign-out"
                   type="button"
-                  onClick={() => void logout()}
+                  onClick={handleLogout}
                 >
                   Sign out
                 </button>
@@ -529,7 +451,7 @@ function AppShell() {
               <button
                 className="topbar-sign-out"
                 type="button"
-                onClick={() => void logout()}
+                onClick={handleLogout}
               >
                 Sign out
               </button>
@@ -561,7 +483,31 @@ function AppShell() {
               </span>
             </div>
           ) : null}
-          {!profile ? (
+          {sessionStatus === "unavailable" ? (
+            <div className="connection-notice" role="alert">
+              <span className="notice-mark" aria-hidden="true">
+                !
+              </span>
+              <span>
+                {profile
+                  ? "Your saved view remains available, but financial changes are paused until your session is verified."
+                  : "MoniKey cannot verify your sign-in right now. Financial data and changes stay hidden until the connection recovers."}
+              </span>
+              <button
+                className="connection-retry"
+                type="button"
+                onClick={() => void retrySession()}
+              >
+                Try again
+              </button>
+            </div>
+          ) : null}
+          {signOutError ? (
+            <p className="form-error" role="alert">
+              {signOutError}
+            </p>
+          ) : null}
+          {!profile && sessionStatus === "anonymous" ? (
             <div className="preview-notice" role="status">
               <span className="notice-mark" aria-hidden="true">
                 i
@@ -572,7 +518,7 @@ function AppShell() {
               </span>
             </div>
           ) : null}
-          <Outlet />
+          <Outlet key={profile?.user.id ?? "signed-out"} />
         </main>
 
         <nav className="mobile-nav" aria-label="Primary navigation">
@@ -1624,6 +1570,169 @@ function TransactionDetailPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [editNegativeConfirmation, setEditNegativeConfirmation] =
+    useState(false);
+  const [editCardCreditConfirmation, setEditCardCreditConfirmation] =
+    useState(false);
+  const [reverseNegativeConfirmation, setReverseNegativeConfirmation] =
+    useState(false);
+  const [reverseCreditConfirmation, setReverseCreditConfirmation] =
+    useState(false);
+
+  function resetEditConfirmations() {
+    setEditNegativeConfirmation(false);
+    setEditCardCreditConfirmation(false);
+    setReverseNegativeConfirmation(false);
+    setReverseCreditConfirmation(false);
+  }
+
+  function projectedEditEffects() {
+    if (
+      !transaction ||
+      (transaction.kind !== "EXPENSE" && transaction.kind !== "INCOME")
+    )
+      return null;
+    const current = revisions.at(-1)?.after ?? {};
+    const oldAccountId = revisionText(current, "sourceAccountId");
+    const oldAmountText = revisionText(current, "amountMinor");
+    const nextAccount = accounts.find((account) => account.id === accountId);
+    if (!oldAccountId || !oldAmountText || !nextAccount) return null;
+    try {
+      const oldAmount = BigInt(oldAmountText);
+      const nextAmount = BigInt(parsePhpMinor(amount));
+      const negativeAssets = [...new Set([oldAccountId, nextAccount.id])]
+        .map((id) => accounts.find((account) => account.id === id))
+        .filter(
+          (account): account is DashboardAccount =>
+            account !== undefined && account.type !== "CREDIT_CARD",
+        )
+        .map((account) => {
+          let projectedBalanceMinor = BigInt(account.balanceMinor);
+          if (account.id === oldAccountId) {
+            projectedBalanceMinor +=
+              transaction.kind === "EXPENSE" ? oldAmount : -oldAmount;
+          }
+          if (account.id === nextAccount.id) {
+            projectedBalanceMinor +=
+              transaction.kind === "EXPENSE" ? -nextAmount : nextAmount;
+          }
+          return { account, projectedBalanceMinor };
+        })
+        .filter((item) => item.projectedBalanceMinor < 0n)
+        .map((item) => ({
+          accountName: item.account.name,
+          balanceMinor: moneyMinor(item.projectedBalanceMinor.toString()),
+        }));
+      const cardCredits = [...new Set([oldAccountId, nextAccount.id])]
+        .map((id) => accounts.find((account) => account.id === id))
+        .filter(
+          (account): account is DashboardAccount =>
+            account !== undefined && account.type === "CREDIT_CARD",
+        )
+        .map((account) => {
+          let projectedBalanceMinor = BigInt(account.balanceMinor);
+          if (account.id === oldAccountId) projectedBalanceMinor -= oldAmount;
+          if (account.id === nextAccount.id)
+            projectedBalanceMinor += nextAmount;
+          return { account, projectedBalanceMinor };
+        })
+        .filter((item) => item.projectedBalanceMinor < 0n)
+        .map((item) => ({
+          accountName: item.account.name,
+          creditMinor: moneyMinor((-item.projectedBalanceMinor).toString()),
+        }));
+      return {
+        negativeAssets,
+        cardCredits,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function projectedReversalEffects() {
+    if (!transaction || transaction.kind === "OPENING_BALANCE") return null;
+    const current = revisions.at(-1)?.after ?? {};
+    const amountText = revisionText(current, "amountMinor");
+    if (!amountText) return null;
+    try {
+      const amountMinor = BigInt(amountText);
+      const feeMinor = BigInt(revisionText(current, "feeMinor") || "0");
+      const deltas = new Map<string, bigint>();
+      const addDelta = (id: string, delta: bigint) => {
+        if (id) deltas.set(id, (deltas.get(id) ?? 0n) + delta);
+      };
+      if (transaction.kind === "EXPENSE") {
+        const id = revisionText(current, "sourceAccountId");
+        const account = accounts.find((item) => item.id === id);
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD" ? -amountMinor : amountMinor,
+        );
+      } else if (transaction.kind === "INCOME") {
+        addDelta(revisionText(current, "sourceAccountId"), -amountMinor);
+      } else if (transaction.kind === "TRANSFER") {
+        addDelta(
+          revisionText(current, "fromAccountId"),
+          amountMinor + feeMinor,
+        );
+        addDelta(revisionText(current, "toAccountId"), -amountMinor);
+      } else if (transaction.kind === "REFUND") {
+        const id = revisionText(current, "sourceAccountId");
+        const account = accounts.find((item) => item.id === id);
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD" ? amountMinor : -amountMinor,
+        );
+      } else if (transaction.kind === "ADJUSTMENT") {
+        const id = revisionText(current, "accountId");
+        const account = accounts.find((item) => item.id === id);
+        const increases = revisionText(current, "direction") === "INCREASE";
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD"
+            ? increases
+              ? amountMinor
+              : -amountMinor
+            : increases
+              ? -amountMinor
+              : amountMinor,
+        );
+      } else if (transaction.kind === "CARD_PAYMENT") {
+        addDelta(revisionText(current, "cardAccountId"), amountMinor);
+        addDelta(revisionText(current, "fundingAccountId"), amountMinor);
+      }
+      const negativeAssets: Array<{
+        accountName: string;
+        amountMinor: ReturnType<typeof moneyMinor>;
+      }> = [];
+      const cardCredits: Array<{
+        accountName: string;
+        amountMinor: ReturnType<typeof moneyMinor>;
+      }> = [];
+      for (const [id, delta] of deltas) {
+        const account = accounts.find((item) => item.id === id);
+        if (!account) continue;
+        const projected = BigInt(account.balanceMinor) + delta;
+        if (account.type === "CREDIT_CARD" && projected < 0n) {
+          cardCredits.push({
+            accountName: account.name,
+            amountMinor: moneyMinor((-projected).toString()),
+          });
+          continue;
+        }
+        if (account.type !== "CREDIT_CARD" && projected < 0n) {
+          negativeAssets.push({
+            accountName: account.name,
+            amountMinor: moneyMinor(projected.toString()),
+          });
+        }
+      }
+      return { negativeAssets, cardCredits };
+    } catch {
+      return null;
+    }
+  }
   const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
@@ -1680,10 +1789,18 @@ function TransactionDetailPage() {
     void load();
   }, [load]);
 
-  async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
+  async function submitEdit(
+    event: React.FormEvent<HTMLFormElement>,
+    acknowledgeNegative = false,
+    acknowledgeCardCredit = false,
+  ) {
     event.preventDefault();
     setError("");
     setSuccess("");
+    if (!acknowledgeNegative && !acknowledgeCardCredit) {
+      setEditNegativeConfirmation(false);
+      setEditCardCreditConfirmation(false);
+    }
     if (!transactionId || !csrfToken || !transaction) return;
     if (!reason.trim()) {
       setError("Give the revision a reason.");
@@ -1697,39 +1814,79 @@ function TransactionDetailPage() {
       setError("Enter a positive PHP amount with up to two decimals.");
       return;
     }
+    const body = {
+      kind: transaction.kind,
+      sourceAccountId: accountId,
+      categoryId,
+      amountMinor,
+      occurredOn,
+      ...(note.trim() ? { note: note.trim() } : {}),
+      reason: reason.trim(),
+      ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeCardCredit ? { acknowledgeCardCreditBalance: true } : {}),
+    };
     setPending(true);
     try {
+      const idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        `transaction-edit:${transactionId}`,
+        body,
+      );
       await apiRequest(`/transactions/${transactionId}`, {
         method: "PATCH",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          kind: transaction.kind,
-          sourceAccountId: accountId,
-          categoryId,
-          amountMinor,
-          occurredOn,
-          ...(note.trim() ? { note: note.trim() } : {}),
-          reason: reason.trim(),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(
+        profile!.user.id,
+        `transaction-edit:${transactionId}`,
+        idempotencyKey,
+      );
       setSuccess("Transaction updated and re-posted through the ledger.");
+      setEditNegativeConfirmation(false);
+      setEditCardCreditConfirmation(false);
       setReason("");
       await load();
     } catch (caught) {
-      setError(
+      if (
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        // The rejected command did not post. Keep the form usable for correction.
+      }
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The transaction could not be updated.",
-      );
+          : "The transaction could not be updated.";
+      if (message.includes("card credit")) {
+        setEditCardCreditConfirmation(true);
+        setError(
+          editNegativeConfirmation
+            ? "Confirm the projected card credit and negative account balance below."
+            : "Confirm the projected card credit below.",
+        );
+      } else if (message.includes("negative")) {
+        setEditNegativeConfirmation(true);
+        setError(
+          editCardCreditConfirmation
+            ? "Confirm the projected card credit and negative account balance below."
+            : "Confirm the projected account balance below.",
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setPending(false);
     }
   }
 
-  async function reverseTransaction() {
+  async function reverseTransaction(
+    acknowledgeNegative = false,
+    acknowledgeCardCredit = false,
+  ) {
     setError("");
     setSuccess("");
     if (!transactionId || !csrfToken || !reason.trim()) {
@@ -1737,21 +1894,55 @@ function TransactionDetailPage() {
       return;
     }
     setPending(true);
+    const operation = `transaction-delete:${transactionId}`;
+    let idempotencyKey: string | null = null;
     try {
+      const body = {
+        reason: reason.trim(),
+        ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+        ...(acknowledgeCardCredit
+          ? { acknowledgeCardCreditBalance: true }
+          : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        operation,
+        body,
+      );
       await apiRequest(`/transactions/${transactionId}`, {
         method: "DELETE",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({ reason: reason.trim() }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      setReverseNegativeConfirmation(false);
+      setReverseCreditConfirmation(false);
       setSuccess(
         "Transaction reversed. Its original journal remains immutable.",
       );
       setReason("");
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
+      if (caught instanceof Error && caught.message.includes("card credit")) {
+        setReverseCreditConfirmation(true);
+        setError("Confirm the projected card credit shown below.");
+        return;
+      }
+      if (caught instanceof Error && caught.message.includes("negative")) {
+        setReverseNegativeConfirmation(true);
+        setError("Confirm the projected negative balance shown below.");
+        return;
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -1761,6 +1952,9 @@ function TransactionDetailPage() {
       setPending(false);
     }
   }
+
+  const editEffects = projectedEditEffects();
+  const reversalEffects = projectedReversalEffects();
 
   if (authLoading || loading) return <DashboardLoading />;
   if (!profile) {
@@ -1844,7 +2038,16 @@ function TransactionDetailPage() {
         ) : null}
 
         {editable && transaction.status === "POSTED" ? (
-          <form className="detail-edit-form" onSubmit={submitEdit}>
+          <form
+            className="detail-edit-form"
+            onSubmit={(event) =>
+              void submitEdit(
+                event,
+                editNegativeConfirmation,
+                editCardCreditConfirmation,
+              )
+            }
+          >
             <div className="form-heading">
               <div>
                 <p className="form-kicker">EDIT POSTED RECORD</p>
@@ -1861,7 +2064,10 @@ function TransactionDetailPage() {
                 id="detail-amount"
                 inputMode="decimal"
                 value={amount}
-                onChange={(event) => setAmount(event.currentTarget.value)}
+                onChange={(event) => {
+                  resetEditConfirmations();
+                  setAmount(event.currentTarget.value);
+                }}
               />
             </div>
             <div className="reference-grid">
@@ -1870,7 +2076,10 @@ function TransactionDetailPage() {
                 <select
                   className="reference-select"
                   value={accountId}
-                  onChange={(event) => setAccountId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setAccountId(event.currentTarget.value);
+                  }}
                 >
                   <option value="">Choose an account</option>
                   {activeAccounts.map((account) => (
@@ -1885,7 +2094,10 @@ function TransactionDetailPage() {
                 <select
                   className="reference-select"
                   value={categoryId}
-                  onChange={(event) => setCategoryId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setCategoryId(event.currentTarget.value);
+                  }}
                 >
                   <option value="">Choose a category</option>
                   {matchingCategories.map((category) => (
@@ -1903,7 +2115,10 @@ function TransactionDetailPage() {
                   className="text-input"
                   type="date"
                   value={occurredOn}
-                  onChange={(event) => setOccurredOn(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setOccurredOn(event.currentTarget.value);
+                  }}
                 />
               </label>
               <label className="field-group">
@@ -1911,14 +2126,61 @@ function TransactionDetailPage() {
                 <input
                   className="text-input"
                   value={note}
-                  onChange={(event) => setNote(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setNote(event.currentTarget.value);
+                  }}
                   maxLength={500}
                 />
               </label>
             </div>
-            <button className="save-button" type="submit" disabled={pending}>
-              {pending ? "Saving…" : "Save revision"}
-            </button>
+            {editNegativeConfirmation || editCardCreditConfirmation ? (
+              <div className="confirmation-panel" role="alert">
+                {editNegativeConfirmation ? (
+                  editEffects?.negativeAssets.length ? (
+                    editEffects.negativeAssets.map((effect) => (
+                      <p key={effect.accountName}>
+                        This correction leaves {effect.accountName} at{" "}
+                        {formatPhp(effect.balanceMinor)}.
+                      </p>
+                    ))
+                  ) : (
+                    <p>This correction leaves an affected account negative.</p>
+                  )
+                ) : null}
+                {editCardCreditConfirmation &&
+                editEffects?.cardCredits.length ? (
+                  editEffects.cardCredits.map((credit) => (
+                    <p key={credit.accountName}>
+                      This correction leaves {credit.accountName} with a card
+                      credit of {formatPhp(credit.creditMinor)}.
+                    </p>
+                  ))
+                ) : editCardCreditConfirmation ? (
+                  <p>This correction creates a projected card credit.</p>
+                ) : null}
+                {editNegativeConfirmation && editCardCreditConfirmation ? (
+                  <p>Confirm both projected balances to continue.</p>
+                ) : null}
+                <button
+                  className="save-button"
+                  type="submit"
+                  disabled={pending}
+                >
+                  {pending
+                    ? "Saving…"
+                    : editCardCreditConfirmation && editNegativeConfirmation
+                      ? "Confirm both balances and save"
+                      : editCardCreditConfirmation
+                        ? "Confirm card credit and save"
+                        : "Confirm negative balance and save"}
+                </button>
+              </div>
+            ) : (
+              <button className="save-button" type="submit" disabled={pending}>
+                {pending ? "Saving…" : "Save revision"}
+              </button>
+            )}
           </form>
         ) : null}
 
@@ -1928,7 +2190,10 @@ function TransactionDetailPage() {
             <input
               className="text-input"
               value={reason}
-              onChange={(event) => setReason(event.currentTarget.value)}
+              onChange={(event) => {
+                resetEditConfirmations();
+                setReason(event.currentTarget.value);
+              }}
               maxLength={300}
               placeholder="Corrected receipt or duplicate entry"
             />
@@ -1945,11 +2210,40 @@ function TransactionDetailPage() {
             <button
               className="quiet-button"
               type="button"
-              onClick={() => void reverseTransaction()}
+              onClick={() =>
+                void reverseTransaction(
+                  reverseNegativeConfirmation,
+                  reverseCreditConfirmation,
+                )
+              }
               disabled={pending || !reason.trim()}
             >
-              {pending ? "Reversing…" : "Reverse transaction"}
+              {pending
+                ? "Reversing…"
+                : reverseNegativeConfirmation && reverseCreditConfirmation
+                  ? "Confirm both balances and reverse"
+                  : reverseCreditConfirmation
+                    ? "Confirm card credit and reverse"
+                    : reverseNegativeConfirmation
+                      ? "Confirm negative balance and reverse"
+                      : "Reverse transaction"}
             </button>
+            {reverseNegativeConfirmation || reverseCreditConfirmation ? (
+              <p className="field-hint" role="alert">
+                {[
+                  ...(reversalEffects?.negativeAssets ?? []).map(
+                    (effect) =>
+                      `${effect.accountName} will be ${formatPhp(effect.amountMinor)} negative`,
+                  ),
+                  ...(reversalEffects?.cardCredits ?? []).map(
+                    (effect) =>
+                      `${effect.accountName} will have a card credit of ${formatPhp(effect.amountMinor)}`,
+                  ),
+                ].join(". ") || "The reversal has a negative projected balance"}
+                . Confirm the requested balance changes by selecting the
+                reversal button again.
+              </p>
+            ) : null}
             <p className="field-hint">
               The reason is saved in the immutable audit history.
             </p>
@@ -2000,6 +2294,47 @@ function cardUtilization(account: AccountRecord): string | null {
     .padStart(2, "0")}%`;
 }
 
+type AccountCreatePayload = {
+  type: AccountRecord["type"];
+  name: string;
+  openingBalanceMinor: string;
+  institution?: string;
+  creditLimitMinor?: string;
+};
+
+function buildAccountCreatePayload(
+  type: AccountRecord["type"],
+  name: string,
+  institution: string,
+  openingBalance: string,
+  creditLimit: string,
+): AccountCreatePayload {
+  if (!name.trim()) throw new Error("Give the account a name.");
+  let openingBalanceMinor: string;
+  try {
+    openingBalanceMinor = parsePhpMinor(openingBalance || "0").toString();
+    if (BigInt(openingBalanceMinor) < 0n) throw new Error("negative");
+  } catch {
+    throw new Error("Enter a valid non-negative PHP opening balance.");
+  }
+  let creditLimitMinor: string | undefined;
+  if (type === "CREDIT_CARD" && creditLimit.trim()) {
+    try {
+      creditLimitMinor = parsePhpMinor(creditLimit).toString();
+      if (BigInt(creditLimitMinor) <= 0n) throw new Error("positive");
+    } catch {
+      throw new Error("Enter a positive PHP credit limit.");
+    }
+  }
+  return {
+    type,
+    name: name.trim(),
+    openingBalanceMinor,
+    ...(institution.trim() ? { institution: institution.trim() } : {}),
+    ...(creditLimitMinor ? { creditLimitMinor } : {}),
+  };
+}
+
 function AccountsPage() {
   const {
     profile,
@@ -2017,6 +2352,48 @@ function AccountsPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [retrySubmissionId, setRetrySubmissionId] = useState<string | null>(
+    null,
+  );
+  const accountActionId = useRef<string>(crypto.randomUUID());
+  const accountSubmissionInFlight = useRef(false);
+  const accountPayload = useMemo(() => {
+    try {
+      return buildAccountCreatePayload(
+        type,
+        name,
+        institution,
+        openingBalance,
+        creditLimit,
+      );
+    } catch {
+      return null;
+    }
+  }, [type, name, institution, openingBalance, creditLimit]);
+  const accountPayloadSnapshot = accountPayload
+    ? JSON.stringify(accountPayload)
+    : null;
+  const {
+    entries: accountSubmissionMatches,
+    payloadMatches: accountPayloadMatches,
+    refresh: refreshAccountSubmissions,
+  } = usePendingSubmissionMatches(
+    profile?.user.id,
+    "account:create",
+    accountPayload,
+  );
+  const previousAccountPayload = useRef(accountPayloadSnapshot);
+  useEffect(() => {
+    if (previousAccountPayload.current !== accountPayloadSnapshot) {
+      previousAccountPayload.current = accountPayloadSnapshot;
+      setRetrySubmissionId(null);
+      accountActionId.current = crypto.randomUUID();
+    }
+  }, [accountPayloadSnapshot]);
+  useEffect(() => {
+    if (retrySubmissionId && !accountPayloadMatches.has(retrySubmissionId))
+      setRetrySubmissionId(null);
+  }, [accountPayloadMatches, retrySubmissionId]);
 
   const fetchAccounts = useCallback(
     () =>
@@ -2038,50 +2415,59 @@ function AccountsPage() {
 
   async function createAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (accountSubmissionInFlight.current) return;
     setError("");
     setSuccess("");
     if (!csrfToken) {
       setError("Your session needs to be refreshed.");
       return;
     }
-    if (!name.trim()) {
-      setError("Give the account a name.");
+    if (!profile) {
+      setError("Your session must be verified before creating an account.");
       return;
     }
-    let openingBalanceMinor: string;
+    let body: AccountCreatePayload;
     try {
-      openingBalanceMinor = parsePhpMinor(openingBalance || "0").toString();
-      if (BigInt(openingBalanceMinor) < 0n) throw new Error("negative");
-    } catch {
-      setError("Enter a valid non-negative PHP opening balance.");
+      body = buildAccountCreatePayload(
+        type,
+        name,
+        institution,
+        openingBalance,
+        creditLimit,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Check the account details.",
+      );
       return;
     }
-    let creditLimitMinor: string | undefined;
-    if (type === "CREDIT_CARD" && creditLimit.trim()) {
-      try {
-        creditLimitMinor = parsePhpMinor(creditLimit).toString();
-        if (BigInt(creditLimitMinor) <= 0n) throw new Error("positive");
-      } catch {
-        setError("Enter a positive PHP credit limit.");
-        return;
-      }
-    }
+    accountSubmissionInFlight.current = true;
     setPending(true);
+    let idempotencyKey: string | null = null;
+    let requestAttempted = false;
     try {
+      const submission = await beginPendingSubmission(
+        profile.user.id,
+        "account:create",
+        retrySubmissionId ?? accountActionId.current,
+        body,
+        Boolean(retrySubmissionId),
+      );
+      accountActionId.current = submission.id;
+      idempotencyKey = submission.key;
+      requestAttempted = true;
       await apiRequest("/accounts", {
         method: "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": submission.key,
         },
-        body: JSON.stringify({
-          type,
-          name: name.trim(),
-          openingBalanceMinor,
-          ...(institution.trim() ? { institution: institution.trim() } : {}),
-          ...(creditLimitMinor ? { creditLimitMinor } : {}),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(profile.user.id, "account:create", submission.key);
+      refreshAccountSubmissions();
+      accountActionId.current = crypto.randomUUID();
+      setRetrySubmissionId(null);
       setName("");
       setInstitution("");
       setOpeningBalance("");
@@ -2090,12 +2476,36 @@ function AccountsPage() {
       setSuccess("Account created with a ledger-backed opening balance.");
       await accountsResource.reload();
     } catch (caught) {
-      setError(
+      const terminal =
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status);
+      if (terminal && idempotencyKey) {
+        clearPendingSubmission(
+          profile.user.id,
+          "account:create",
+          idempotencyKey,
+        );
+        accountActionId.current = crypto.randomUUID();
+        setRetrySubmissionId(null);
+        refreshAccountSubmissions();
+      }
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The account could not be created.",
+          : "The account could not be created.";
+      const outcomeUnknown =
+        requestAttempted &&
+        (!(caught instanceof ApiRequestError) ||
+          caught.status === 408 ||
+          caught.status >= 500);
+      setError(
+        outcomeUnknown
+          ? `The account result could not be confirmed. Retry with the same details to safely recover it. ${message}`
+          : message,
       );
+      if (outcomeUnknown) refreshAccountSubmissions();
     } finally {
+      accountSubmissionInFlight.current = false;
       setPending(false);
     }
   }
@@ -2141,7 +2551,14 @@ function AccountsPage() {
           <button
             className="dashboard-primary-action"
             type="button"
-            onClick={() => setShowCreate((current) => !current)}
+            disabled={pending}
+            onClick={() => {
+              if (showCreate) {
+                accountActionId.current = crypto.randomUUID();
+                setRetrySubmissionId(null);
+              }
+              setShowCreate((current) => !current);
+            }}
           >
             <span aria-hidden="true">+</span>{" "}
             {showCreate ? "Close form" : "Add account"}
@@ -2214,7 +2631,11 @@ function AccountsPage() {
               <input
                 className="text-input"
                 value={name}
-                onChange={(event) => setName(event.currentTarget.value)}
+                onChange={(event) => {
+                  accountActionId.current = crypto.randomUUID();
+                  setRetrySubmissionId(null);
+                  setName(event.currentTarget.value);
+                }}
                 maxLength={120}
               />
             </label>
@@ -2226,9 +2647,11 @@ function AccountsPage() {
                 className="text-input"
                 inputMode="decimal"
                 value={openingBalance}
-                onChange={(event) =>
-                  setOpeningBalance(event.currentTarget.value)
-                }
+                onChange={(event) => {
+                  accountActionId.current = crypto.randomUUID();
+                  setRetrySubmissionId(null);
+                  setOpeningBalance(event.currentTarget.value);
+                }}
                 placeholder="0.00"
               />
             </label>
@@ -2239,7 +2662,11 @@ function AccountsPage() {
               <input
                 className="text-input"
                 value={institution}
-                onChange={(event) => setInstitution(event.currentTarget.value)}
+                onChange={(event) => {
+                  accountActionId.current = crypto.randomUUID();
+                  setRetrySubmissionId(null);
+                  setInstitution(event.currentTarget.value);
+                }}
                 maxLength={120}
               />
             </label>
@@ -2253,13 +2680,32 @@ function AccountsPage() {
                 className="text-input"
                 inputMode="decimal"
                 value={creditLimit}
-                onChange={(event) => setCreditLimit(event.currentTarget.value)}
+                onChange={(event) => {
+                  accountActionId.current = crypto.randomUUID();
+                  setRetrySubmissionId(null);
+                  setCreditLimit(event.currentTarget.value);
+                }}
                 placeholder="0.00"
               />
             </label>
           ) : null}
+          <PendingSubmissionRecovery
+            matches={accountSubmissionMatches}
+            selectedId={retrySubmissionId}
+            operationLabel="account creation"
+            canRetry={(id) => accountPayloadMatches.has(id)}
+            onSelect={setRetrySubmissionId}
+            onStartNew={() => {
+              accountActionId.current = crypto.randomUUID();
+              setRetrySubmissionId(null);
+            }}
+          />
           <button className="save-button" type="submit" disabled={pending}>
-            {pending ? "Creating…" : "Create account"}
+            {pending
+              ? "Creating…"
+              : retrySubmissionId
+                ? "Retry account creation"
+                : "Create account"}
           </button>
         </form>
       ) : null}
@@ -2340,14 +2786,21 @@ function AccountDetailPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
     if (!profile || !accountId) {
+      loadSequence.current += 1;
+      setAccount(null);
+      setActivity([]);
       setLoading(false);
       return;
     }
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
+    setAccount(null);
+    setActivity([]);
     try {
       const [accountResult, activityResult] = await Promise.all([
         apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
@@ -2355,18 +2808,20 @@ function AccountDetailPage() {
           `/accounts/${accountId}/activity?limit=50`,
         ),
       ]);
+      if (sequence !== loadSequence.current) return;
       setAccount(accountResult.account);
       setActivity(activityResult.activity);
       setName(accountResult.account.name);
       setSortOrder(String(accountResult.account.sortOrder));
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "The account could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [accountId, profile]);
 
@@ -2683,14 +3138,21 @@ function CardStatementsPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
     if (!profile || !accountId) {
+      loadSequence.current += 1;
+      setAccount(null);
+      setStatements([]);
       setLoading(false);
       return;
     }
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
+    setAccount(null);
+    setStatements([]);
     try {
       const [accountResult, statementResult] = await Promise.all([
         apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
@@ -2698,16 +3160,18 @@ function CardStatementsPage() {
           `/credit-cards/${accountId}/statements`,
         ),
       ]);
+      if (sequence !== loadSequence.current) return;
       setAccount(accountResult.account);
       setStatements(statementResult.statements);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "Card statements could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [accountId, profile]);
 
@@ -2751,6 +3215,8 @@ function CardStatementsPage() {
       return;
     }
     setPending(true);
+    const operation = `card-statement:${accountId}:${editingId ?? "create"}`;
+    let idempotencyKey: string | null = null;
     try {
       const body = {
         statementDate,
@@ -2760,6 +3226,10 @@ function CardStatementsPage() {
         paymentDueDate,
         ...(note.trim() ? { note: note.trim() } : {}),
       };
+      idempotencyKey = await pendingSubmissionKey(profile!.user.id, operation, {
+        method: editingId ? "PATCH" : "POST",
+        body,
+      });
       await apiRequest(
         editingId
           ? `/credit-cards/${accountId}/statements/${editingId}`
@@ -2768,15 +3238,23 @@ function CardStatementsPage() {
           method: editingId ? "PATCH" : "POST",
           headers: {
             "x-csrf-token": csrfToken,
-            "idempotency-key": crypto.randomUUID(),
+            "idempotency-key": idempotencyKey,
           },
           body: JSON.stringify(body),
         },
       );
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
       setSuccess(editingId ? "Statement corrected." : "Statement recorded.");
       resetStatementForm();
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3006,27 +3484,94 @@ function CardPaymentPage() {
   const [fundingAccountId, setFundingAccountId] = useState("");
   const [amount, setAmount] = useState("");
   const [occurredOn, setOccurredOn] = useState(profile?.serverToday ?? "");
+  const [businessToday, setBusinessToday] = useState(
+    profile?.serverToday ?? "",
+  );
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
-  const [confirmNegative, setConfirmNegative] = useState(false);
+  const [confirmedNegative, setConfirmedNegative] = useState(false);
+  const [confirmedCardCredit, setConfirmedCardCredit] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<
+    "negative" | "card-credit" | null
+  >(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [retrySubmissionId, setRetrySubmissionId] = useState<string | null>(
+    null,
+  );
   const isOnline = useOnlineStatus();
   const submissionInFlight = useRef(false);
+  const dateEdited = useRef(false);
+  const paymentFormEdited = useRef(false);
+  const loadSequence = useRef(0);
+  const actionId = useRef<string>(crypto.randomUUID());
+  const paymentPayload = useMemo(() => {
+    if (!accountId || !fundingAccountId || !occurredOn) return null;
+    try {
+      const parsed = parsePhpMinor(amount);
+      if (parsed <= 0n) return null;
+      return {
+        fundingAccountId,
+        amountMinor: parsed.toString(),
+        occurredOn,
+        ...(note.trim() ? { note: note.trim() } : {}),
+        ...(confirmedNegative ? { acknowledgeNegativeBalance: true } : {}),
+        ...(confirmedCardCredit ? { acknowledgeCardCreditBalance: true } : {}),
+      };
+    } catch {
+      return null;
+    }
+  }, [
+    accountId,
+    amount,
+    fundingAccountId,
+    note,
+    occurredOn,
+    confirmedNegative,
+    confirmedCardCredit,
+  ]);
+  const paymentPayloadSnapshot = paymentPayload
+    ? JSON.stringify(paymentPayload)
+    : null;
+  const paymentOperation = `card-payment:${accountId ?? "unknown"}`;
+  const {
+    entries: paymentMatches,
+    payloadMatches: paymentPayloadMatches,
+    refresh: refreshPaymentSubmissions,
+  } = usePendingSubmissionMatches(
+    profile?.user.id,
+    paymentOperation,
+    paymentPayload,
+  );
+  const previousPaymentPayload = useRef(paymentPayloadSnapshot);
+  useEffect(() => {
+    if (previousPaymentPayload.current !== paymentPayloadSnapshot) {
+      previousPaymentPayload.current = paymentPayloadSnapshot;
+      setRetrySubmissionId(null);
+      actionId.current = crypto.randomUUID();
+    }
+  }, [paymentPayloadSnapshot]);
+  useEffect(() => {
+    if (retrySubmissionId && !paymentPayloadMatches.has(retrySubmissionId))
+      setRetrySubmissionId(null);
+  }, [paymentPayloadMatches, retrySubmissionId]);
 
   const load = useCallback(async () => {
     if (!profile || !accountId) {
       setLoading(false);
       return;
     }
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
-      const [cardResult, accountsResult] = await Promise.all([
+      const [cardResult, accountsResult, currentProfile] = await Promise.all([
         apiRequest<{ account: AccountRecord }>(`/accounts/${accountId}`),
         apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
+        apiRequest<Profile>("/me"),
       ]);
+      if (sequence !== loadSequence.current) return;
       setCard(cardResult.account);
       const assets = accountsResult.accounts.filter(
         (account) =>
@@ -3036,15 +3581,18 @@ function CardPaymentPage() {
       );
       setFundingAccounts(assets);
       setFundingAccountId((current) => current || assets[0]?.id || "");
-      setOccurredOn(profile.serverToday);
+      setBusinessToday(currentProfile.serverToday);
+      if (!dateEdited.current && !paymentFormEdited.current)
+        setOccurredOn(currentProfile.serverToday);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "The card could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [accountId, profile]);
 
@@ -3064,13 +3612,13 @@ function CardPaymentPage() {
 
   async function submit(
     event: React.FormEvent<HTMLFormElement>,
-    acknowledge = false,
+    acknowledgeNegative = confirmedNegative,
+    acknowledgeCardCredit = confirmedCardCredit,
   ) {
     event.preventDefault();
     if (submissionInFlight.current) return;
     setError("");
     setSuccess("");
-    setConfirmNegative(false);
     if (!isOnline) {
       setError("You are offline. Reconnect before recording a payment.");
       return;
@@ -3093,17 +3641,26 @@ function CardPaymentPage() {
       amountMinor,
       occurredOn,
       ...(note.trim() ? { note: note.trim() } : {}),
-      ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeCardCredit ? { acknowledgeCardCreditBalance: true } : {}),
     };
+    setConfirmedNegative(acknowledgeNegative);
+    setConfirmedCardCredit(acknowledgeCardCredit);
     submissionInFlight.current = true;
     setPending(true);
     let idempotencyKey: string | null = null;
+    let requestAttempted = false;
     try {
-      idempotencyKey = await pendingSubmissionKey(
+      const submission = await beginPendingSubmission(
         profile.user.id,
-        `card-payment:${accountId}`,
+        paymentOperation,
+        retrySubmissionId ?? actionId.current,
         body,
+        Boolean(retrySubmissionId),
       );
+      actionId.current = submission.id;
+      idempotencyKey = submission.key;
+      requestAttempted = true;
       await apiRequest(`/credit-cards/${accountId}/payments`, {
         method: "POST",
         headers: {
@@ -3112,13 +3669,17 @@ function CardPaymentPage() {
         },
         body: JSON.stringify(body),
       });
-      clearPendingSubmission(
-        profile.user.id,
-        `card-payment:${accountId}`,
-        idempotencyKey,
-      );
+      clearPendingSubmission(profile.user.id, paymentOperation, submission.key);
+      refreshPaymentSubmissions();
+      actionId.current = crypto.randomUUID();
+      setRetrySubmissionId(null);
       setAmount("");
       setNote("");
+      setConfirmedNegative(false);
+      setConfirmedCardCredit(false);
+      setPendingConfirmation(null);
+      dateEdited.current = false;
+      paymentFormEdited.current = false;
       setSuccess("Card payment posted. It is not counted as a new expense.");
       await load();
     } catch (caught) {
@@ -3129,28 +3690,71 @@ function CardPaymentPage() {
       ) {
         clearPendingSubmission(
           profile.user.id,
-          `card-payment:${accountId}`,
+          paymentOperation,
           idempotencyKey,
         );
+        actionId.current = crypto.randomUUID();
+        setRetrySubmissionId(null);
+        refreshPaymentSubmissions();
       }
       const message =
         caught instanceof Error
           ? caught.message
           : "The card payment could not be saved.";
       if (message.includes("negative")) {
-        setConfirmNegative(true);
-        setError(message);
-      } else if (caught instanceof ApiRequestError && caught.status < 500) {
+        if (idempotencyKey) {
+          clearPendingSubmission(
+            profile.user.id,
+            paymentOperation,
+            idempotencyKey,
+          );
+          actionId.current = crypto.randomUUID();
+          setRetrySubmissionId(null);
+          refreshPaymentSubmissions();
+        }
+        setConfirmedNegative(acknowledgeNegative);
+        setConfirmedCardCredit(acknowledgeCardCredit);
+        setPendingConfirmation("negative");
+        setError("Confirm the projected funding account balance below.");
+      } else if (message.includes("card credit")) {
+        if (idempotencyKey) {
+          clearPendingSubmission(
+            profile.user.id,
+            paymentOperation,
+            idempotencyKey,
+          );
+          actionId.current = crypto.randomUUID();
+          setRetrySubmissionId(null);
+          refreshPaymentSubmissions();
+        }
+
+        setConfirmedNegative(acknowledgeNegative);
+        setConfirmedCardCredit(acknowledgeCardCredit);
+        setPendingConfirmation("card-credit");
+        setError("Confirm the projected card credit below.");
+      } else if (
+        !requestAttempted ||
+        (caught instanceof ApiRequestError &&
+          caught.status !== 408 &&
+          caught.status < 500)
+      ) {
         setError(message);
       } else {
         setError(
           `The payment result could not be confirmed. If it reached MoniKey, retry using the same details to safely recover its result. ${message}`,
         );
+        refreshPaymentSubmissions();
       }
     } finally {
       submissionInFlight.current = false;
       setPending(false);
     }
+  }
+
+  function resetPaymentConfirmations() {
+    setConfirmedNegative(false);
+    setConfirmedCardCredit(false);
+    setPendingConfirmation(null);
   }
 
   if (authLoading || loading) return <DashboardLoading />;
@@ -3204,6 +3808,9 @@ function CardPaymentPage() {
       <form
         className="quick-add-card card-payment-card"
         onSubmit={(event) => void submit(event)}
+        onChangeCapture={() => {
+          paymentFormEdited.current = true;
+        }}
       >
         <div className="account-detail-hero compact">
           <span className="dashboard-label">Outstanding debt</span>
@@ -3223,7 +3830,10 @@ function CardPaymentPage() {
             type="text"
             inputMode="decimal"
             value={amount}
-            onChange={(event) => setAmount(event.currentTarget.value)}
+            onChange={(event) => {
+              resetPaymentConfirmations();
+              setAmount(event.currentTarget.value);
+            }}
             placeholder="0.00"
           />
         </label>
@@ -3232,7 +3842,10 @@ function CardPaymentPage() {
           <select
             className="reference-select"
             value={fundingAccountId}
-            onChange={(event) => setFundingAccountId(event.currentTarget.value)}
+            onChange={(event) => {
+              resetPaymentConfirmations();
+              setFundingAccountId(event.currentTarget.value);
+            }}
             disabled={!fundingAccounts.length}
           >
             <option value="">Choose a funding account</option>
@@ -3250,8 +3863,12 @@ function CardPaymentPage() {
               className="text-input"
               type="date"
               value={occurredOn}
-              max={profile.serverToday}
-              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+              max={businessToday}
+              onChange={(event) => {
+                dateEdited.current = true;
+                resetPaymentConfirmations();
+                setOccurredOn(event.currentTarget.value);
+              }}
             />
           </label>
           <label className="field-group">
@@ -3262,15 +3879,56 @@ function CardPaymentPage() {
               className="text-input"
               value={note}
               maxLength={500}
-              onChange={(event) => setNote(event.currentTarget.value)}
+              onChange={(event) => {
+                resetPaymentConfirmations();
+                setNote(event.currentTarget.value);
+              }}
               placeholder="Statement payment"
             />
           </label>
         </div>
-        {confirmNegative ? (
+        <PendingSubmissionRecovery
+          matches={paymentMatches}
+          selectedId={retrySubmissionId}
+          operationLabel="card payment"
+          canRetry={(id) => paymentPayloadMatches.has(id)}
+          onSelect={setRetrySubmissionId}
+          onStartNew={() => {
+            actionId.current = crypto.randomUUID();
+            setRetrySubmissionId(null);
+          }}
+        />
+        {pendingConfirmation ? (
           <div className="confirmation-panel" role="alert">
             <p>
-              This payment will make the funding account negative. Continue?
+              {pendingConfirmation === "card-credit"
+                ? `This payment will create a card credit balance of ${(() => {
+                    try {
+                      const paymentMinor = BigInt(parsePaymentAmount());
+                      const projected =
+                        BigInt(card.balanceMinor) - paymentMinor;
+                      return formatPhp(moneyMinor((-projected).toString()));
+                    } catch {
+                      return "the projected amount";
+                    }
+                  })()} on ${card.name}. ${confirmedNegative ? "Your separate funding overdraft confirmation is retained." : "Confirm the card credit to continue."}`
+                : `This payment will leave ${fundingAccounts.find((account) => account.id === fundingAccountId)?.name ?? "the funding account"} at ${(() => {
+                    try {
+                      const funding = fundingAccounts.find(
+                        (account) => account.id === fundingAccountId,
+                      );
+                      return formatPhp(
+                        moneyMinor(
+                          (
+                            BigInt(funding?.balanceMinor ?? "0") -
+                            BigInt(parsePaymentAmount())
+                          ).toString(),
+                        ),
+                      );
+                    } catch {
+                      return "the projected balance";
+                    }
+                  })()}. Confirm the overdraft to continue.`}
             </p>
             <button
               className="save-button"
@@ -3279,7 +3937,8 @@ function CardPaymentPage() {
               onClick={(event) =>
                 void submit(
                   event as unknown as React.FormEvent<HTMLFormElement>,
-                  true,
+                  confirmedNegative || pendingConfirmation === "negative",
+                  confirmedCardCredit || pendingConfirmation === "card-credit",
                 )
               }
             >
@@ -3292,7 +3951,11 @@ function CardPaymentPage() {
             type="submit"
             disabled={pending || !fundingAccounts.length || !isOnline}
           >
-            {pending ? "Saving…" : "Record card payment"}
+            {pending
+              ? "Saving…"
+              : retrySubmissionId
+                ? "Retry saved payment"
+                : "Record card payment"}
           </button>
         )}
       </form>
@@ -3358,33 +4021,51 @@ function BillsPage() {
   const [defaultAmount, setDefaultAmount] = useState("");
   const [dueDay, setDueDay] = useState("1");
   const [startOn, setStartOn] = useState(profile?.serverToday ?? "");
+  const [endOn, setEndOn] = useState("");
+  const [businessToday, setBusinessToday] = useState(
+    profile?.serverToday ?? "",
+  );
   const [note, setNote] = useState("");
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [showArchivedBills, setShowArchivedBills] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [confirmPayOccurrenceId, setConfirmPayOccurrenceId] = useState<
+    string | null
+  >(null);
   const [payAmount, setPayAmount] = useState("");
   const [payAccountId, setPayAccountId] = useState("");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const startOnEdited = useRef(false);
+  const billFormEdited = useRef(false);
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
     if (!profile) {
       setLoading(false);
       return;
     }
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
-      const window = billWindow(profile.serverToday);
+      const currentProfile = await apiRequest<Profile>("/me");
+      const window = billWindow(currentProfile.serverToday);
       const [billResult, occurrenceResult, accountResult, categoryResult] =
         await Promise.all([
-          apiRequest<{ bills: BillRecord[] }>("/bills"),
+          apiRequest<{ bills: BillRecord[] }>(
+            `/bills${showArchivedBills ? "?includeArchived=true" : ""}`,
+          ),
           apiRequest<{ occurrences: BillOccurrence[] }>(
             `/bills/occurrences?from=${window.from}&to=${window.to}`,
           ),
           apiRequest<{ accounts: AccountRecord[] }>("/accounts"),
           apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
         ]);
+      if (sequence !== loadSequence.current) return;
+      setBusinessToday(currentProfile.serverToday);
       setBills(billResult.bills);
       setOccurrences(occurrenceResult.occurrences);
       const activeAccounts = accountResult.accounts.filter(
@@ -3397,21 +4078,69 @@ function BillsPage() {
       setCategories(expenseCategories);
       setCategoryId((current) => current || expenseCategories[0]?.id || "");
       setPayAccountId((current) => current || activeAccounts[0]?.id || "");
-      setStartOn((current) => current || profile.serverToday);
+      if (!startOnEdited.current && !billFormEdited.current)
+        setStartOn(currentProfile.serverToday);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(
         caught instanceof Error ? caught.message : "Bills could not be loaded.",
       );
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [profile]);
+  }, [profile, showArchivedBills]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  async function createBillRecord(event: React.FormEvent<HTMLFormElement>) {
+  function billPaymentAmountMinor(occurrence: BillOccurrence): bigint {
+    if (occurrence.amountMode === "VARIABLE") {
+      return parsePhpMinor(payAmount);
+    }
+    return moneyMinor(occurrence.expectedAmountMinor ?? "0");
+  }
+
+  function projectedBillFundingBalance(occurrence: BillOccurrence) {
+    const balance = accounts.find(
+      (account) => account.id === payAccountId,
+    )?.balanceMinor;
+    return moneyMinor(
+      (BigInt(balance ?? "0") - billPaymentAmountMinor(occurrence)).toString(),
+    );
+  }
+
+  function resetBillForm() {
+    setEditingBillId(null);
+    setName("");
+    setCategoryId(categories[0]?.id ?? "");
+    setSuggestedAccountId("");
+    setAmountMode("FIXED");
+    setDefaultAmount("");
+    setDueDay("1");
+    setStartOn(businessToday);
+    setEndOn("");
+    setNote("");
+  }
+
+  function editBill(bill: BillRecord) {
+    startOnEdited.current = true;
+    billFormEdited.current = true;
+    setEditingBillId(bill.id);
+    setName(bill.name);
+    setCategoryId(bill.categoryId);
+    setSuggestedAccountId(bill.suggestedAccountId ?? "");
+    setAmountMode(bill.amountMode);
+    setDefaultAmount(
+      bill.defaultAmountMinor ? phpInputFromMinor(bill.defaultAmountMinor) : "",
+    );
+    setDueDay(String(bill.dueDay));
+    setStartOn(bill.startOn);
+    setEndOn(bill.endOn ?? "");
+    setNote(bill.note ?? "");
+  }
+
+  async function saveBillRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setSuccess("");
@@ -3431,30 +4160,62 @@ function BillsPage() {
       }
     }
     setPending(true);
+    const operation = `bill:${editingBillId ?? "create"}`;
+    let idempotencyKey: string | null = null;
     try {
-      await apiRequest("/bills", {
-        method: "POST",
+      const body = {
+        name: name.trim(),
+        categoryId,
+        amountMode,
+        ...(suggestedAccountId
+          ? { suggestedAccountId }
+          : editingBillId
+            ? { suggestedAccountId: null }
+            : {}),
+        ...(amountMode === "FIXED" && amountMinor
+          ? { defaultAmountMinor: amountMinor }
+          : editingBillId
+            ? { defaultAmountMinor: null }
+            : {}),
+        dueDay: Number(dueDay),
+        startOn,
+        ...(endOn ? { endOn } : editingBillId ? { endOn: null } : {}),
+        ...(note.trim()
+          ? { note: note.trim() }
+          : editingBillId
+            ? { note: null }
+            : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(profile!.user.id, operation, {
+        method: editingBillId ? "PATCH" : "POST",
+        body,
+      });
+      await apiRequest(editingBillId ? `/bills/${editingBillId}` : "/bills", {
+        method: editingBillId ? "PATCH" : "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          name: name.trim(),
-          categoryId,
-          ...(suggestedAccountId ? { suggestedAccountId } : {}),
-          amountMode,
-          ...(amountMinor ? { defaultAmountMinor: amountMinor } : {}),
-          dueDay: Number(dueDay),
-          startOn,
-          ...(note.trim() ? { note: note.trim() } : {}),
-        }),
+        body: JSON.stringify(body),
       });
-      setName("");
-      setDefaultAmount("");
-      setNote("");
-      setSuccess("Bill created. Its upcoming occurrences are ready to review.");
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      setSuccess(
+        editingBillId
+          ? "Bill rule updated. Paid and skipped history remains available."
+          : "Bill created. Its upcoming occurrences are ready to review.",
+      );
+      resetBillForm();
+      startOnEdited.current = false;
+      billFormEdited.current = false;
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3465,7 +4226,52 @@ function BillsPage() {
     }
   }
 
-  async function payOccurrence(occurrence: BillOccurrence) {
+  async function changeBillStatus(
+    bill: BillRecord,
+    status: BillRecord["status"],
+  ) {
+    if (!profile || !csrfToken || !isOnline || pending) return;
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      const body = { status };
+      const operation = `bill-status:${bill.id}`;
+      const idempotencyKey = await pendingSubmissionKey(
+        profile.user.id,
+        operation,
+        body,
+      );
+      await apiRequest(`/bills/${bill.id}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": idempotencyKey,
+        },
+        body: JSON.stringify(body),
+      });
+      clearPendingSubmission(profile.user.id, operation, idempotencyKey);
+      setSuccess(
+        status === "ARCHIVED"
+          ? `${bill.name} archived. Its payment history remains available.`
+          : `Reminder ${status === "PAUSED" ? "paused" : "resumed"}.`,
+      );
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Bill rule could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function payOccurrence(
+    occurrence: BillOccurrence,
+    acknowledge = false,
+  ) {
     if (!csrfToken || !payAccountId || !isOnline) return;
     let amountMinor: string | undefined;
     try {
@@ -3480,23 +4286,52 @@ function BillsPage() {
     }
     setPending(true);
     setError("");
+    setConfirmPayOccurrenceId(null);
+    let idempotencyKey: string | null = null;
     try {
+      const body = {
+        fundingAccountId: payAccountId,
+        ...(amountMinor ? { amountMinor } : {}),
+        ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        `bill-payment:${occurrence.id}`,
+        body,
+      );
       await apiRequest(`/bills/occurrences/${occurrence.id}/pay`, {
         method: "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          fundingAccountId: payAccountId,
-          ...(amountMinor ? { amountMinor } : {}),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(
+        profile!.user.id,
+        `bill-payment:${occurrence.id}`,
+        idempotencyKey,
+      );
       setPayingId(null);
+      setConfirmPayOccurrenceId(null);
       setPayAmount("");
       setSuccess(`${occurrence.billName} marked paid and posted to Activity.`);
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(
+          profile!.user.id,
+          `bill-payment:${occurrence.id}`,
+          idempotencyKey,
+        );
+      }
+      if (caught instanceof Error && caught.message.includes("negative")) {
+        setConfirmPayOccurrenceId(occurrence.id);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3567,11 +4402,23 @@ function BillsPage() {
           {success}
         </p>
       ) : null}
-      <form className="account-edit-card bill-form" onSubmit={createBillRecord}>
+      <form
+        className="account-edit-card bill-form"
+        onSubmit={saveBillRecord}
+        onChangeCapture={() => {
+          billFormEdited.current = true;
+        }}
+      >
         <div className="form-heading">
           <div>
-            <p className="form-kicker">NEW RECURRING BILL</p>
-            <h2>Set up a monthly reminder</h2>
+            <p className="form-kicker">
+              {editingBillId ? "EDIT RECURRING BILL" : "NEW RECURRING BILL"}
+            </p>
+            <h2>
+              {editingBillId
+                ? "Update reminder details"
+                : "Set up a monthly reminder"}
+            </h2>
           </div>
         </div>
         <div className="reference-grid">
@@ -3600,6 +4447,18 @@ function BillsPage() {
             </select>
           </label>
         </div>
+        <label className="field-group">
+          <span className="field-label">
+            End date <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            type="date"
+            value={endOn}
+            min={startOn || undefined}
+            onChange={(event) => setEndOn(event.currentTarget.value)}
+          />
+        </label>
         <div className="reference-grid">
           <label className="field-group">
             <span className="field-label">Amount type *</span>
@@ -3654,7 +4513,10 @@ function BillsPage() {
               className="text-input"
               type="date"
               value={startOn}
-              onChange={(event) => setStartOn(event.currentTarget.value)}
+              onChange={(event) => {
+                startOnEdited.current = true;
+                setStartOn(event.currentTarget.value);
+              }}
             />
           </label>
         </div>
@@ -3695,8 +4557,22 @@ function BillsPage() {
           type="submit"
           disabled={pending || !isOnline}
         >
-          {pending ? "Saving…" : "Create bill"}
+          {pending
+            ? "Saving…"
+            : editingBillId
+              ? "Save bill changes"
+              : "Create bill"}
         </button>
+        {editingBillId ? (
+          <button
+            className="quiet-button"
+            type="button"
+            disabled={pending}
+            onClick={resetBillForm}
+          >
+            Cancel editing
+          </button>
+        ) : null}
       </form>
       <section className="bill-section" aria-labelledby="bill-list-heading">
         <div className="dashboard-panel-heading">
@@ -3704,6 +4580,16 @@ function BillsPage() {
             <p className="dashboard-label">Saved reminders</p>
             <h2 id="bill-list-heading">Your recurring bills</h2>
           </div>
+          <label className="filter-toggle">
+            <input
+              type="checkbox"
+              checked={showArchivedBills}
+              onChange={(event) =>
+                setShowArchivedBills(event.currentTarget.checked)
+              }
+            />
+            <span>Show archived</span>
+          </label>
         </div>
         {bills.length ? (
           <div className="bill-list">
@@ -3722,25 +4608,50 @@ function BillsPage() {
                     · Due day {bill.dueDay} · {bill.status.toLowerCase()}
                   </span>
                 </div>
-                <button
-                  className="quiet-button"
-                  type="button"
-                  disabled={pending || !isOnline}
-                  onClick={() =>
-                    void apiRequest(`/bills/${bill.id}`, {
-                      method: "PATCH",
-                      headers: {
-                        "x-csrf-token": csrfToken ?? "",
-                        "idempotency-key": crypto.randomUUID(),
-                      },
-                      body: JSON.stringify({
-                        status: bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
-                      }),
-                    }).then(() => load())
-                  }
-                >
-                  {bill.status === "ACTIVE" ? "Pause" : "Resume"}
-                </button>
+                <div className="bill-row-actions">
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={pending || !isOnline}
+                    onClick={() => editBill(bill)}
+                  >
+                    Edit
+                  </button>
+                  {bill.status === "ARCHIVED" ? (
+                    <button
+                      className="quiet-button"
+                      type="button"
+                      disabled={pending || !isOnline}
+                      onClick={() => void changeBillStatus(bill, "ACTIVE")}
+                    >
+                      Restore
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={pending || !isOnline}
+                        onClick={() =>
+                          void changeBillStatus(
+                            bill,
+                            bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
+                          )
+                        }
+                      >
+                        {bill.status === "ACTIVE" ? "Pause" : "Resume"}
+                      </button>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={pending || !isOnline}
+                        onClick={() => void changeBillStatus(bill, "ARCHIVED")}
+                      >
+                        Archive
+                      </button>
+                    </>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -3786,9 +4697,11 @@ function BillsPage() {
                         <select
                           className="reference-select"
                           value={payAccountId}
-                          onChange={(event) =>
-                            setPayAccountId(event.currentTarget.value)
-                          }
+                          onChange={(event) => {
+                            setConfirmPayOccurrenceId(null);
+                            setError("");
+                            setPayAccountId(event.currentTarget.value);
+                          }}
                         >
                           <option value="">Funding account</option>
                           {accounts.map((account) => (
@@ -3803,9 +4716,11 @@ function BillsPage() {
                             type="text"
                             inputMode="decimal"
                             value={payAmount}
-                            onChange={(event) =>
-                              setPayAmount(event.currentTarget.value)
-                            }
+                            onChange={(event) => {
+                              setConfirmPayOccurrenceId(null);
+                              setError("");
+                              setPayAmount(event.currentTarget.value);
+                            }}
                             placeholder="Amount"
                           />
                         ) : null}
@@ -3817,6 +4732,34 @@ function BillsPage() {
                         >
                           Confirm pay
                         </button>
+                        {confirmPayOccurrenceId === occurrence.id ? (
+                          <div className="confirmation-panel" role="alert">
+                            <p>
+                              This bill payment will leave the funding account
+                              with a projected balance of{" "}
+                              {(() => {
+                                try {
+                                  return formatPhp(
+                                    projectedBillFundingBalance(occurrence),
+                                  );
+                                } catch {
+                                  return "the projected balance";
+                                }
+                              })()}
+                              . Confirm to continue.
+                            </p>
+                            <button
+                              className="save-button"
+                              type="button"
+                              disabled={pending || !isOnline}
+                              onClick={() =>
+                                void payOccurrence(occurrence, true)
+                              }
+                            >
+                              Confirm negative balance and pay
+                            </button>
+                          </div>
+                        ) : null}
                         <button
                           className="quiet-button"
                           type="button"
@@ -3982,7 +4925,7 @@ function LoginPage() {
 }
 
 function OnboardingPage() {
-  const { profile, loading, createFirstAccount } = useAuth();
+  const { profile, loading, csrfToken, createFirstAccount } = useAuth();
   const navigate = useNavigate();
   const [type, setType] = useState<"CASH" | "BANK" | "EWALLET" | "CREDIT_CARD">(
     "CASH",
@@ -3992,6 +4935,48 @@ function OnboardingPage() {
   const [openingBalance, setOpeningBalance] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [retrySubmissionId, setRetrySubmissionId] = useState<string | null>(
+    null,
+  );
+  const actionId = useRef<string>(crypto.randomUUID());
+  const submissionInFlight = useRef(false);
+  const firstAccountPayload = useMemo(() => {
+    try {
+      return buildAccountCreatePayload(
+        type,
+        name,
+        institution,
+        openingBalance,
+        "",
+      );
+    } catch {
+      return null;
+    }
+  }, [type, name, institution, openingBalance]);
+  const firstAccountPayloadSnapshot = firstAccountPayload
+    ? JSON.stringify(firstAccountPayload)
+    : null;
+  const {
+    entries: submissionMatches,
+    payloadMatches: firstAccountPayloadMatches,
+    refresh: refreshFirstAccountSubmissions,
+  } = usePendingSubmissionMatches(
+    profile?.user.id,
+    "onboarding:first-account",
+    firstAccountPayload,
+  );
+  const previousFirstAccountPayload = useRef(firstAccountPayloadSnapshot);
+  useEffect(() => {
+    if (previousFirstAccountPayload.current !== firstAccountPayloadSnapshot) {
+      previousFirstAccountPayload.current = firstAccountPayloadSnapshot;
+      setRetrySubmissionId(null);
+      actionId.current = crypto.randomUUID();
+    }
+  }, [firstAccountPayloadSnapshot]);
+  useEffect(() => {
+    if (retrySubmissionId && !firstAccountPayloadMatches.has(retrySubmissionId))
+      setRetrySubmissionId(null);
+  }, [firstAccountPayloadMatches, retrySubmissionId]);
 
   if (!loading && !profile) {
     return (
@@ -4023,37 +5008,83 @@ function OnboardingPage() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
     setError("");
-    let openingBalanceMinor: bigint;
+    let body: AccountCreatePayload;
     try {
-      openingBalanceMinor = parsePhpMinor(openingBalance || "0");
-      if (openingBalanceMinor < 0n) throw new Error("negative");
-    } catch {
-      setError(
-        "Enter a valid non-negative PHP amount with up to two decimals.",
-      );
-      return;
-    }
-    if (!name.trim()) {
-      setError("Give the account a name.");
-      return;
-    }
-    setPending(true);
-    try {
-      await createFirstAccount({
+      body = buildAccountCreatePayload(
         type,
         name,
-        openingBalanceMinor: openingBalanceMinor.toString(),
-        ...(institution.trim() ? { institution: institution.trim() } : {}),
-      });
-      navigate("/app", { replace: true });
+        institution,
+        openingBalance,
+        "",
+      );
     } catch (caught) {
       setError(
+        caught instanceof Error ? caught.message : "Check the account details.",
+      );
+      return;
+    }
+    if (!profile || !csrfToken) {
+      setError("Your session must be verified before creating the account.");
+      return;
+    }
+    submissionInFlight.current = true;
+    setPending(true);
+    let idempotencyKey: string | null = null;
+    let requestAttempted = false;
+    try {
+      const submission = await beginPendingSubmission(
+        profile.user.id,
+        "onboarding:first-account",
+        retrySubmissionId ?? actionId.current,
+        body,
+        Boolean(retrySubmissionId),
+      );
+      actionId.current = submission.id;
+      idempotencyKey = submission.key;
+      requestAttempted = true;
+      await createFirstAccount(body, submission.key);
+      clearPendingSubmission(
+        profile.user.id,
+        "onboarding:first-account",
+        submission.key,
+      );
+      refreshFirstAccountSubmissions();
+      actionId.current = crypto.randomUUID();
+      setRetrySubmissionId(null);
+      navigate("/app", { replace: true });
+    } catch (caught) {
+      const terminal =
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status);
+      if (terminal && idempotencyKey && profile) {
+        clearPendingSubmission(
+          profile.user.id,
+          "onboarding:first-account",
+          idempotencyKey,
+        );
+        actionId.current = crypto.randomUUID();
+        setRetrySubmissionId(null);
+        refreshFirstAccountSubmissions();
+      }
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The first account could not be created.",
+          : "The first account could not be created.";
+      const uncertain =
+        requestAttempted &&
+        (!(caught instanceof ApiRequestError) ||
+          caught.status === 408 ||
+          caught.status >= 500);
+      setError(
+        uncertain
+          ? `The first-account result could not be confirmed. Retry with the same details to safely recover it. ${message}`
+          : message,
       );
+      if (uncertain) refreshFirstAccountSubmissions();
     } finally {
+      submissionInFlight.current = false;
       setPending(false);
     }
   }
@@ -4148,6 +5179,17 @@ function OnboardingPage() {
             PHP · up to 2 decimal places · can be zero
           </p>
         </div>
+        <PendingSubmissionRecovery
+          matches={submissionMatches}
+          selectedId={retrySubmissionId}
+          operationLabel="first-account creation"
+          canRetry={(id) => firstAccountPayloadMatches.has(id)}
+          onSelect={setRetrySubmissionId}
+          onStartNew={() => {
+            actionId.current = crypto.randomUUID();
+            setRetrySubmissionId(null);
+          }}
+        />
         {error ? (
           <p className="form-error" role="alert">
             {error}
@@ -4158,7 +5200,11 @@ function OnboardingPage() {
           type="submit"
           disabled={pending || loading}
         >
-          {pending ? "Creating account…" : "Create first account"}
+          {pending
+            ? "Creating account…"
+            : retrySubmissionId
+              ? "Retry first-account creation"
+              : "Create first account"}
         </button>
       </form>
     </section>
@@ -4228,6 +5274,71 @@ type QuickAddCategory = {
   archivedAt: string | null;
 };
 
+type QuickAddSubmissionFields = {
+  mode: QuickAddMode;
+  sourceAccountId: string;
+  destinationAccountId: string;
+  categoryId: string;
+  feeCategoryId: string;
+  amount: string;
+  fee: string;
+  note: string;
+  occurredOn: string;
+};
+
+function parsePositiveMinor(value: string, label: string): string {
+  let parsed: bigint;
+  try {
+    parsed = parsePhpMinor(value);
+  } catch {
+    throw new Error(`${label} must be PHP with up to two decimal places.`);
+  }
+  if (parsed <= 0n) throw new Error(`${label} must be greater than zero.`);
+  return parsed.toString();
+}
+
+function buildQuickAddPayload(
+  fields: QuickAddSubmissionFields,
+  acknowledgeNegativeBalance = false,
+) {
+  if (!fields.sourceAccountId) throw new Error("Choose an account.");
+  if (!fields.occurredOn) throw new Error("Choose the transaction date.");
+  const amountMinor = parsePositiveMinor(fields.amount, "Amount");
+  const common = {
+    occurredOn: fields.occurredOn,
+    ...(fields.note.trim() ? { note: fields.note.trim() } : {}),
+  };
+  if (fields.mode === "TRANSFER") {
+    if (!fields.destinationAccountId)
+      throw new Error("Choose a destination account.");
+    if (fields.destinationAccountId === fields.sourceAccountId)
+      throw new Error("Choose two different accounts.");
+    return {
+      kind: "TRANSFER" as const,
+      fromAccountId: fields.sourceAccountId,
+      toAccountId: fields.destinationAccountId,
+      amountMinor,
+      ...(fields.fee.trim()
+        ? { feeMinor: parsePositiveMinor(fields.fee, "Transfer fee") }
+        : {}),
+      ...(fields.feeCategoryId ? { feeCategoryId: fields.feeCategoryId } : {}),
+      ...(acknowledgeNegativeBalance
+        ? { acknowledgeNegativeBalance: true }
+        : {}),
+      ...common,
+    };
+  }
+  if (!fields.categoryId) throw new Error("Choose a category.");
+  return {
+    kind: fields.mode,
+    sourceAccountId: fields.sourceAccountId,
+    categoryId: fields.categoryId,
+    amountMinor,
+    ...(acknowledgeNegativeBalance ? { acknowledgeNegativeBalance: true } : {}),
+    ...common,
+  };
+}
+
 function QuickAddPage() {
   const { profile, csrfToken } = useAuth();
   const location = useLocation();
@@ -4248,13 +5359,19 @@ function QuickAddPage() {
     profile?.serverToday ?? "",
   );
   const [loading, setLoading] = useState(true);
+  const [referencesError, setReferencesError] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [retrySubmissionId, setRetrySubmissionId] = useState<string | null>(
+    null,
+  );
   const [negativeConfirmation, setNegativeConfirmation] = useState(false);
   const [hasEdited, setHasEdited] = useState(false);
   const hasEditedRef = useRef(false);
   const dateEditedRef = useRef(false);
+  const loadSequence = useRef(0);
   const submissionInFlight = useRef(false);
+  const actionId = useRef<string>(crypto.randomUUID());
   const sheetRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -4264,6 +5381,61 @@ function QuickAddPage() {
       returnTo !== location.pathname,
   );
   const isSheetReady = isSheet && Boolean(profile);
+  const quickAddFields = useMemo<QuickAddSubmissionFields>(
+    () => ({
+      mode,
+      sourceAccountId,
+      destinationAccountId,
+      categoryId,
+      feeCategoryId,
+      amount,
+      fee,
+      note,
+      occurredOn,
+    }),
+    [
+      mode,
+      sourceAccountId,
+      destinationAccountId,
+      categoryId,
+      feeCategoryId,
+      amount,
+      fee,
+      note,
+      occurredOn,
+    ],
+  );
+  const quickAddPayload = useMemo(() => {
+    try {
+      return buildQuickAddPayload(quickAddFields);
+    } catch {
+      return null;
+    }
+  }, [quickAddFields]);
+  const quickAddPayloadSnapshot = quickAddPayload
+    ? JSON.stringify(quickAddPayload)
+    : null;
+  const {
+    entries: quickAddSubmissionMatches,
+    payloadMatches: quickAddPayloadMatches,
+    refresh: refreshQuickAddSubmissions,
+  } = usePendingSubmissionMatches(
+    profile?.user.id,
+    "transaction",
+    quickAddPayload,
+  );
+  const previousQuickAddPayload = useRef(quickAddPayloadSnapshot);
+  useEffect(() => {
+    if (previousQuickAddPayload.current !== quickAddPayloadSnapshot) {
+      previousQuickAddPayload.current = quickAddPayloadSnapshot;
+      setRetrySubmissionId(null);
+      actionId.current = crypto.randomUUID();
+    }
+  }, [quickAddPayloadSnapshot]);
+  useEffect(() => {
+    if (retrySubmissionId && !quickAddPayloadMatches.has(retrySubmissionId))
+      setRetrySubmissionId(null);
+  }, [quickAddPayloadMatches, retrySubmissionId]);
 
   const closeSheet = useCallback(() => {
     if (hasEdited && !window.confirm("Discard this unfinished transaction?")) {
@@ -4331,42 +5503,69 @@ function QuickAddPage() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasEdited]);
 
-  useEffect(() => {
-    if (!profile) {
+  const ownerId = profile?.user.id;
+  const loadReferences = useCallback(async () => {
+    if (!ownerId) {
+      loadSequence.current += 1;
+      setAccounts([]);
+      setCategories([]);
       setLoading(false);
+      setReferencesError("");
       return;
     }
-    void Promise.all([
-      apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
-      apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
-      apiRequest<Profile>("/me"),
-    ])
-      .then(([accountResult, categoryResult, currentProfile]) => {
-        setBusinessToday(currentProfile.serverToday);
-        if (!dateEditedRef.current) setOccurredOn(currentProfile.serverToday);
-        const activeAccounts = accountResult.accounts.filter(
-          (account) => !account.archivedAt,
-        );
-        const activeCategories = categoryResult.categories.filter(
-          (category) => !category.archivedAt,
-        );
-        setAccounts(activeAccounts);
-        setCategories(activeCategories);
-        setSourceAccountId((current) => current || activeAccounts[0]?.id || "");
-        setDestinationAccountId(
-          (current) => current || activeAccounts[1]?.id || "",
-        );
-        setCategoryId((current) => current || "");
-      })
-      .catch((caught) => {
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Saved accounts and categories could not be loaded.",
-        );
-      })
-      .finally(() => setLoading(false));
-  }, [profile]);
+    const sequence = ++loadSequence.current;
+    setLoading(true);
+    setReferencesError("");
+    try {
+      const [accountResult, categoryResult, currentProfile] = await Promise.all(
+        [
+          apiRequest<{ accounts: QuickAddAccount[] }>("/accounts"),
+          apiRequest<{ categories: QuickAddCategory[] }>("/categories"),
+          apiRequest<Profile>("/me"),
+        ],
+      );
+      if (sequence !== loadSequence.current) return;
+      setBusinessToday(currentProfile.serverToday);
+      if (!dateEditedRef.current && !hasEditedRef.current)
+        setOccurredOn(currentProfile.serverToday);
+      const activeAccounts = accountResult.accounts.filter(
+        (account) => !account.archivedAt,
+      );
+      const activeCategories = categoryResult.categories.filter(
+        (category) => !category.archivedAt,
+      );
+      setAccounts(activeAccounts);
+      setCategories(activeCategories);
+      setSourceAccountId((current) => current || activeAccounts[0]?.id || "");
+      setDestinationAccountId(
+        (current) => current || activeAccounts[1]?.id || "",
+      );
+      setCategoryId((current) => current || "");
+    } catch (caught) {
+      if (sequence !== loadSequence.current) return;
+      setReferencesError(
+        caught instanceof Error
+          ? caught.message
+          : "Saved accounts and categories could not be loaded.",
+      );
+    } finally {
+      if (sequence === loadSequence.current) setLoading(false);
+    }
+  }, [ownerId]);
+
+  useEffect(() => {
+    void loadReferences();
+    return () => {
+      loadSequence.current += 1;
+    };
+  }, [loadReferences]);
+
+  useEffect(() => {
+    if (!profile) return;
+    setBusinessToday(profile.serverToday);
+    if (!dateEditedRef.current && !hasEditedRef.current)
+      setOccurredOn(profile.serverToday);
+  }, [profile?.serverToday, ownerId]);
 
   const visibleCategories = categories.filter((category) =>
     mode === "TRANSFER" ? category.kind === "EXPENSE" : category.kind === mode,
@@ -4378,22 +5577,10 @@ function QuickAddPage() {
     (category) => category.kind === "EXPENSE",
   );
 
-  function parsePositive(value: string, label: string): bigint {
-    let parsed: bigint;
-    try {
-      parsed = parsePhpMinor(value);
-    } catch {
-      throw new Error(`${label} must be PHP with up to two decimal places.`);
-    }
-    if (parsed <= 0n) throw new Error(`${label} must be greater than zero.`);
-    return parsed;
-  }
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function saveTransaction(acknowledgeNegativeBalance = false) {
     if (submissionInFlight.current) return;
     setError("");
-    setNegativeConfirmation(false);
+    if (!acknowledgeNegativeBalance) setNegativeConfirmation(false);
     if (!isOnline) {
       setError("You are offline. Reconnect before recording a transaction.");
       return;
@@ -4402,51 +5589,22 @@ function QuickAddPage() {
     let responseReceived = false;
     let outcomeUnknown = false;
     try {
-      const amountMinor = parsePositive(amount, "Amount").toString();
       if (!profile || !csrfToken)
         throw new Error("Your session needs to be refreshed.");
-      if (!sourceAccountId) throw new Error("Choose an account.");
-      if (!occurredOn) throw new Error("Choose the transaction date.");
-      const common = {
-        occurredOn,
-        ...(note.trim() ? { note: note.trim() } : {}),
-      };
-      const body =
-        mode === "TRANSFER"
-          ? {
-              kind: "TRANSFER" as const,
-              fromAccountId: sourceAccountId,
-              toAccountId: destinationAccountId,
-              amountMinor,
-              ...(fee.trim()
-                ? { feeMinor: parsePositive(fee, "Transfer fee").toString() }
-                : {}),
-              ...(feeCategoryId ? { feeCategoryId } : {}),
-              ...common,
-            }
-          : {
-              kind: mode,
-              sourceAccountId,
-              categoryId,
-              amountMinor,
-              ...common,
-            };
-      if (mode !== "TRANSFER" && !categoryId) {
-        throw new Error("Choose a category.");
-      }
-      if (mode === "TRANSFER" && !destinationAccountId) {
-        throw new Error("Choose a destination account.");
-      }
-      if (mode === "TRANSFER" && destinationAccountId === sourceAccountId) {
-        throw new Error("Choose two different accounts.");
-      }
+      const body = buildQuickAddPayload(
+        quickAddFields,
+        acknowledgeNegativeBalance,
+      );
       submissionInFlight.current = true;
       setPending(true);
-      const idempotencyKey = await pendingSubmissionKey(
+      const submission = await beginPendingSubmission(
         profile.user.id,
         "transaction",
+        retrySubmissionId ?? actionId.current,
         body,
+        Boolean(retrySubmissionId),
       );
+      actionId.current = submission.id;
       requestAttempted = true;
       const response = await fetch("/api/v1/transactions", {
         method: "POST",
@@ -4454,7 +5612,7 @@ function QuickAddPage() {
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
-          "idempotency-key": idempotencyKey,
+          "idempotency-key": submission.key,
         },
         body: JSON.stringify(body),
       });
@@ -4470,15 +5628,31 @@ function QuickAddPage() {
           clearPendingSubmission(
             profile.user.id,
             "transaction",
-            idempotencyKey,
+            submission.key,
           );
+          actionId.current = crypto.randomUUID();
+          setRetrySubmissionId(null);
+          refreshQuickAddSubmissions();
         }
-        if (response.status === 409 && message.includes("negative")) {
+        if (
+          response.status === 409 &&
+          message.toLowerCase().includes("negative")
+        ) {
+          clearPendingSubmission(
+            profile.user.id,
+            "transaction",
+            submission.key,
+          );
+          actionId.current = crypto.randomUUID();
+          setRetrySubmissionId(null);
           setNegativeConfirmation(true);
         }
         throw new Error(message);
       }
-      clearPendingSubmission(profile.user.id, "transaction", idempotencyKey);
+      clearPendingSubmission(profile.user.id, "transaction", submission.key);
+      refreshQuickAddSubmissions();
+      actionId.current = crypto.randomUUID();
+      setRetrySubmissionId(null);
       setAmount("");
       setFee("");
       setNote("");
@@ -4494,115 +5668,31 @@ function QuickAddPage() {
           : "The transaction could not be saved.";
       const uncertain =
         outcomeUnknown || (requestAttempted && !responseReceived);
+      if (
+        message.includes("These details do not match") ||
+        message.includes("saved attempt is no longer available")
+      ) {
+        setRetrySubmissionId(null);
+      }
       setError(
         uncertain
           ? `The transaction result could not be confirmed. If it reached MoniKey, retry with the same details to recover it safely. ${message}`
           : message,
       );
+      if (uncertain) refreshQuickAddSubmissions();
     } finally {
       submissionInFlight.current = false;
       setPending(false);
     }
   }
 
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveTransaction();
+  }
+
   async function confirmNegativeBalance() {
-    if (submissionInFlight.current) return;
-    if (!csrfToken) return;
-    if (!isOnline) {
-      setError("You are offline. Reconnect before recording a transaction.");
-      return;
-    }
-    setError("");
-    submissionInFlight.current = true;
-    setPending(true);
-    let requestAttempted = false;
-    let responseReceived = false;
-    let outcomeUnknown = false;
-    try {
-      if (!profile) throw new Error("Your session needs to be refreshed.");
-      const amountMinor = parsePositive(amount, "Amount").toString();
-      const body =
-        mode === "TRANSFER"
-          ? {
-              kind: "TRANSFER" as const,
-              fromAccountId: sourceAccountId,
-              toAccountId: destinationAccountId,
-              amountMinor,
-              acknowledgeNegativeBalance: true,
-              occurredOn,
-              ...(fee.trim()
-                ? { feeMinor: parsePositive(fee, "Transfer fee").toString() }
-                : {}),
-              ...(feeCategoryId ? { feeCategoryId } : {}),
-              ...(note.trim() ? { note: note.trim() } : {}),
-            }
-          : {
-              kind: mode,
-              sourceAccountId,
-              categoryId,
-              amountMinor,
-              acknowledgeNegativeBalance: true,
-              occurredOn,
-              ...(note.trim() ? { note: note.trim() } : {}),
-            };
-      const idempotencyKey = await pendingSubmissionKey(
-        profile.user.id,
-        "transaction",
-        body,
-      );
-      requestAttempted = true;
-      const response = await fetch("/api/v1/transactions", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": csrfToken,
-          "idempotency-key": idempotencyKey,
-        },
-        body: JSON.stringify(body),
-      });
-      responseReceived = true;
-      outcomeUnknown = response.status >= 500 || response.status === 408;
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        if (isTerminalClientError(response.status)) {
-          clearPendingSubmission(
-            profile.user.id,
-            "transaction",
-            idempotencyKey,
-          );
-        }
-        throw new Error(
-          payload?.error?.message ?? "The transaction could not be saved.",
-        );
-      }
-      clearPendingSubmission(profile.user.id, "transaction", idempotencyKey);
-      setAmount("");
-      setFee("");
-      setNote("");
-      hasEditedRef.current = false;
-      dateEditedRef.current = false;
-      setHasEdited(false);
-      setNegativeConfirmation(false);
-      setError("Transaction saved.");
-    } catch (caught) {
-      const message =
-        caught instanceof Error
-          ? caught.message
-          : "The transaction could not be saved.";
-      const uncertain =
-        outcomeUnknown || (requestAttempted && !responseReceived);
-      setError(
-        uncertain
-          ? `The transaction result could not be confirmed. If it reached MoniKey, retry with the same details to recover it safely. ${message}`
-          : message,
-      );
-    } finally {
-      submissionInFlight.current = false;
-      setPending(false);
-    }
+    await saveTransaction(true);
   }
 
   if (!profile) return <QuickAddPreviewPage />;
@@ -4826,6 +5916,33 @@ function QuickAddPage() {
             />
           </label>
         </div>
+        <PendingSubmissionRecovery
+          matches={quickAddSubmissionMatches}
+          selectedId={retrySubmissionId}
+          operationLabel="transaction"
+          canRetry={(id) => quickAddPayloadMatches.has(id)}
+          onSelect={setRetrySubmissionId}
+          onStartNew={() => {
+            actionId.current = crypto.randomUUID();
+            setRetrySubmissionId(null);
+          }}
+        />
+        {referencesError ? (
+          <div className="dashboard-error" role="alert">
+            <div>
+              <strong>Accounts and categories could not be refreshed</strong>
+              <p>{referencesError}</p>
+            </div>
+            <button
+              className="quiet-button"
+              type="button"
+              onClick={() => void loadReferences()}
+              disabled={loading}
+            >
+              {loading ? "Loading…" : "Try again"}
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <p
             className={
@@ -4854,7 +5971,11 @@ function QuickAddPage() {
             type="submit"
             disabled={pending || loading || !accounts.length || !isOnline}
           >
-            {pending ? "Saving…" : `Record ${mode.toLowerCase()}`}
+            {pending
+              ? "Saving…"
+              : retrySubmissionId
+                ? "Retry saved transaction"
+                : `Record ${mode.toLowerCase()}`}
           </button>
         )}
       </form>

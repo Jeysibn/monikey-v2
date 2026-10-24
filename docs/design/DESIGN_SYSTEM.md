@@ -1,6 +1,6 @@
 # MoniKey V2 design system
 
-Status: implemented baseline; owner review on real devices remains open. The palette and route behaviors follow `MONIKEY_V2_MASTER_PLAN.md`; automated responsive/accessibility review is recorded in `docs/RELEASE_REVIEW.md` and `docs/TESTING.md`.
+Status: implemented baseline; owner review on real devices remains open. The palette and route behaviors follow `MONIKEY_V2_MASTER_PLAN.md`; automated responsive/accessibility review is recorded in `docs/qa/2026-10-23/RELEASE_REVIEW.md` and `docs/development/TESTING.md`.
 
 ## Direction
 

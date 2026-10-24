@@ -6,6 +6,7 @@ import swagger from "@fastify/swagger";
 import {
   ApiErrorResponseSchema,
   BillCreateRequestSchema,
+  BillOccurrenceQuerySchema,
   BillOccurrenceResponseSchema,
   BillOccurrencesResponseSchema,
   BillPatchRequestSchema,
@@ -30,6 +31,7 @@ import {
   FinancialAccountPatchRequestSchema,
   FinancialAccountResponseSchema,
   FinancialAccountsResponseSchema,
+  FinancialDateSchema,
   JsonExportResponseSchema,
   LoginRequestSchema,
   LoginResponseSchema,
@@ -101,7 +103,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import { withReadOnlyRepeatableReadTransaction } from "./database.js";
 import { serverTodayInManila } from "./manila-date.js";
 import { registerHealthRoutes } from "./health.js";
@@ -225,6 +227,21 @@ app.addHook("onSend", (request, reply, _payload, done) => {
 });
 
 app.setErrorHandler((error: FastifyError, request, reply) => {
+  if (error instanceof ZodError) {
+    return reply.code(400).send({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed.",
+        requestId: request.id,
+        details: error.issues.map((issue) => ({
+          path: issue.path.length
+            ? `/${issue.path.map(String).join("/")}`
+            : "/",
+          message: issue.message,
+        })),
+      },
+    });
+  }
   if (error.validation) {
     return reply.code(400).send({
       error: {
@@ -233,7 +250,14 @@ app.setErrorHandler((error: FastifyError, request, reply) => {
         requestId: request.id,
         details: error.validation.map((issue) => ({
           path: issue.instancePath || "/",
-          message: issue.message ?? "Invalid value",
+          message:
+            issue.keyword === "pattern" &&
+            ["/from", "/to"].includes(issue.instancePath ?? "") &&
+            /^\/api\/v1\/(?:bills\/occurrences|transactions|exports\/transactions\.(?:csv|json))/.test(
+              request.url,
+            )
+              ? "Enter a valid calendar date."
+              : (issue.message ?? "Invalid value"),
         })),
       },
     });
@@ -644,7 +668,7 @@ app.get(
   async (request, reply) => {
     if (!(await requireSession(request, reply))) return;
     const serverToday = serverTodayInManila();
-    return withDatabaseConnection((client) =>
+    return withDatabaseTransaction((client) =>
       readDashboardSummary(client, ownerUserId(request), serverToday),
     );
   },
@@ -680,14 +704,8 @@ app.get(
 
 const ExportQuerySchema = z
   .object({
-    from: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-    to: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
+    from: FinancialDateSchema.optional(),
+    to: FinancialDateSchema.optional(),
   })
   .strict()
   .superRefine((query, context) => {
@@ -943,6 +961,7 @@ app.delete(
             ownerUserId(request),
             transactionId,
             body,
+            serverTodayInManila(),
           ),
         }),
       ),
@@ -1825,17 +1844,6 @@ const BillListQuerySchema = z.object({
   includeArchived: z.coerce.boolean().optional().default(false),
 });
 
-const BillOccurrenceQuerySchema = z.object({
-  from: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-  to: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-});
-
 app.get(
   "/api/v1/bills",
   {
@@ -1933,7 +1941,13 @@ app.patch(
         key,
         { billId, ...body },
         async () => ({
-          bill: await updateBill(client, ownerUserId(request), billId, body),
+          bill: await updateBill(
+            client,
+            ownerUserId(request),
+            billId,
+            body,
+            serverTodayInManila(),
+          ),
         }),
       ),
     );
@@ -1973,7 +1987,7 @@ app.get(
         },
       });
     }
-    const occurrences = await withDatabaseConnection((client) =>
+    const occurrences = await withDatabaseTransaction((client) =>
       listBillOccurrences(client, ownerUserId(request), from, to, today),
     );
     reply.header("Cache-Control", "private, no-store");
