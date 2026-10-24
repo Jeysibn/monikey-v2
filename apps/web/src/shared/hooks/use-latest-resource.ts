@@ -95,6 +95,12 @@ export function useLatestResource<T>(
     };
   }, [reload]);
 
+  useEffect(() => {
+    return () => {
+      sequence.current += 1;
+    };
+  }, [key]);
+
   const current = state.key === key;
   return {
     data: current ? state.data : null,
