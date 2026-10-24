@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run build --workspace @monikey/contracts && npm run build --workspace @monikey/money && npm run typecheck --workspaces --if-present",
     "test:unit": "npm run test --workspace @monikey/money && npm run test:unit --workspace @monikey/api",
+    "test:web:unit": "tsx --test apps/web/src/shared/lib/manila-time.test.ts apps/web/src/shared/lib/pending-submissions.test.ts",
     "test:invariants": "npm run test:invariants --workspace @monikey/api",
     "test:integration": "node scripts/run-api-integration.mjs",
     "test:contracts": "npm run contracts:check",
