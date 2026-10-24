@@ -32,7 +32,11 @@ done
 
 mkdir -p "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly"
 BACKUP_ROOT=$(CDPATH= cd -- "$BACKUP_ROOT" && pwd -P)
-chmod 700 "$BACKUP_ROOT" "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly"
+# The CSI volume mount itself may remain owned by root even when the pod uses
+# fsGroup. The backup process owns the directories it creates below the mount;
+# hardening those directories is sufficient and avoids requiring root for the
+# volume root.
+chmod 700 "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly"
 exec 9>>"$BACKUP_ROOT/.backup.lock"
 if ! flock -n 9; then
   echo "backup_status=failed stage=already_running" >&2
