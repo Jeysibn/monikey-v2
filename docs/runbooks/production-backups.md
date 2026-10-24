@@ -91,7 +91,7 @@ design; it is not deployable until they exist.
 
 ## Local Docker verification
 
-The disposable test procedure is recorded in `docs/TESTING.md`. In summary, a
+The disposable test procedure is recorded in `docs/development/TESTING.md`. In summary, a
 fresh tmpfs Compose database was backed up by the non-root image, restored into
 a separately created database, checksum/archive listing were checked, daily
 and weekly retention were exercised, and a forced connection failure preserved

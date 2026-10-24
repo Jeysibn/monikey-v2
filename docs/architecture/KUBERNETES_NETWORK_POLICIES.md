@@ -48,4 +48,4 @@ selector. Narrow it to the verified server labels before promotion.
   exist. Do not add broader egress to make a failing path pass without
   identifying the required destination.
 
-See `docs/PHASE6_READINESS.md` and `docs/architecture/HOMELAB_GITOPS_AUDIT.md`.
+See `docs/release/PHASE6_READINESS.md` and `docs/architecture/HOMELAB_GITOPS_AUDIT.md`.

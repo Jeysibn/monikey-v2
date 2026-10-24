@@ -29,10 +29,7 @@ export function validateCiWorkflow(source) {
   assert.deepEqual(workflow.permissions, { contents: "read" });
 
   const jobs = workflow.jobs;
-  assert.deepEqual(Object.keys(jobs).sort(), [
-    "publish-images",
-    "validate",
-  ]);
+  assert.deepEqual(Object.keys(jobs).sort(), ["publish-images", "validate"]);
   assert.equal(jobs.validate.name, "validate");
   for (const jobName of ["validate"]) {
     assert.equal(

@@ -8,7 +8,10 @@ import { getPrismaSchemaVersion } from "./prisma-schema-version.mjs";
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "monikey-prisma-version-"));
-  await writeFile(join(directory, "migration_lock.toml"), 'provider = "postgresql"\n');
+  await writeFile(
+    join(directory, "migration_lock.toml"),
+    'provider = "postgresql"\n',
+  );
   return directory;
 }
 
@@ -35,7 +38,10 @@ test("rejects missing migrations and non-PostgreSQL migration providers", async 
       /no timestamped Prisma migrations were found/,
     );
     await mkdir(join(directory, "20260101000000_initial"));
-    await writeFile(join(directory, "migration_lock.toml"), 'provider = "mysql"\n');
+    await writeFile(
+      join(directory, "migration_lock.toml"),
+      'provider = "mysql"\n',
+    );
     await assert.rejects(
       getPrismaSchemaVersion(directory),
       /provider must be PostgreSQL/,

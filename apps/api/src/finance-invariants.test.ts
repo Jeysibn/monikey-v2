@@ -3,6 +3,10 @@ import test from "node:test";
 import fc from "fast-check";
 import { moneyMinor } from "@monikey/money";
 import {
+  BillOccurrenceQuerySchema,
+  FinancialDateSchema,
+} from "@monikey/contracts";
+import {
   assertBalancedPostings,
   type LedgerPostingInput,
 } from "./ledger/domain.js";
@@ -257,5 +261,42 @@ test("values above JavaScript safe integer boundaries remain exact strings", () 
       },
     ),
     { numRuns: 100 },
+  );
+});
+
+test("financial dates reject impossible calendar values and occurrence windows are bounded", () => {
+  for (const invalid of [
+    "2026-02-31",
+    "2026-13-01",
+    "0000-01-01",
+    "2026-04-00",
+  ]) {
+    assert.equal(
+      FinancialDateSchema.safeParse(invalid).success,
+      false,
+      invalid,
+    );
+  }
+  for (const valid of [
+    "2024-02-29",
+    "2026-10-24",
+    "0001-01-01",
+    "9999-12-31",
+  ]) {
+    assert.equal(FinancialDateSchema.safeParse(valid).success, true, valid);
+  }
+  assert.equal(
+    BillOccurrenceQuerySchema.safeParse({
+      from: "2026-01-01",
+      to: "2027-01-03",
+    }).success,
+    false,
+  );
+  assert.equal(
+    BillOccurrenceQuerySchema.safeParse({
+      from: "2026-01-01",
+      to: "2026-12-31",
+    }).success,
+    true,
   );
 });

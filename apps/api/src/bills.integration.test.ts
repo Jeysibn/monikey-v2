@@ -7,7 +7,9 @@ import {
   listBillOccurrences,
   listBills,
   payBillOccurrence,
+  updateBill,
 } from "./bills.js";
+import { deleteTransaction, editIncomeOrExpense } from "./transactions.js";
 import { runIdempotently } from "./idempotency.js";
 import { requireDatabaseUrl } from "./test-support/database-url.js";
 
@@ -209,6 +211,262 @@ test("variable bill payment requires an amount and retries idempotently", async 
       [userId],
     );
     assert.equal(posted.rows[0]?.count, "1");
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
+test("bill payment edits and voids reconcile the occurrence and retain history", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const bank = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "BANK",
+        name: "Bill correction bank",
+        openingBalanceMinor: "200000",
+      },
+      "2026-10-22",
+    );
+    const category = await client.query<{ id: string }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Utilities' LIMIT 1`,
+      [userId],
+    );
+    assert.ok(category.rows[0]?.id);
+    const bill = await createBill(client, userId, {
+      name: "Correction utility",
+      categoryId: category.rows[0]!.id,
+      suggestedAccountId: bank.id,
+      amountMode: "FIXED",
+      defaultAmountMinor: "25000",
+      dueDay: 25,
+      startOn: "2026-01-01",
+    });
+    const occurrence = (
+      await listBillOccurrences(
+        client,
+        userId,
+        "2026-10-01",
+        "2026-10-31",
+        "2026-10-24",
+      )
+    ).find((item) => item.billId === bill.id);
+    assert.ok(occurrence);
+    const paid = await payBillOccurrence(
+      client,
+      userId,
+      occurrence.id,
+      bank.id,
+      undefined,
+      "Bill payment",
+      false,
+      "2026-10-24",
+    );
+    assert.equal(paid.occurrence.status, "PAID");
+    const revised = await editIncomeOrExpense(
+      client,
+      userId,
+      paid.transaction.id,
+      {
+        kind: "EXPENSE",
+        sourceAccountId: bank.id,
+        categoryId: category.rows[0]!.id,
+        amountMinor: "20000",
+        occurredOn: "2026-10-23",
+        reason: "Corrected bill receipt",
+      },
+      "2026-10-24",
+    );
+    assert.equal(revised.transaction.currentRevision, 2);
+    const afterEdit = (
+      await listBillOccurrences(
+        client,
+        userId,
+        "2026-10-01",
+        "2026-10-31",
+        "2026-10-24",
+      )
+    ).find((item) => item.id === occurrence.id);
+    assert.equal(afterEdit?.status, "PAID");
+    assert.equal(afterEdit?.actualAmountMinor, "20000");
+
+    await deleteTransaction(
+      client,
+      userId,
+      paid.transaction.id,
+      { reason: "Void incorrect bill payment" },
+      "2026-10-24",
+    );
+    const reopened = (
+      await listBillOccurrences(
+        client,
+        userId,
+        "2026-10-01",
+        "2026-10-31",
+        "2026-10-24",
+      )
+    ).find((item) => item.id === occurrence.id);
+    assert.equal(reopened?.status, "UPCOMING");
+    assert.equal(reopened?.paidTransactionId, null);
+    assert.equal(reopened?.actualAmountMinor, null);
+
+    const history = await client.query<{ actions: string }>(
+      `SELECT string_agg(action, ',' ORDER BY sequence_number) AS actions
+         FROM bill_occurrence_payment_history
+        WHERE user_id = $1 AND occurrence_id = $2`,
+      [userId, occurrence.id],
+    );
+    assert.equal(history.rows[0]?.actions, "POSTED,EDITED,VOIDED");
+    const replacement = await payBillOccurrence(
+      client,
+      userId,
+      occurrence.id,
+      bank.id,
+      undefined,
+      "Replacement payment",
+      false,
+      "2026-10-24",
+    );
+    assert.equal(replacement.occurrence.status, "PAID");
+    assert.notEqual(replacement.transaction.id, paid.transaction.id);
+    await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
+
+test("bill edits reconcile unpaid future dates and preserve paid monthly history", async () => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const owner = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email_normalized = 'second@example.test'`,
+    );
+    assert.ok(owner.rows[0]?.id);
+    const userId = owner.rows[0]!.id;
+    const bank = await createFinancialAccount(
+      client,
+      userId,
+      {
+        type: "BANK",
+        name: "Bill schedule bank",
+        openingBalanceMinor: "300000",
+      },
+      "2026-10-22",
+    );
+    const category = await client.query<{ id: string }>(
+      `SELECT id FROM categories WHERE user_id = $1 AND kind = 'EXPENSE' AND name = 'Utilities' LIMIT 1`,
+      [userId],
+    );
+    assert.ok(category.rows[0]?.id);
+    const bill = await createBill(client, userId, {
+      name: "Schedule changing bill",
+      categoryId: category.rows[0]!.id,
+      suggestedAccountId: bank.id,
+      amountMode: "FIXED",
+      defaultAmountMinor: "10000",
+      dueDay: 25,
+      startOn: "2026-01-01",
+    });
+    const october = (
+      await listBillOccurrences(
+        client,
+        userId,
+        "2026-10-01",
+        "2026-10-31",
+        "2026-10-24",
+      )
+    ).find((item) => item.billId === bill.id);
+    assert.ok(october);
+    await payBillOccurrence(
+      client,
+      userId,
+      october.id,
+      bank.id,
+      undefined,
+      undefined,
+      false,
+      "2026-10-24",
+    );
+    await listBillOccurrences(
+      client,
+      userId,
+      "2026-11-01",
+      "2026-11-30",
+      "2026-10-24",
+    );
+    await updateBill(
+      client,
+      userId,
+      bill.id,
+      { dueDay: 27, defaultAmountMinor: "20000" },
+      "2026-10-24",
+    );
+    const currentAndFuture = await listBillOccurrences(
+      client,
+      userId,
+      "2026-10-01",
+      "2026-12-31",
+      "2026-10-24",
+    );
+    const billOccurrences = currentAndFuture.filter(
+      (item) => item.billId === bill.id,
+    );
+    assert.deepEqual(
+      billOccurrences.map((item) => [
+        item.dueOn,
+        item.expectedAmountMinor,
+        item.status,
+      ]),
+      [
+        ["2026-10-25", "10000", "PAID"],
+        ["2026-11-27", "20000", "UPCOMING"],
+        ["2026-12-27", "20000", "UPCOMING"],
+      ],
+    );
+    await updateBill(
+      client,
+      userId,
+      bill.id,
+      { startOn: "2026-11-01", endOn: "2026-12-31" },
+      "2026-10-24",
+    );
+    const dateChanged = await listBillOccurrences(
+      client,
+      userId,
+      "2026-10-01",
+      "2026-12-31",
+      "2026-10-24",
+    );
+    assert.deepEqual(
+      dateChanged
+        .filter((item) => item.billId === bill.id)
+        .map((item) => item.dueOn),
+      ["2026-10-25", "2026-11-27", "2026-12-27"],
+    );
+    await updateBill(
+      client,
+      userId,
+      bill.id,
+      { status: "PAUSED" },
+      "2026-10-24",
+    );
+    const pausedUpcoming = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM bill_occurrences
+        WHERE user_id = $1 AND bill_id = $2 AND status IN ('UPCOMING', 'OVERDUE')`,
+      [userId, bill.id],
+    );
+    assert.equal(pausedUpcoming.rows[0]?.count, "0");
     await client.query("SET CONSTRAINTS ALL IMMEDIATE");
   } finally {
     await client.query("ROLLBACK");

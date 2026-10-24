@@ -521,10 +521,11 @@ export interface paths {
                   /** @enum {string} */
                   status: "POSTED" | "VOID";
                   currentRevision: number;
+                  /** Format: date */
                   occurredOn: string;
                   categoryId: string | null;
                   refundedTransactionId: string | null;
-                  note: string | null;
+                  note: null | string;
                 };
                 revision: {
                   [key: string]: unknown;
@@ -532,7 +533,8 @@ export interface paths {
                 /** Format: date-time */
                 createdAt: string;
               }[];
-              nextCursor: string | null;
+              nextCursor: null | string;
+              /** Format: date */
               serverToday: string;
             };
           };
@@ -793,9 +795,11 @@ export interface paths {
                 /** Format: uuid */
                 categoryId: string;
                 amountMinor: string;
+                /** Format: date */
                 occurredOn: string;
                 note?: string;
                 acknowledgeNegativeBalance?: boolean;
+                acknowledgeCardCreditBalance?: boolean;
               }
             | {
                 /** @enum {string} */
@@ -808,6 +812,7 @@ export interface paths {
                 feeMinor?: string;
                 /** Format: uuid */
                 feeCategoryId?: string;
+                /** Format: date */
                 occurredOn: string;
                 note?: string;
                 acknowledgeNegativeBalance?: boolean;
@@ -820,8 +825,11 @@ export interface paths {
                 /** Format: uuid */
                 refundedTransactionId: string;
                 amountMinor: string;
+                /** Format: date */
                 occurredOn: string;
                 note?: string;
+                acknowledgeNegativeBalance?: boolean;
+                acknowledgeCardCreditBalance?: boolean;
               }
             | {
                 /** @enum {string} */
@@ -831,9 +839,11 @@ export interface paths {
                 /** @enum {string} */
                 direction: "INCREASE" | "DECREASE";
                 amountMinor: string;
+                /** Format: date */
                 occurredOn: string;
                 note?: string;
                 acknowledgeNegativeBalance?: boolean;
+                acknowledgeCardCreditBalance?: boolean;
               };
         };
       };
@@ -861,6 +871,7 @@ export interface paths {
                     /** @enum {string} */
                     status: "POSTED" | "VOID";
                     currentRevision: number;
+                    /** Format: date */
                     occurredOn: string;
                     categoryId: string | null;
                     refundedTransactionId: string | null;
@@ -900,6 +911,7 @@ export interface paths {
                     /** @enum {string} */
                     status: "POSTED" | "VOID";
                     currentRevision: number;
+                    /** Format: date */
                     occurredOn: string;
                     categoryId: string | null;
                     refundedTransactionId: string | null;
@@ -1217,12 +1229,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -1240,11 +1252,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 expectedAmountMinor: string | null;
                 actualAmountMinor: string | null;
+                /** Format: date */
                 dueOn: string;
                 /** @enum {string} */
                 status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
                 paidTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               }[];
               recentActivity: {
                 transaction: {
@@ -1262,10 +1275,11 @@ export interface paths {
                   /** @enum {string} */
                   status: "POSTED" | "VOID";
                   currentRevision: number;
+                  /** Format: date */
                   occurredOn: string;
                   categoryId: string | null;
                   refundedTransactionId: string | null;
-                  note: string | null;
+                  note: null | string;
                 };
                 revision: {
                   [key: string]: unknown;
@@ -1273,6 +1287,7 @@ export interface paths {
                 /** Format: date-time */
                 createdAt: string;
               }[];
+              /** Format: date */
               serverToday: string;
             };
           };
@@ -2115,12 +2130,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -2149,11 +2164,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 defaultAmountMinor: string | null;
                 dueDay: number;
+                /** Format: date */
                 startOn: string;
                 endOn: string | null;
                 /** @enum {string} */
                 status: "ACTIVE" | "PAUSED" | "ARCHIVED";
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -2164,14 +2180,16 @@ export interface paths {
                 id: string;
                 /** Format: uuid */
                 cardAccountId: string;
+                /** Format: date */
                 statementDate: string;
                 periodStart: string | null;
                 periodEnd: string | null;
                 amountDueMinor: string;
                 allocatedMinor: string;
                 remainingDueMinor: string;
+                /** Format: date */
                 paymentDueDate: string;
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -2481,10 +2499,11 @@ export interface paths {
                   /** @enum {string} */
                   status: "POSTED" | "VOID";
                   currentRevision: number;
+                  /** Format: date */
                   occurredOn: string;
                   categoryId: string | null;
                   refundedTransactionId: string | null;
-                  note: string | null;
+                  note: null | string;
                 };
                 revision: {
                   [key: string]: unknown;
@@ -2492,7 +2511,8 @@ export interface paths {
                 /** Format: date-time */
                 createdAt: string;
               }[];
-              nextCursor: string | null;
+              nextCursor: null | string;
+              /** Format: date */
               serverToday: string;
             };
           };
@@ -2780,10 +2800,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
             };
           };
@@ -3040,6 +3061,8 @@ export interface paths {
         content: {
           "application/json": {
             reason: string;
+            acknowledgeNegativeBalance?: boolean;
+            acknowledgeCardCreditBalance?: boolean;
           };
         };
       };
@@ -3066,10 +3089,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
             };
           };
@@ -3332,9 +3356,11 @@ export interface paths {
             /** Format: uuid */
             categoryId: string;
             amountMinor: string;
+            /** Format: date */
             occurredOn: string;
             note?: string;
             acknowledgeNegativeBalance?: boolean;
+            acknowledgeCardCreditBalance?: boolean;
             reason: string;
           };
         };
@@ -3362,10 +3388,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
               account: {
                 /** Format: uuid */
@@ -3373,12 +3400,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -3664,10 +3691,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
               revisions: {
                 version: number;
@@ -3677,7 +3705,7 @@ export interface paths {
                 after: {
                   [key: string]: unknown;
                 };
-                reason: string | null;
+                reason: null | string;
                 /** Format: date-time */
                 createdAt: string;
               }[];
@@ -4510,6 +4538,7 @@ export interface paths {
                 theme: "system" | "light" | "dark";
                 hideBalances: boolean;
               };
+              /** Format: date */
               serverToday: string;
               /** @enum {string} */
               onboardingStatus: "NEEDS_FIRST_ACCOUNT" | "READY";
@@ -5091,12 +5120,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -5376,12 +5405,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -5662,12 +5691,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -5947,12 +5976,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -6233,12 +6262,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -6518,12 +6547,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -7649,9 +7678,11 @@ export interface paths {
             /** Format: uuid */
             statementId?: string;
             amountMinor: string;
+            /** Format: date */
             occurredOn: string;
             note?: string;
             acknowledgeNegativeBalance?: boolean;
+            acknowledgeCardCreditBalance?: boolean;
           };
         };
       };
@@ -7678,10 +7709,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
               cardAccount: {
                 /** Format: uuid */
@@ -7689,12 +7721,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -7705,12 +7737,12 @@ export interface paths {
                 /** @enum {string} */
                 type: "CASH" | "BANK" | "EWALLET" | "CREDIT_CARD";
                 name: string;
-                institution: string | null;
+                institution: null | string;
                 /** @enum {string} */
                 currency: "PHP";
                 balanceMinor: string;
                 sortOrder: number;
-                creditLimitMinor: string | null;
+                creditLimitMinor: null | string;
                 statementDay: number | null;
                 dueDay: number | null;
                 archivedAt: string | null;
@@ -7989,14 +8021,16 @@ export interface paths {
                 id: string;
                 /** Format: uuid */
                 cardAccountId: string;
+                /** Format: date */
                 statementDate: string;
                 periodStart: string | null;
                 periodEnd: string | null;
                 amountDueMinor: string;
                 allocatedMinor: string;
                 remainingDueMinor: string;
+                /** Format: date */
                 paymentDueDate: string;
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -8255,10 +8289,14 @@ export interface paths {
       requestBody: {
         content: {
           "application/json": {
+            /** Format: date */
             statementDate: string;
+            /** Format: date */
             periodStart?: string;
+            /** Format: date */
             periodEnd?: string;
             amountDueMinor: string;
+            /** Format: date */
             paymentDueDate: string;
             note?: string;
           };
@@ -8277,14 +8315,16 @@ export interface paths {
                 id: string;
                 /** Format: uuid */
                 cardAccountId: string;
+                /** Format: date */
                 statementDate: string;
                 periodStart: string | null;
                 periodEnd: string | null;
                 amountDueMinor: string;
                 allocatedMinor: string;
                 remainingDueMinor: string;
+                /** Format: date */
                 paymentDueDate: string;
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -8562,10 +8602,12 @@ export interface paths {
       requestBody: {
         content: {
           "application/json": {
+            /** Format: date */
             statementDate?: string;
             periodStart?: string | null;
             periodEnd?: string | null;
             amountDueMinor?: string;
+            /** Format: date */
             paymentDueDate?: string;
             note?: string | null;
           };
@@ -8584,14 +8626,16 @@ export interface paths {
                 id: string;
                 /** Format: uuid */
                 cardAccountId: string;
+                /** Format: date */
                 statementDate: string;
                 periodStart: string | null;
                 periodEnd: string | null;
                 amountDueMinor: string;
                 allocatedMinor: string;
                 remainingDueMinor: string;
+                /** Format: date */
                 paymentDueDate: string;
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -8873,11 +8917,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 defaultAmountMinor: string | null;
                 dueDay: number;
+                /** Format: date */
                 startOn: string;
                 endOn: string | null;
                 /** @enum {string} */
                 status: "ACTIVE" | "PAUSED" | "ARCHIVED";
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -9143,7 +9188,9 @@ export interface paths {
             amountMode: "FIXED" | "VARIABLE";
             defaultAmountMinor?: string;
             dueDay: number;
+            /** Format: date */
             startOn: string;
+            /** Format: date */
             endOn?: string;
             note?: string;
           };
@@ -9168,11 +9215,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 defaultAmountMinor: string | null;
                 dueDay: number;
+                /** Format: date */
                 startOn: string;
                 endOn: string | null;
                 /** @enum {string} */
                 status: "ACTIVE" | "PAUSED" | "ARCHIVED";
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -9457,6 +9505,7 @@ export interface paths {
             amountMode?: "FIXED" | "VARIABLE";
             defaultAmountMinor?: string | null;
             dueDay?: number;
+            /** Format: date */
             startOn?: string;
             endOn?: string | null;
             /** @enum {string} */
@@ -9484,11 +9533,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 defaultAmountMinor: string | null;
                 dueDay: number;
+                /** Format: date */
                 startOn: string;
                 endOn: string | null;
                 /** @enum {string} */
                 status: "ACTIVE" | "PAUSED" | "ARCHIVED";
-                note: string | null;
+                note: null | string;
                 /** Format: date-time */
                 createdAt: string;
                 /** Format: date-time */
@@ -9773,12 +9823,14 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 expectedAmountMinor: string | null;
                 actualAmountMinor: string | null;
+                /** Format: date */
                 dueOn: string;
                 /** @enum {string} */
                 status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
                 paidTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               }[];
+              /** Format: date */
               serverToday: string;
             };
           };
@@ -10078,11 +10130,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 expectedAmountMinor: string | null;
                 actualAmountMinor: string | null;
+                /** Format: date */
                 dueOn: string;
                 /** @enum {string} */
                 status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
                 paidTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
               transaction: {
                 /** Format: uuid */
@@ -10099,10 +10152,11 @@ export interface paths {
                 /** @enum {string} */
                 status: "POSTED" | "VOID";
                 currentRevision: number;
+                /** Format: date */
                 occurredOn: string;
                 categoryId: string | null;
                 refundedTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
             };
           };
@@ -10390,11 +10444,12 @@ export interface paths {
                 amountMode: "FIXED" | "VARIABLE";
                 expectedAmountMinor: string | null;
                 actualAmountMinor: string | null;
+                /** Format: date */
                 dueOn: string;
                 /** @enum {string} */
                 status: "UPCOMING" | "OVERDUE" | "PAID" | "SKIPPED";
                 paidTransactionId: string | null;
-                note: string | null;
+                note: null | string;
               };
             };
           };
@@ -10672,7 +10727,7 @@ export interface paths {
                 expiresAt: string;
                 /** Format: date-time */
                 lastSeenAt: string;
-                userAgent: string | null;
+                userAgent: null | string;
                 current: boolean;
               }[];
             };

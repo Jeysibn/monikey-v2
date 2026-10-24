@@ -652,9 +652,15 @@ test("transfer commands move balances and post optional fees as spending", async
       TransactionConflictError,
     );
     await assert.rejects(
-      deleteTransaction(client, userId, originalExpense.transaction.id, {
-        reason: "Void expense with a posted refund",
-      }),
+      deleteTransaction(
+        client,
+        userId,
+        originalExpense.transaction.id,
+        {
+          reason: "Void expense with a posted refund",
+        },
+        "2026-10-24",
+      ),
       TransactionConflictError,
     );
 
@@ -1290,6 +1296,7 @@ test("edits and logical deletes reverse journals and preserve audit revisions", 
       userId,
       original.transaction.id,
       { reason: "Remove duplicate entry" },
+      "2026-10-24",
     );
     assert.equal(voided.status, "VOID");
     assert.equal(voided.currentRevision, 3);
@@ -1311,9 +1318,15 @@ test("edits and logical deletes reverse journals and preserve audit revisions", 
     );
     assert.equal(journals.rows[0]?.count, "4");
     await assert.rejects(
-      deleteTransaction(client, userId, original.transaction.id, {
-        reason: "Try again",
-      }),
+      deleteTransaction(
+        client,
+        userId,
+        original.transaction.id,
+        {
+          reason: "Try again",
+        },
+        "2026-10-24",
+      ),
       TransactionConflictError,
     );
   } finally {

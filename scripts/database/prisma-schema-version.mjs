@@ -2,7 +2,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 const migrationsDirectory = join(repositoryRoot, "prisma", "migrations");
 
 export async function getPrismaSchemaVersion(directory = migrationsDirectory) {
@@ -28,7 +30,10 @@ export async function getPrismaSchemaVersion(directory = migrationsDirectory) {
   return migrations.at(-1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   getPrismaSchemaVersion()
     .then((version) => console.log(version))
     .catch((error) => {

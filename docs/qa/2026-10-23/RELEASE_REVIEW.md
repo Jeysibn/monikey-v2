@@ -47,7 +47,7 @@ This is an automated release baseline and interaction sweep. A full WCAG audit, 
 
 ## Current five-width result — 2026-10-23
 
-The latest run covered 55 route/viewport combinations: nine authenticated routes plus Account Detail and Card Statements at 360, 390, 768, 1440, and 1920px. All 110 light/dark axe scans, configured with WCAG 2.0 A/AA and WCAG 2.2 AA tags, reported zero violations. Keyboard focus, reduced motion, overflow, accessible naming, 44px target size, and page/API error checks passed at every width. The harness now separately fails on browser console errors, unhandled promise rejections, and failed API network requests; all three counts were zero across the full matrix. A previous five-width run recorded report API p95 observations of 19ms at 360px, 16ms at 390px, 12ms at 768px, 10ms at 1440px, and 12ms at 1920px; those local development timings vary by run and are not production budgets. See the full record in `docs/TESTING.md`. Axe automation is not a full WCAG conformance audit. Actual-device, screen-reader, human contrast, and owner sign-off remain open.
+The latest run covered 55 route/viewport combinations: nine authenticated routes plus Account Detail and Card Statements at 360, 390, 768, 1440, and 1920px. All 110 light/dark axe scans, configured with WCAG 2.0 A/AA and WCAG 2.2 AA tags, reported zero violations. Keyboard focus, reduced motion, overflow, accessible naming, 44px target size, and page/API error checks passed at every width. The harness now separately fails on browser console errors, unhandled promise rejections, and failed API network requests; all three counts were zero across the full matrix. A previous five-width run recorded report API p95 observations of 19ms at 360px, 16ms at 390px, 12ms at 768px, 10ms at 1440px, and 12ms at 1920px; those local development timings vary by run and are not production budgets. See the full record in `docs/qa/history/TESTING_HISTORY.md`. Axe automation is not a full WCAG conformance audit. Actual-device, screen-reader, human contrast, and owner sign-off remain open.
 
 ### Effect-level reduced-motion verification — 2026-10-23
 
@@ -61,7 +61,7 @@ screen-reader, or physical-device review.
 
 ### 10,000-transaction Activity scale review — 2026-10-23
 
-After correcting the disposable fixture to post against the source account named in each transaction revision, the fresh current-worktree scale run returned 10,000 unique transaction IDs in 100 pages over 5,022 ms, with 33 ms API page p95. Playwright checked the account ledger-derived balance, rendered 25 rows initially and 50 after “Load more”, and verified a second user could not see the owner transactions or scale account. This is a local development sample, not representative homelab hardware or a production SLO; see `docs/TESTING.md` for the seeding guards and full procedure.
+After correcting the disposable fixture to post against the source account named in each transaction revision, the fresh current-worktree scale run returned 10,000 unique transaction IDs in 100 pages over 5,022 ms, with 33 ms API page p95. Playwright checked the account ledger-derived balance, rendered 25 rows initially and 50 after “Load more”, and verified a second user could not see the owner transactions or scale account. This is a local development sample, not representative homelab hardware or a production SLO; see `docs/qa/history/TESTING_HISTORY.md` for the seeding guards and full procedure.
 
 ## Current owner review screenshots — 2026-10-23
 

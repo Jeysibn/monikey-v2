@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { getPrismaSchemaVersion } from "./prisma-schema-version.mjs";
+import { getPrismaSchemaVersion } from "../database/prisma-schema-version.mjs";
 
 export const releaseImages = [
   "web",

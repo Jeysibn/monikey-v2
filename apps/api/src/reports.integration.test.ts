@@ -242,9 +242,15 @@ test("monthly report totals and categories use one repeatable-read snapshot", as
       [userId, probeNote],
     );
     for (const staleProbe of staleProbes.rows) {
-      await deleteTransaction(setupClient, userId, staleProbe.id, {
-        reason: "Clean up a prior report snapshot test run.",
-      });
+      await deleteTransaction(
+        setupClient,
+        userId,
+        staleProbe.id,
+        {
+          reason: "Clean up a prior report snapshot test run.",
+        },
+        "2026-10-24",
+      );
     }
     const existingAccount = await setupClient.query<{ id: string }>(
       `SELECT id FROM financial_accounts
@@ -288,9 +294,15 @@ test("monthly report totals and categories use one repeatable-read snapshot", as
     const cleanupClient = await pool.connect();
     try {
       await cleanupClient.query("BEGIN");
-      await deleteTransaction(cleanupClient, userId, probeTransactionId, {
-        reason: "Clean up the report snapshot integration probe.",
-      });
+      await deleteTransaction(
+        cleanupClient,
+        userId,
+        probeTransactionId,
+        {
+          reason: "Clean up the report snapshot integration probe.",
+        },
+        "2026-10-24",
+      );
       await cleanupClient.query("COMMIT");
     } catch (error) {
       await cleanupClient.query("ROLLBACK").catch(() => undefined);

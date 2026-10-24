@@ -4,7 +4,9 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 const kubernetesRoot = join(repositoryRoot, "deploy", "kubernetes");
 
 function run(binary, args, label) {

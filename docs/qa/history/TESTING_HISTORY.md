@@ -1,4 +1,48 @@
-# Validation and acceptance
+# Validation and acceptance history
+
+This is the preserved validation record through 2026-10-24. It contains historical
+commands and results, not the current setup procedure. Use the
+[current testing guide](../../development/TESTING.md) for new runs.
+
+## Financial correction acceptance — 2026-10-24
+
+- A fresh disposable PostgreSQL 17.6 container passed
+  `DATABASE_URL=postgresql://monikey@localhost:15433/monikey_e2e?schema=public npm run test:integration`:
+  nine suites and 23 tests, including linked bill correction/reopen, statement
+  allocation reversal, recurrence reconciliation, and explicit card-credit
+  acknowledgement. This clean database ran in a separate disposable
+  PostgreSQL 17.6 container so QA's browser stack remained available.
+- `API_SPEC_URL=http://localhost:13000/openapi.json npm run api:types` refreshed
+  `packages/contracts/src/generated/openapi.d.ts`; the subsequent
+  `API_SPEC_URL=http://localhost:13000/openapi.json npm run test:contracts`
+  passed with no declaration drift.
+- Cached Chromium fallback against the actual API/PostgreSQL stack passed eight
+  focused browser tests: bill edit/archive/restore/status-retry and create
+  response-loss retry; compound overdraft/card-credit confirmation; variable
+  bill actual-amount projection; account opening-balance and statement-create
+  response-loss retries; income edit/move/reversal overdraft projection;
+  expense edit/reversal card-credit plus asset-overdraft projection; and
+  field-level HTTP date/window validation for bills, Activity, and CSV export.
+  A ninth PostgreSQL advisory-lock barrier test races actual Bills and
+  Dashboard generation against a due-day update and proves the update waits for
+  generation to finish, with no stale occurrences after the new rule commits.
+  Standard
+  Playwright preflight could not find its
+  pinned headless shell; browser CDN DNS/timeouts prevented installation. The
+  fallback uses a temporary local config and system-cached Chromium, not a
+  production configuration change.
+- Independent QA then rebuilt/reset the PostgreSQL 17.6/API/web stack and passed
+  all nine PostgreSQL integration suites (23 tests) plus the complete desktop
+  Chromium and Pixel 7 browser suite: 40 passed, 24 project-specific skips,
+  zero failures. The independent F3 concurrency reproducer also passed with
+  `staleOldDayObserved=false` after racing real occurrence and dashboard reads
+  against a due-day edit.
+- `npm run typecheck`, OpenAPI declaration parity, and the clean PostgreSQL run
+  passed. A final `npm run validate` passed lint, typecheck, production build,
+  finance/invariant tests, migration guards, formatting, secret scan, and
+  `npm audit` (zero vulnerabilities). OpenAPI declaration parity,
+  `git diff --check`, and Compose configuration checks passed. No deployment,
+  GitOps promotion, or V1 operation occurred.
 
 ## Full current-worktree financial and browser acceptance — 2026-10-23
 
@@ -123,7 +167,7 @@ typecheck` and `npm run lint` passed. No Actions run was started.
 
 ## SOPS secret generator guard tests — 2026-10-23
 
-- Added four process-level tests around `scripts/create-gitops-secrets.mjs`.
+- Added four process-level tests around `scripts/security/create-gitops-secrets.mjs`.
   A fake SOPS executable verifies that the generator supplies mode-0600
   plaintext in its private temp directory, emits only ciphertext output, and
   removes the plaintext on both success and failure. Child-process stderr is
@@ -208,7 +252,7 @@ typecheck` and `npm run lint` passed. No Actions run was started.
   published GHCR digest still needs its own scan and retained SBOM.
 - Trivy 0.76.0 scanned the current local API, web, migration, and backup images
   for all HIGH/CRITICAL findings, including unfixed issues; each returned zero.
-- `scripts/verify-release-main.mjs` queried GitHub read-only and verified current
+- `scripts/release/verify-release-main.mjs` queried GitHub read-only and verified current
   `main` merge `bf11edfea342adef253ce6ccd21a98aec95e3790` maps to PR #57, whose
   `validate`, `e2e`, and `CodeQL` checks all succeeded on head
   `11f1a009dd5ab6811d5f62e5268c6bfc2b1a9dbc`. `actionlint` 1.7.7 and Prettier
@@ -302,6 +346,28 @@ docker compose -p monikey-e2e -f compose.e2e.yaml exec -T \
   -e MONIKEY_E2E_EMAIL=crash@example.test \
   -e MONIKEY_E2E_PASSWORD=CI-only-crash-user-password-never-used \
   api npm run seed-e2e-user --workspace @monikey/api
+while read -r email password; do
+  docker compose -p monikey-e2e -f compose.e2e.yaml exec -T \
+    -e NODE_ENV=test -e ALLOW_E2E_USER_SEED=true \
+    -e "MONIKEY_E2E_EMAIL=$email" -e "MONIKEY_E2E_PASSWORD=$password" \
+    api npm run seed-e2e-user --workspace @monikey/api </dev/null
+done <<'FIXTURES'
+account-create-retry@example.test CI-only-account-create-retry-password
+accounts-stale@example.test CI-only-accounts-stale-password
+bill-window-validation@example.test CI-only-bill-window-validation-password
+card-payment-ui@example.test CI-only-card-payment-ui-password
+dashboard-refresh@example.test CI-only-dashboard-refresh-password
+income-edit-confirm@example.test CI-only-income-edit-confirm-password
+manila-date@example.test CI-only-manila-date-password
+overdraft-check@example.test CI-only-overdraft-check-password
+origin-check@example.test CI-only-password-never-used-outside-tests
+quickadd-retry@example.test CI-only-quickadd-retry-password
+rate-limit@example.test CI-only-rate-limit-password
+reports-snapshot@example.test CI-only-reports-snapshot-password
+statement-create-retry@example.test CI-only-statement-create-retry-password
+transaction-edit-confirm@example.test CI-only-transaction-edit-confirm-password
+unknown-owner@example.test CI-only-unknown-owner-password
+FIXTURES
 COMPOSE_FILE=compose.e2e.yaml \
 COMPOSE_PROJECT_NAME=monikey-e2e \
 PLAYWRIGHT_BASE_URL=http://localhost:18080 \
@@ -436,7 +502,7 @@ The separate `test` Compose profile exposes an ephemeral PostgreSQL instance for
 
 The local Docker daemon is available after refreshing the shell's `docker` group membership. The Compose-backed suite was run locally against PostgreSQL, the API, and the web container. GitHub Actions remains a repository protection gate for pull requests, while routine feature validation stays local to preserve the action-minute budget. The PR workflow runs only for pull requests targeting `dev` or `main`, uses Node 22.22 throughout, and cancels an older in-progress run when a newer commit supersedes it.
 
-Production image build targets are separate from the development Compose images. Build them locally with `docker build -f apps/api/Dockerfile.production -t monikey-v2-api:local-prod .`, `docker build -f apps/web/Dockerfile.production -t monikey-v2-web:local-prod .`, and `docker build -f apps/api/Dockerfile.migrate -t monikey-v2-migrate:local .`. All three runtimes refresh/upgrade Alpine packages, run nonroot, and omit npm/corepack. The API runtime includes production dependencies and Node only. The migration image installs Prisma without optional packages and successfully applies all migrations to a fresh disposable PostgreSQL database. The web image serves the Vite bundle through nonroot Nginx, proxies `/api/` to the `api` service, and adds CSP, frame, MIME, referrer, and permissions headers. Nginx sends `/sw.js` with `Cache-Control: no-cache`, omits query parameters from access logs, and Fastify redacts request URLs from API logs. Local Trivy HIGH/CRITICAL results are zero for all three final image IDs; Syft SPDX SBOMs are generated locally. HSTS remains deferred until the private HTTPS hostname and CA trust are verified. See [`runbooks/production-images.md`](runbooks/production-images.md) for evidence. These images have not been published or deployed.
+Production image build targets are separate from the development Compose images. Build them locally with `docker build -f apps/api/Dockerfile.production -t monikey-v2-api:local-prod .`, `docker build -f apps/web/Dockerfile.production -t monikey-v2-web:local-prod .`, and `docker build -f apps/api/Dockerfile.migrate -t monikey-v2-migrate:local .`. All three runtimes refresh/upgrade Alpine packages, run nonroot, and omit npm/corepack. The API runtime includes production dependencies and Node only. The migration image installs Prisma without optional packages and successfully applies all migrations to a fresh disposable PostgreSQL database. The web image serves the Vite bundle through nonroot Nginx, proxies `/api/` to the `api` service, and adds CSP, frame, MIME, referrer, and permissions headers. Nginx sends `/sw.js` with `Cache-Control: no-cache`, omits query parameters from access logs, and Fastify redacts request URLs from API logs. Local Trivy HIGH/CRITICAL results are zero for all three final image IDs; Syft SPDX SBOMs are generated locally. HSTS remains deferred until the private HTTPS hostname and CA trust are verified. See [`runbooks/production-images.md`](../../runbooks/production-images.md) for evidence. These images have not been published or deployed.
 
 ### Local Playwright acceptance — 2026-10-23
 
@@ -535,7 +601,7 @@ Set `MONIKEY_REVIEW_SCREENSHOT_DIR` to an output directory to save Home screensh
 
 ### FIN-001–FIN-020 acceptance reconciliation — 2026-10-23
 
-- Added `docs/FINANCIAL_ACCEPTANCE_MATRIX.md` mapping all 20 plan examples to
+- Added `docs/qa/FINANCIAL_ACCEPTANCE_MATRIX.md` mapping all 20 plan examples to
   concrete API/PostgreSQL or Playwright cases. Updated FIN-001–FIN-008
   transaction/report fixtures to use the plan's stated amounts.
 - The exact fee case found a reporting omission: transfer journals were
@@ -614,7 +680,7 @@ Set `MONIKEY_REVIEW_SCREENSHOT_DIR` to an output directory to save Home screensh
 
 ### Release verifier hardening — 2026-10-23
 
-- `scripts/verify-release-main.mjs` now paginates all PR/check-run results before selecting the latest required check. `node --check` and repository ESLint passed. The GitHub read-only API verification must be rerun for the pagination change; no release workflow or Actions run was started. The image release job now attempts to retain the digest map and any completed scans/SBOMs after a later publish or scan step fails.
+- `scripts/release/verify-release-main.mjs` now paginates all PR/check-run results before selecting the latest required check. `node --check` and repository ESLint passed. The GitHub read-only API verification must be rerun for the pagination change; no release workflow or Actions run was started. The image release job now attempts to retain the digest map and any completed scans/SBOMs after a later publish or scan step fails.
 
 ### Private CA and SOPS bootstrap template — 2026-10-23
 
@@ -673,7 +739,7 @@ A fresh `monikey-e2e` Docker Compose project used tmpfs PostgreSQL and the curre
 
 ### Release verifier regression tests — 2026-10-23
 
-- Added `scripts/verify-release-main.test.mjs` and `npm run test:release-verifier`, included in `npm run validate`. A local stub GitHub API verifies pagination beyond the first 100 check runs, successful main-merge/check reporting, rejection of a failed newest check even when an older check succeeded, and rejection of a commit that is not the merged PR commit.
+- Added `scripts/release/verify-release-main.test.mjs` and `npm run test:release-verifier`, included in `npm run validate`. A local stub GitHub API verifies pagination beyond the first 100 check runs, successful main-merge/check reporting, rejection of a failed newest check even when an older check succeeded, and rejection of a commit that is not the merged PR commit.
 - `npm run test:release-verifier` passed all three cases. The tests use only a localhost stub server; they make no GitHub API calls and start no Actions runs.
 
 ### Fresh full-stack recovery acceptance — 2026-10-23
@@ -744,7 +810,7 @@ A fresh `monikey-e2e` Compose project rebuilt the API, web, and migration images
 - Rebuilt the isolated `monikey-e2e` Compose stack from the current worktree using Docker through the configured `docker` group. The stack used the actual API, migrations, web app, and a fresh tmpfs PostgreSQL database.
 - Seeded only disposable owner and test users. All nine PostgreSQL integration suites passed (18 tests), including transfer process-kill rollback and concurrent idempotent replay.
 - The canonical one-worker Playwright run passed 25 tests with 9 expected mobile-project skips across desktop Chromium and Pixel 7 emulation.
-- `npm run validate` passed after correcting Prettier formatting in `docs/IMPLEMENTATION_STATUS.md`. The E2E stack was removed with its tmpfs database; no GitHub Actions run occurred.
+- `npm run validate` passed after correcting Prettier formatting in `docs/development/IMPLEMENTATION_STATUS.md`. The E2E stack was removed with its tmpfs database; no GitHub Actions run occurred.
 - This remains local automated evidence. It does not close physical-device review, independent QA, owner acceptance, or Phase 6 production gates.
 
 ### Completed onboarding destination regression — 2026-10-23
@@ -803,7 +869,7 @@ A fresh `monikey-e2e` Compose project rebuilt the API, web, and migration images
 
 - Extended `npm run review:local` to save both light and dark captures for all nine authenticated routes at 390px phone and 1440px desktop, alongside the existing five-width Home captures. It also creates a disposable bank account and card through the real authenticated API, then captures Account Detail and Card Statements at those two sizes and both themes. These financial records exist only in the isolated tmpfs PostgreSQL stack.
 - The current expanded run passed 45 route/viewport combinations and 90 light/dark axe scans with zero WCAG 2A/2AA violations, overflow, unnamed or undersized controls, focus failures, page/API/console errors, API network failures, or unhandled rejections. Reduced-motion checks passed. All eight detail-route captures were created. An accidental follow-up invocation against the persistent development user revealed that populated Home balances compute to negative letter spacing; the harness now rejects negative tracking while allowing zero or positive spacing. The successful final rerun used the isolated E2E stack, which was removed afterward; development services remained healthy.
-- Visual inspection found that the `₱` symbol visually crowded the first digit on the large Home balance. `formatPhp` now inserts a narrow nonbreaking space after the currency symbol, and the Home balance no longer inherits negative tracking. The money package's five unit tests passed, and the browser review asserts that the Home balance has no negative letter spacing. See `docs/RELEASE_REVIEW.md` for the route matrix and human-review observations.
+- Visual inspection found that the `₱` symbol visually crowded the first digit on the large Home balance. `formatPhp` now inserts a narrow nonbreaking space after the currency symbol, and the Home balance no longer inherits negative tracking. The money package's five unit tests passed, and the browser review asserts that the Home balance has no negative letter spacing. See `docs/qa/2026-10-23/RELEASE_REVIEW.md` for the route matrix and human-review observations.
 - The phone Activity title wraps to three lines and the empty desktop Reports layout uses a narrower left column; these remain observations for owner review, not automated failures. Physical-device, screen-reader, and owner acceptance remain open. No GitHub Actions run was started.
 - After the currency-spacing implementation, `npm run validate` passed the current worktree: lint, typecheck, production build, money and finance tests, workflow/release/migration/backup/secret regressions, formatting, secret scanning (129 tracked files and 1,066 reachable Git objects), and npm audit (zero vulnerabilities).
 
@@ -825,7 +891,7 @@ A fresh `monikey-e2e` Compose project rebuilt the API, web, and migration images
 - Expanded Account Detail and Card Statements from two viewport sizes to the full responsive matrix: 360, 390, 768, 1440, and 1920px. Both routes now run keyboard traversal, focus visibility, 44px target, unnamed-control, overflow, browser/API error, and axe checks in light and dark themes.
 - Fresh isolated tmpfs PostgreSQL and actual API stack: all 55 route/viewport checks passed and all 110 axe scans tagged WCAG 2.0 A/AA and WCAG 2.2 AA reported zero violations.
 - Regenerated the route screenshot gallery to 62 files: ten Home captures across five widths, 32 captures for the eight remaining standard routes at phone 390px and desktop 1440px, and 20 detail-route captures across five widths. The 360px Card Statements capture was visually inspected; title, form, and bottom navigation fit without horizontal overflow.
-- Disposable stack cleanup completed after the run. Physical-device, screen-reader, contrast, independent QA, and owner review remain open. No GitHub Actions run occurred. See `docs/RELEASE_REVIEW.md`.
+- Disposable stack cleanup completed after the run. Physical-device, screen-reader, contrast, independent QA, and owner review remain open. No GitHub Actions run occurred. See `docs/qa/2026-10-23/RELEASE_REVIEW.md`.
 
 ### Route gallery top-of-page capture correction — 2026-10-23
 
@@ -860,7 +926,7 @@ Validation run against the current worktree:
 - `npm run lint`, `npm run typecheck`, `npm run build`, `npm run compose:check`, `npm run test:unit --workspace @monikey/api`, `npm run build --workspace @monikey/api`, and formatting/diff checks passed. API unit tests included Manila midnight and year-boundary cases (12 tests total).
 - `npm run test:integration` passed all nine PostgreSQL-backed suites (18 tests) on isolated tmpfs PostgreSQL.
 - Full one-worker Playwright run passed; `test-results/.last-run.json` reports `status: passed` and no failed tests. The suite includes payment retry, intervening Quick Add transaction, dashboard stale-response ordering, failed Accounts refresh/retry, and Manila date refresh regression cases against the actual API/PostgreSQL.
-- `npm run review:local` passed 55 route/viewport checks (nine routes across five widths plus account/card detail captures) and 110 light/dark axe scans. No overflow, unnamed/undersized controls, keyboard-focus failures, API/browser errors, network failures, unhandled rejections, or WCAG 2A/2AA violations were reported. Reduced-motion checks passed. Summary output was inspected; representative current-worktree screenshots are `docs/assets/main-remediation-review/home-phone-390-light.png` and `docs/assets/main-remediation-review/home-desktop-1440-light.png`.
+- `npm run review:local` passed 55 route/viewport checks (nine routes across five widths plus account/card detail captures) and 110 light/dark axe scans. No overflow, unnamed/undersized controls, keyboard-focus failures, API/browser errors, network failures, unhandled rejections, or WCAG 2A/2AA violations were reported. Reduced-motion checks passed. Summary output was inspected; representative current-worktree screenshots are `docs/qa/2026-10-23/assets/main-remediation-review/home-phone-390-light.png` and `docs/qa/2026-10-23/assets/main-remediation-review/home-desktop-1440-light.png`.
 - `npm run deploy:check` could not execute because `KUSTOMIZE_EXTRA_SCHEMA_LOCATION`/`KUBECONFORM_EXTRA_SCHEMA_LOCATION` and the cached cert-manager CRD schema, plus local `kustomize`, are unavailable. No cluster was contacted. This is a tooling limitation, not a passing manifest validation.
 
 The full screenshot run had one initial authentication setup error because a QA-specific user password did not match its seeded fixture; rerunning with the documented disposable `second@example.test` credentials passed. The first attempt changed no source or persistent development data. Browser runs use emulation and do not establish physical-device keyboard/safe-area acceptance.

@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const mode = process.argv[2];
 const backupFile = process.env.BACKUP_FILE?.trim();
 const restoreDatabase =

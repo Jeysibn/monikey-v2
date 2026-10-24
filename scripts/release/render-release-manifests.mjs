@@ -13,13 +13,15 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { getPrismaSchemaVersion } from "./prisma-schema-version.mjs";
+import { getPrismaSchemaVersion } from "../database/prisma-schema-version.mjs";
 import {
   releaseImages,
   verifyReleaseManifest,
 } from "./verify-release-manifest.mjs";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 const kubernetesRoot = join(repositoryRoot, "deploy", "kubernetes");
 const releaseImageReferenceCounts = {
   web: 1,

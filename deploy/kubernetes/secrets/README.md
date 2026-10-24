@@ -5,7 +5,7 @@ plugin, and no age recipient has been approved for this application. Therefore
 this directory is deliberately not included in the root Kustomization yet.
 Do not point Argo at an encrypted file as if it were a Kubernetes Secret.
 
-The generator `scripts/create-gitops-secrets.mjs` creates a random PostgreSQL
+The generator `scripts/security/create-gitops-secrets.mjs` creates a random PostgreSQL
 password and builds the V2 runtime and backup-client Secret documents in a
 mode-0600 temporary file inside a mode-0700 system temporary directory for
 SOPS. It removes that directory on success or failure and writes only the
@@ -24,7 +24,7 @@ Example (recipient is public key material; never pass a private key):
 
 ```sh
 SOPS_AGE_RECIPIENTS='age1REPLACE_WITH_OWNER_APPROVED_PUBLIC_RECIPIENT' \
-  node scripts/create-gitops-secrets.mjs
+  node scripts/security/create-gitops-secrets.mjs
 ```
 
 The encrypted output is not safe to commit until an owner-approved recipient

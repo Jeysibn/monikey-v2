@@ -4,7 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 
 test("backup acquires a nonblocking PVC lock before reading or mutating run state", async () => {
   const script = await readFile(

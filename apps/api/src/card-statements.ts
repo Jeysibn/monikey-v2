@@ -57,7 +57,8 @@ const statementSelect = `
          s.updated_at AS "updatedAt"
     FROM card_statements s
     LEFT JOIN card_statement_allocations a
-      ON a.user_id = s.user_id AND a.statement_id = s.id`;
+      ON a.user_id = s.user_id AND a.statement_id = s.id
+     AND a.reversed_at IS NULL`;
 
 function mapStatement(row: StatementRow): CardStatementRecord {
   const amount = moneyMinor(row.amountDueMinor);

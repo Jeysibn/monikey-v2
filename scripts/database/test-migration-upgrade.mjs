@@ -6,7 +6,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 const apiRequire = createRequire(join(repositoryRoot, "apps/api/package.json"));
 const { Client } = apiRequire("pg");
 const prismaCli = join(repositoryRoot, "node_modules/prisma/build/index.js");

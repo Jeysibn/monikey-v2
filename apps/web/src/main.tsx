@@ -1624,6 +1624,169 @@ function TransactionDetailPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [editNegativeConfirmation, setEditNegativeConfirmation] =
+    useState(false);
+  const [editCardCreditConfirmation, setEditCardCreditConfirmation] =
+    useState(false);
+  const [reverseNegativeConfirmation, setReverseNegativeConfirmation] =
+    useState(false);
+  const [reverseCreditConfirmation, setReverseCreditConfirmation] =
+    useState(false);
+
+  function resetEditConfirmations() {
+    setEditNegativeConfirmation(false);
+    setEditCardCreditConfirmation(false);
+    setReverseNegativeConfirmation(false);
+    setReverseCreditConfirmation(false);
+  }
+
+  function projectedEditEffects() {
+    if (
+      !transaction ||
+      (transaction.kind !== "EXPENSE" && transaction.kind !== "INCOME")
+    )
+      return null;
+    const current = revisions.at(-1)?.after ?? {};
+    const oldAccountId = revisionText(current, "sourceAccountId");
+    const oldAmountText = revisionText(current, "amountMinor");
+    const nextAccount = accounts.find((account) => account.id === accountId);
+    if (!oldAccountId || !oldAmountText || !nextAccount) return null;
+    try {
+      const oldAmount = BigInt(oldAmountText);
+      const nextAmount = BigInt(parsePhpMinor(amount));
+      const negativeAssets = [...new Set([oldAccountId, nextAccount.id])]
+        .map((id) => accounts.find((account) => account.id === id))
+        .filter(
+          (account): account is DashboardAccount =>
+            account !== undefined && account.type !== "CREDIT_CARD",
+        )
+        .map((account) => {
+          let projectedBalanceMinor = BigInt(account.balanceMinor);
+          if (account.id === oldAccountId) {
+            projectedBalanceMinor +=
+              transaction.kind === "EXPENSE" ? oldAmount : -oldAmount;
+          }
+          if (account.id === nextAccount.id) {
+            projectedBalanceMinor +=
+              transaction.kind === "EXPENSE" ? -nextAmount : nextAmount;
+          }
+          return { account, projectedBalanceMinor };
+        })
+        .filter((item) => item.projectedBalanceMinor < 0n)
+        .map((item) => ({
+          accountName: item.account.name,
+          balanceMinor: moneyMinor(item.projectedBalanceMinor.toString()),
+        }));
+      const cardCredits = [...new Set([oldAccountId, nextAccount.id])]
+        .map((id) => accounts.find((account) => account.id === id))
+        .filter(
+          (account): account is DashboardAccount =>
+            account !== undefined && account.type === "CREDIT_CARD",
+        )
+        .map((account) => {
+          let projectedBalanceMinor = BigInt(account.balanceMinor);
+          if (account.id === oldAccountId) projectedBalanceMinor -= oldAmount;
+          if (account.id === nextAccount.id)
+            projectedBalanceMinor += nextAmount;
+          return { account, projectedBalanceMinor };
+        })
+        .filter((item) => item.projectedBalanceMinor < 0n)
+        .map((item) => ({
+          accountName: item.account.name,
+          creditMinor: moneyMinor((-item.projectedBalanceMinor).toString()),
+        }));
+      return {
+        negativeAssets,
+        cardCredits,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function projectedReversalEffects() {
+    if (!transaction || transaction.kind === "OPENING_BALANCE") return null;
+    const current = revisions.at(-1)?.after ?? {};
+    const amountText = revisionText(current, "amountMinor");
+    if (!amountText) return null;
+    try {
+      const amountMinor = BigInt(amountText);
+      const feeMinor = BigInt(revisionText(current, "feeMinor") || "0");
+      const deltas = new Map<string, bigint>();
+      const addDelta = (id: string, delta: bigint) => {
+        if (id) deltas.set(id, (deltas.get(id) ?? 0n) + delta);
+      };
+      if (transaction.kind === "EXPENSE") {
+        const id = revisionText(current, "sourceAccountId");
+        const account = accounts.find((item) => item.id === id);
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD" ? -amountMinor : amountMinor,
+        );
+      } else if (transaction.kind === "INCOME") {
+        addDelta(revisionText(current, "sourceAccountId"), -amountMinor);
+      } else if (transaction.kind === "TRANSFER") {
+        addDelta(
+          revisionText(current, "fromAccountId"),
+          amountMinor + feeMinor,
+        );
+        addDelta(revisionText(current, "toAccountId"), -amountMinor);
+      } else if (transaction.kind === "REFUND") {
+        const id = revisionText(current, "sourceAccountId");
+        const account = accounts.find((item) => item.id === id);
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD" ? amountMinor : -amountMinor,
+        );
+      } else if (transaction.kind === "ADJUSTMENT") {
+        const id = revisionText(current, "accountId");
+        const account = accounts.find((item) => item.id === id);
+        const increases = revisionText(current, "direction") === "INCREASE";
+        addDelta(
+          id,
+          account?.type === "CREDIT_CARD"
+            ? increases
+              ? amountMinor
+              : -amountMinor
+            : increases
+              ? -amountMinor
+              : amountMinor,
+        );
+      } else if (transaction.kind === "CARD_PAYMENT") {
+        addDelta(revisionText(current, "cardAccountId"), amountMinor);
+        addDelta(revisionText(current, "fundingAccountId"), amountMinor);
+      }
+      const negativeAssets: Array<{
+        accountName: string;
+        amountMinor: ReturnType<typeof moneyMinor>;
+      }> = [];
+      const cardCredits: Array<{
+        accountName: string;
+        amountMinor: ReturnType<typeof moneyMinor>;
+      }> = [];
+      for (const [id, delta] of deltas) {
+        const account = accounts.find((item) => item.id === id);
+        if (!account) continue;
+        const projected = BigInt(account.balanceMinor) + delta;
+        if (account.type === "CREDIT_CARD" && projected < 0n) {
+          cardCredits.push({
+            accountName: account.name,
+            amountMinor: moneyMinor((-projected).toString()),
+          });
+          continue;
+        }
+        if (account.type !== "CREDIT_CARD" && projected < 0n) {
+          negativeAssets.push({
+            accountName: account.name,
+            amountMinor: moneyMinor(projected.toString()),
+          });
+        }
+      }
+      return { negativeAssets, cardCredits };
+    } catch {
+      return null;
+    }
+  }
   const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
@@ -1680,10 +1843,18 @@ function TransactionDetailPage() {
     void load();
   }, [load]);
 
-  async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
+  async function submitEdit(
+    event: React.FormEvent<HTMLFormElement>,
+    acknowledgeNegative = false,
+    acknowledgeCardCredit = false,
+  ) {
     event.preventDefault();
     setError("");
     setSuccess("");
+    if (!acknowledgeNegative && !acknowledgeCardCredit) {
+      setEditNegativeConfirmation(false);
+      setEditCardCreditConfirmation(false);
+    }
     if (!transactionId || !csrfToken || !transaction) return;
     if (!reason.trim()) {
       setError("Give the revision a reason.");
@@ -1697,39 +1868,79 @@ function TransactionDetailPage() {
       setError("Enter a positive PHP amount with up to two decimals.");
       return;
     }
+    const body = {
+      kind: transaction.kind,
+      sourceAccountId: accountId,
+      categoryId,
+      amountMinor,
+      occurredOn,
+      ...(note.trim() ? { note: note.trim() } : {}),
+      reason: reason.trim(),
+      ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeCardCredit ? { acknowledgeCardCreditBalance: true } : {}),
+    };
     setPending(true);
     try {
+      const idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        `transaction-edit:${transactionId}`,
+        body,
+      );
       await apiRequest(`/transactions/${transactionId}`, {
         method: "PATCH",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          kind: transaction.kind,
-          sourceAccountId: accountId,
-          categoryId,
-          amountMinor,
-          occurredOn,
-          ...(note.trim() ? { note: note.trim() } : {}),
-          reason: reason.trim(),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(
+        profile!.user.id,
+        `transaction-edit:${transactionId}`,
+        idempotencyKey,
+      );
       setSuccess("Transaction updated and re-posted through the ledger.");
+      setEditNegativeConfirmation(false);
+      setEditCardCreditConfirmation(false);
       setReason("");
       await load();
     } catch (caught) {
-      setError(
+      if (
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        // The rejected command did not post. Keep the form usable for correction.
+      }
+      const message =
         caught instanceof Error
           ? caught.message
-          : "The transaction could not be updated.",
-      );
+          : "The transaction could not be updated.";
+      if (message.includes("card credit")) {
+        setEditCardCreditConfirmation(true);
+        setError(
+          editNegativeConfirmation
+            ? "Confirm the projected card credit and negative account balance below."
+            : "Confirm the projected card credit below.",
+        );
+      } else if (message.includes("negative")) {
+        setEditNegativeConfirmation(true);
+        setError(
+          editCardCreditConfirmation
+            ? "Confirm the projected card credit and negative account balance below."
+            : "Confirm the projected account balance below.",
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setPending(false);
     }
   }
 
-  async function reverseTransaction() {
+  async function reverseTransaction(
+    acknowledgeNegative = false,
+    acknowledgeCardCredit = false,
+  ) {
     setError("");
     setSuccess("");
     if (!transactionId || !csrfToken || !reason.trim()) {
@@ -1737,21 +1948,55 @@ function TransactionDetailPage() {
       return;
     }
     setPending(true);
+    const operation = `transaction-delete:${transactionId}`;
+    let idempotencyKey: string | null = null;
     try {
+      const body = {
+        reason: reason.trim(),
+        ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+        ...(acknowledgeCardCredit
+          ? { acknowledgeCardCreditBalance: true }
+          : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        operation,
+        body,
+      );
       await apiRequest(`/transactions/${transactionId}`, {
         method: "DELETE",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({ reason: reason.trim() }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      setReverseNegativeConfirmation(false);
+      setReverseCreditConfirmation(false);
       setSuccess(
         "Transaction reversed. Its original journal remains immutable.",
       );
       setReason("");
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
+      if (caught instanceof Error && caught.message.includes("card credit")) {
+        setReverseCreditConfirmation(true);
+        setError("Confirm the projected card credit shown below.");
+        return;
+      }
+      if (caught instanceof Error && caught.message.includes("negative")) {
+        setReverseNegativeConfirmation(true);
+        setError("Confirm the projected negative balance shown below.");
+        return;
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -1761,6 +2006,9 @@ function TransactionDetailPage() {
       setPending(false);
     }
   }
+
+  const editEffects = projectedEditEffects();
+  const reversalEffects = projectedReversalEffects();
 
   if (authLoading || loading) return <DashboardLoading />;
   if (!profile) {
@@ -1844,7 +2092,16 @@ function TransactionDetailPage() {
         ) : null}
 
         {editable && transaction.status === "POSTED" ? (
-          <form className="detail-edit-form" onSubmit={submitEdit}>
+          <form
+            className="detail-edit-form"
+            onSubmit={(event) =>
+              void submitEdit(
+                event,
+                editNegativeConfirmation,
+                editCardCreditConfirmation,
+              )
+            }
+          >
             <div className="form-heading">
               <div>
                 <p className="form-kicker">EDIT POSTED RECORD</p>
@@ -1861,7 +2118,10 @@ function TransactionDetailPage() {
                 id="detail-amount"
                 inputMode="decimal"
                 value={amount}
-                onChange={(event) => setAmount(event.currentTarget.value)}
+                onChange={(event) => {
+                  resetEditConfirmations();
+                  setAmount(event.currentTarget.value);
+                }}
               />
             </div>
             <div className="reference-grid">
@@ -1870,7 +2130,10 @@ function TransactionDetailPage() {
                 <select
                   className="reference-select"
                   value={accountId}
-                  onChange={(event) => setAccountId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setAccountId(event.currentTarget.value);
+                  }}
                 >
                   <option value="">Choose an account</option>
                   {activeAccounts.map((account) => (
@@ -1885,7 +2148,10 @@ function TransactionDetailPage() {
                 <select
                   className="reference-select"
                   value={categoryId}
-                  onChange={(event) => setCategoryId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setCategoryId(event.currentTarget.value);
+                  }}
                 >
                   <option value="">Choose a category</option>
                   {matchingCategories.map((category) => (
@@ -1903,7 +2169,10 @@ function TransactionDetailPage() {
                   className="text-input"
                   type="date"
                   value={occurredOn}
-                  onChange={(event) => setOccurredOn(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setOccurredOn(event.currentTarget.value);
+                  }}
                 />
               </label>
               <label className="field-group">
@@ -1911,14 +2180,61 @@ function TransactionDetailPage() {
                 <input
                   className="text-input"
                   value={note}
-                  onChange={(event) => setNote(event.currentTarget.value)}
+                  onChange={(event) => {
+                    resetEditConfirmations();
+                    setNote(event.currentTarget.value);
+                  }}
                   maxLength={500}
                 />
               </label>
             </div>
-            <button className="save-button" type="submit" disabled={pending}>
-              {pending ? "Saving…" : "Save revision"}
-            </button>
+            {editNegativeConfirmation || editCardCreditConfirmation ? (
+              <div className="confirmation-panel" role="alert">
+                {editNegativeConfirmation ? (
+                  editEffects?.negativeAssets.length ? (
+                    editEffects.negativeAssets.map((effect) => (
+                      <p key={effect.accountName}>
+                        This correction leaves {effect.accountName} at{" "}
+                        {formatPhp(effect.balanceMinor)}.
+                      </p>
+                    ))
+                  ) : (
+                    <p>This correction leaves an affected account negative.</p>
+                  )
+                ) : null}
+                {editCardCreditConfirmation &&
+                editEffects?.cardCredits.length ? (
+                  editEffects.cardCredits.map((credit) => (
+                    <p key={credit.accountName}>
+                      This correction leaves {credit.accountName} with a card
+                      credit of {formatPhp(credit.creditMinor)}.
+                    </p>
+                  ))
+                ) : editCardCreditConfirmation ? (
+                  <p>This correction creates a projected card credit.</p>
+                ) : null}
+                {editNegativeConfirmation && editCardCreditConfirmation ? (
+                  <p>Confirm both projected balances to continue.</p>
+                ) : null}
+                <button
+                  className="save-button"
+                  type="submit"
+                  disabled={pending}
+                >
+                  {pending
+                    ? "Saving…"
+                    : editCardCreditConfirmation && editNegativeConfirmation
+                      ? "Confirm both balances and save"
+                      : editCardCreditConfirmation
+                        ? "Confirm card credit and save"
+                        : "Confirm negative balance and save"}
+                </button>
+              </div>
+            ) : (
+              <button className="save-button" type="submit" disabled={pending}>
+                {pending ? "Saving…" : "Save revision"}
+              </button>
+            )}
           </form>
         ) : null}
 
@@ -1928,7 +2244,10 @@ function TransactionDetailPage() {
             <input
               className="text-input"
               value={reason}
-              onChange={(event) => setReason(event.currentTarget.value)}
+              onChange={(event) => {
+                resetEditConfirmations();
+                setReason(event.currentTarget.value);
+              }}
               maxLength={300}
               placeholder="Corrected receipt or duplicate entry"
             />
@@ -1945,11 +2264,40 @@ function TransactionDetailPage() {
             <button
               className="quiet-button"
               type="button"
-              onClick={() => void reverseTransaction()}
+              onClick={() =>
+                void reverseTransaction(
+                  reverseNegativeConfirmation,
+                  reverseCreditConfirmation,
+                )
+              }
               disabled={pending || !reason.trim()}
             >
-              {pending ? "Reversing…" : "Reverse transaction"}
+              {pending
+                ? "Reversing…"
+                : reverseNegativeConfirmation && reverseCreditConfirmation
+                  ? "Confirm both balances and reverse"
+                  : reverseCreditConfirmation
+                    ? "Confirm card credit and reverse"
+                    : reverseNegativeConfirmation
+                      ? "Confirm negative balance and reverse"
+                      : "Reverse transaction"}
             </button>
+            {reverseNegativeConfirmation || reverseCreditConfirmation ? (
+              <p className="field-hint" role="alert">
+                {[
+                  ...(reversalEffects?.negativeAssets ?? []).map(
+                    (effect) =>
+                      `${effect.accountName} will be ${formatPhp(effect.amountMinor)} negative`,
+                  ),
+                  ...(reversalEffects?.cardCredits ?? []).map(
+                    (effect) =>
+                      `${effect.accountName} will have a card credit of ${formatPhp(effect.amountMinor)}`,
+                  ),
+                ].join(". ") || "The reversal has a negative projected balance"}
+                . Confirm the requested balance changes by selecting the
+                reversal button again.
+              </p>
+            ) : null}
             <p className="field-hint">
               The reason is saved in the immutable audit history.
             </p>
@@ -2067,21 +2415,30 @@ function AccountsPage() {
       }
     }
     setPending(true);
+    const operation = "financial-account-create";
+    let idempotencyKey: string | null = null;
     try {
+      const body = {
+        type,
+        name: name.trim(),
+        openingBalanceMinor,
+        ...(institution.trim() ? { institution: institution.trim() } : {}),
+        ...(creditLimitMinor ? { creditLimitMinor } : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        operation,
+        body,
+      );
       await apiRequest("/accounts", {
         method: "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          type,
-          name: name.trim(),
-          openingBalanceMinor,
-          ...(institution.trim() ? { institution: institution.trim() } : {}),
-          ...(creditLimitMinor ? { creditLimitMinor } : {}),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
       setName("");
       setInstitution("");
       setOpeningBalance("");
@@ -2090,6 +2447,13 @@ function AccountsPage() {
       setSuccess("Account created with a ledger-backed opening balance.");
       await accountsResource.reload();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -2751,6 +3115,8 @@ function CardStatementsPage() {
       return;
     }
     setPending(true);
+    const operation = `card-statement:${accountId}:${editingId ?? "create"}`;
+    let idempotencyKey: string | null = null;
     try {
       const body = {
         statementDate,
@@ -2760,6 +3126,10 @@ function CardStatementsPage() {
         paymentDueDate,
         ...(note.trim() ? { note: note.trim() } : {}),
       };
+      idempotencyKey = await pendingSubmissionKey(profile!.user.id, operation, {
+        method: editingId ? "PATCH" : "POST",
+        body,
+      });
       await apiRequest(
         editingId
           ? `/credit-cards/${accountId}/statements/${editingId}`
@@ -2768,15 +3138,23 @@ function CardStatementsPage() {
           method: editingId ? "PATCH" : "POST",
           headers: {
             "x-csrf-token": csrfToken,
-            "idempotency-key": crypto.randomUUID(),
+            "idempotency-key": idempotencyKey,
           },
           body: JSON.stringify(body),
         },
       );
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
       setSuccess(editingId ? "Statement corrected." : "Statement recorded.");
       resetStatementForm();
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3009,7 +3387,11 @@ function CardPaymentPage() {
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
-  const [confirmNegative, setConfirmNegative] = useState(false);
+  const [confirmedNegative, setConfirmedNegative] = useState(false);
+  const [confirmedCardCredit, setConfirmedCardCredit] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<
+    "negative" | "card-credit" | null
+  >(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const isOnline = useOnlineStatus();
@@ -3064,13 +3446,13 @@ function CardPaymentPage() {
 
   async function submit(
     event: React.FormEvent<HTMLFormElement>,
-    acknowledge = false,
+    acknowledgeNegative = false,
+    acknowledgeCardCredit = false,
   ) {
     event.preventDefault();
     if (submissionInFlight.current) return;
     setError("");
     setSuccess("");
-    setConfirmNegative(false);
     if (!isOnline) {
       setError("You are offline. Reconnect before recording a payment.");
       return;
@@ -3093,7 +3475,8 @@ function CardPaymentPage() {
       amountMinor,
       occurredOn,
       ...(note.trim() ? { note: note.trim() } : {}),
-      ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeNegative ? { acknowledgeNegativeBalance: true } : {}),
+      ...(acknowledgeCardCredit ? { acknowledgeCardCreditBalance: true } : {}),
     };
     submissionInFlight.current = true;
     setPending(true);
@@ -3119,6 +3502,9 @@ function CardPaymentPage() {
       );
       setAmount("");
       setNote("");
+      setConfirmedNegative(false);
+      setConfirmedCardCredit(false);
+      setPendingConfirmation(null);
       setSuccess("Card payment posted. It is not counted as a new expense.");
       await load();
     } catch (caught) {
@@ -3138,8 +3524,15 @@ function CardPaymentPage() {
           ? caught.message
           : "The card payment could not be saved.";
       if (message.includes("negative")) {
-        setConfirmNegative(true);
-        setError(message);
+        setConfirmedNegative(acknowledgeNegative);
+        setConfirmedCardCredit(acknowledgeCardCredit);
+        setPendingConfirmation("negative");
+        setError("Confirm the projected funding account balance below.");
+      } else if (message.includes("card credit")) {
+        setConfirmedNegative(acknowledgeNegative);
+        setConfirmedCardCredit(acknowledgeCardCredit);
+        setPendingConfirmation("card-credit");
+        setError("Confirm the projected card credit below.");
       } else if (caught instanceof ApiRequestError && caught.status < 500) {
         setError(message);
       } else {
@@ -3151,6 +3544,12 @@ function CardPaymentPage() {
       submissionInFlight.current = false;
       setPending(false);
     }
+  }
+
+  function resetPaymentConfirmations() {
+    setConfirmedNegative(false);
+    setConfirmedCardCredit(false);
+    setPendingConfirmation(null);
   }
 
   if (authLoading || loading) return <DashboardLoading />;
@@ -3223,7 +3622,10 @@ function CardPaymentPage() {
             type="text"
             inputMode="decimal"
             value={amount}
-            onChange={(event) => setAmount(event.currentTarget.value)}
+            onChange={(event) => {
+              resetPaymentConfirmations();
+              setAmount(event.currentTarget.value);
+            }}
             placeholder="0.00"
           />
         </label>
@@ -3232,7 +3634,10 @@ function CardPaymentPage() {
           <select
             className="reference-select"
             value={fundingAccountId}
-            onChange={(event) => setFundingAccountId(event.currentTarget.value)}
+            onChange={(event) => {
+              resetPaymentConfirmations();
+              setFundingAccountId(event.currentTarget.value);
+            }}
             disabled={!fundingAccounts.length}
           >
             <option value="">Choose a funding account</option>
@@ -3251,7 +3656,10 @@ function CardPaymentPage() {
               type="date"
               value={occurredOn}
               max={profile.serverToday}
-              onChange={(event) => setOccurredOn(event.currentTarget.value)}
+              onChange={(event) => {
+                resetPaymentConfirmations();
+                setOccurredOn(event.currentTarget.value);
+              }}
             />
           </label>
           <label className="field-group">
@@ -3262,15 +3670,45 @@ function CardPaymentPage() {
               className="text-input"
               value={note}
               maxLength={500}
-              onChange={(event) => setNote(event.currentTarget.value)}
+              onChange={(event) => {
+                resetPaymentConfirmations();
+                setNote(event.currentTarget.value);
+              }}
               placeholder="Statement payment"
             />
           </label>
         </div>
-        {confirmNegative ? (
+        {pendingConfirmation ? (
           <div className="confirmation-panel" role="alert">
             <p>
-              This payment will make the funding account negative. Continue?
+              {pendingConfirmation === "card-credit"
+                ? `This payment will create a card credit balance of ${(() => {
+                    try {
+                      const paymentMinor = BigInt(parsePaymentAmount());
+                      const projected =
+                        BigInt(card.balanceMinor) - paymentMinor;
+                      return formatPhp(moneyMinor((-projected).toString()));
+                    } catch {
+                      return "the projected amount";
+                    }
+                  })()} on ${card.name}. ${confirmedNegative ? "Your separate funding overdraft confirmation is retained." : "Confirm the card credit to continue."}`
+                : `This payment will leave ${fundingAccounts.find((account) => account.id === fundingAccountId)?.name ?? "the funding account"} at ${(() => {
+                    try {
+                      const funding = fundingAccounts.find(
+                        (account) => account.id === fundingAccountId,
+                      );
+                      return formatPhp(
+                        moneyMinor(
+                          (
+                            BigInt(funding?.balanceMinor ?? "0") -
+                            BigInt(parsePaymentAmount())
+                          ).toString(),
+                        ),
+                      );
+                    } catch {
+                      return "the projected balance";
+                    }
+                  })()}. Confirm the overdraft to continue.`}
             </p>
             <button
               className="save-button"
@@ -3279,7 +3717,8 @@ function CardPaymentPage() {
               onClick={(event) =>
                 void submit(
                   event as unknown as React.FormEvent<HTMLFormElement>,
-                  true,
+                  confirmedNegative || pendingConfirmation === "negative",
+                  confirmedCardCredit || pendingConfirmation === "card-credit",
                 )
               }
             >
@@ -3358,8 +3797,14 @@ function BillsPage() {
   const [defaultAmount, setDefaultAmount] = useState("");
   const [dueDay, setDueDay] = useState("1");
   const [startOn, setStartOn] = useState(profile?.serverToday ?? "");
+  const [endOn, setEndOn] = useState("");
   const [note, setNote] = useState("");
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [showArchivedBills, setShowArchivedBills] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [confirmPayOccurrenceId, setConfirmPayOccurrenceId] = useState<
+    string | null
+  >(null);
   const [payAmount, setPayAmount] = useState("");
   const [payAccountId, setPayAccountId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -3378,7 +3823,9 @@ function BillsPage() {
       const window = billWindow(profile.serverToday);
       const [billResult, occurrenceResult, accountResult, categoryResult] =
         await Promise.all([
-          apiRequest<{ bills: BillRecord[] }>("/bills"),
+          apiRequest<{ bills: BillRecord[] }>(
+            `/bills${showArchivedBills ? "?includeArchived=true" : ""}`,
+          ),
           apiRequest<{ occurrences: BillOccurrence[] }>(
             `/bills/occurrences?from=${window.from}&to=${window.to}`,
           ),
@@ -3405,13 +3852,57 @@ function BillsPage() {
     } finally {
       setLoading(false);
     }
-  }, [profile]);
+  }, [profile, showArchivedBills]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  async function createBillRecord(event: React.FormEvent<HTMLFormElement>) {
+  function billPaymentAmountMinor(occurrence: BillOccurrence): bigint {
+    if (occurrence.amountMode === "VARIABLE") {
+      return parsePhpMinor(payAmount);
+    }
+    return moneyMinor(occurrence.expectedAmountMinor ?? "0");
+  }
+
+  function projectedBillFundingBalance(occurrence: BillOccurrence) {
+    const balance = accounts.find(
+      (account) => account.id === payAccountId,
+    )?.balanceMinor;
+    return moneyMinor(
+      (BigInt(balance ?? "0") - billPaymentAmountMinor(occurrence)).toString(),
+    );
+  }
+
+  function resetBillForm() {
+    setEditingBillId(null);
+    setName("");
+    setCategoryId(categories[0]?.id ?? "");
+    setSuggestedAccountId("");
+    setAmountMode("FIXED");
+    setDefaultAmount("");
+    setDueDay("1");
+    setStartOn(profile?.serverToday ?? "");
+    setEndOn("");
+    setNote("");
+  }
+
+  function editBill(bill: BillRecord) {
+    setEditingBillId(bill.id);
+    setName(bill.name);
+    setCategoryId(bill.categoryId);
+    setSuggestedAccountId(bill.suggestedAccountId ?? "");
+    setAmountMode(bill.amountMode);
+    setDefaultAmount(
+      bill.defaultAmountMinor ? phpInputFromMinor(bill.defaultAmountMinor) : "",
+    );
+    setDueDay(String(bill.dueDay));
+    setStartOn(bill.startOn);
+    setEndOn(bill.endOn ?? "");
+    setNote(bill.note ?? "");
+  }
+
+  async function saveBillRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setSuccess("");
@@ -3431,30 +3922,60 @@ function BillsPage() {
       }
     }
     setPending(true);
+    const operation = `bill:${editingBillId ?? "create"}`;
+    let idempotencyKey: string | null = null;
     try {
-      await apiRequest("/bills", {
-        method: "POST",
+      const body = {
+        name: name.trim(),
+        categoryId,
+        amountMode,
+        ...(suggestedAccountId
+          ? { suggestedAccountId }
+          : editingBillId
+            ? { suggestedAccountId: null }
+            : {}),
+        ...(amountMode === "FIXED" && amountMinor
+          ? { defaultAmountMinor: amountMinor }
+          : editingBillId
+            ? { defaultAmountMinor: null }
+            : {}),
+        dueDay: Number(dueDay),
+        startOn,
+        ...(endOn ? { endOn } : editingBillId ? { endOn: null } : {}),
+        ...(note.trim()
+          ? { note: note.trim() }
+          : editingBillId
+            ? { note: null }
+            : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(profile!.user.id, operation, {
+        method: editingBillId ? "PATCH" : "POST",
+        body,
+      });
+      await apiRequest(editingBillId ? `/bills/${editingBillId}` : "/bills", {
+        method: editingBillId ? "PATCH" : "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          name: name.trim(),
-          categoryId,
-          ...(suggestedAccountId ? { suggestedAccountId } : {}),
-          amountMode,
-          ...(amountMinor ? { defaultAmountMinor: amountMinor } : {}),
-          dueDay: Number(dueDay),
-          startOn,
-          ...(note.trim() ? { note: note.trim() } : {}),
-        }),
+        body: JSON.stringify(body),
       });
-      setName("");
-      setDefaultAmount("");
-      setNote("");
-      setSuccess("Bill created. Its upcoming occurrences are ready to review.");
+      clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      setSuccess(
+        editingBillId
+          ? "Bill rule updated. Paid and skipped history remains available."
+          : "Bill created. Its upcoming occurrences are ready to review.",
+      );
+      resetBillForm();
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(profile!.user.id, operation, idempotencyKey);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3465,7 +3986,52 @@ function BillsPage() {
     }
   }
 
-  async function payOccurrence(occurrence: BillOccurrence) {
+  async function changeBillStatus(
+    bill: BillRecord,
+    status: BillRecord["status"],
+  ) {
+    if (!profile || !csrfToken || !isOnline || pending) return;
+    setPending(true);
+    setError("");
+    setSuccess("");
+    try {
+      const body = { status };
+      const operation = `bill-status:${bill.id}`;
+      const idempotencyKey = await pendingSubmissionKey(
+        profile.user.id,
+        operation,
+        body,
+      );
+      await apiRequest(`/bills/${bill.id}`, {
+        method: "PATCH",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "idempotency-key": idempotencyKey,
+        },
+        body: JSON.stringify(body),
+      });
+      clearPendingSubmission(profile.user.id, operation, idempotencyKey);
+      setSuccess(
+        status === "ARCHIVED"
+          ? `${bill.name} archived. Its payment history remains available.`
+          : `Reminder ${status === "PAUSED" ? "paused" : "resumed"}.`,
+      );
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Bill rule could not be updated.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function payOccurrence(
+    occurrence: BillOccurrence,
+    acknowledge = false,
+  ) {
     if (!csrfToken || !payAccountId || !isOnline) return;
     let amountMinor: string | undefined;
     try {
@@ -3480,23 +4046,52 @@ function BillsPage() {
     }
     setPending(true);
     setError("");
+    setConfirmPayOccurrenceId(null);
+    let idempotencyKey: string | null = null;
     try {
+      const body = {
+        fundingAccountId: payAccountId,
+        ...(amountMinor ? { amountMinor } : {}),
+        ...(acknowledge ? { acknowledgeNegativeBalance: true } : {}),
+      };
+      idempotencyKey = await pendingSubmissionKey(
+        profile!.user.id,
+        `bill-payment:${occurrence.id}`,
+        body,
+      );
       await apiRequest(`/bills/occurrences/${occurrence.id}/pay`, {
         method: "POST",
         headers: {
           "x-csrf-token": csrfToken,
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify({
-          fundingAccountId: payAccountId,
-          ...(amountMinor ? { amountMinor } : {}),
-        }),
+        body: JSON.stringify(body),
       });
+      clearPendingSubmission(
+        profile!.user.id,
+        `bill-payment:${occurrence.id}`,
+        idempotencyKey,
+      );
       setPayingId(null);
+      setConfirmPayOccurrenceId(null);
       setPayAmount("");
       setSuccess(`${occurrence.billName} marked paid and posted to Activity.`);
       await load();
     } catch (caught) {
+      if (
+        idempotencyKey &&
+        caught instanceof ApiRequestError &&
+        isTerminalClientError(caught.status)
+      ) {
+        clearPendingSubmission(
+          profile!.user.id,
+          `bill-payment:${occurrence.id}`,
+          idempotencyKey,
+        );
+      }
+      if (caught instanceof Error && caught.message.includes("negative")) {
+        setConfirmPayOccurrenceId(occurrence.id);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -3567,11 +4162,17 @@ function BillsPage() {
           {success}
         </p>
       ) : null}
-      <form className="account-edit-card bill-form" onSubmit={createBillRecord}>
+      <form className="account-edit-card bill-form" onSubmit={saveBillRecord}>
         <div className="form-heading">
           <div>
-            <p className="form-kicker">NEW RECURRING BILL</p>
-            <h2>Set up a monthly reminder</h2>
+            <p className="form-kicker">
+              {editingBillId ? "EDIT RECURRING BILL" : "NEW RECURRING BILL"}
+            </p>
+            <h2>
+              {editingBillId
+                ? "Update reminder details"
+                : "Set up a monthly reminder"}
+            </h2>
           </div>
         </div>
         <div className="reference-grid">
@@ -3600,6 +4201,18 @@ function BillsPage() {
             </select>
           </label>
         </div>
+        <label className="field-group">
+          <span className="field-label">
+            End date <span className="field-optional">Optional</span>
+          </span>
+          <input
+            className="text-input"
+            type="date"
+            value={endOn}
+            min={startOn || undefined}
+            onChange={(event) => setEndOn(event.currentTarget.value)}
+          />
+        </label>
         <div className="reference-grid">
           <label className="field-group">
             <span className="field-label">Amount type *</span>
@@ -3695,8 +4308,22 @@ function BillsPage() {
           type="submit"
           disabled={pending || !isOnline}
         >
-          {pending ? "Saving…" : "Create bill"}
+          {pending
+            ? "Saving…"
+            : editingBillId
+              ? "Save bill changes"
+              : "Create bill"}
         </button>
+        {editingBillId ? (
+          <button
+            className="quiet-button"
+            type="button"
+            disabled={pending}
+            onClick={resetBillForm}
+          >
+            Cancel editing
+          </button>
+        ) : null}
       </form>
       <section className="bill-section" aria-labelledby="bill-list-heading">
         <div className="dashboard-panel-heading">
@@ -3704,6 +4331,16 @@ function BillsPage() {
             <p className="dashboard-label">Saved reminders</p>
             <h2 id="bill-list-heading">Your recurring bills</h2>
           </div>
+          <label className="filter-toggle">
+            <input
+              type="checkbox"
+              checked={showArchivedBills}
+              onChange={(event) =>
+                setShowArchivedBills(event.currentTarget.checked)
+              }
+            />
+            <span>Show archived</span>
+          </label>
         </div>
         {bills.length ? (
           <div className="bill-list">
@@ -3722,25 +4359,50 @@ function BillsPage() {
                     · Due day {bill.dueDay} · {bill.status.toLowerCase()}
                   </span>
                 </div>
-                <button
-                  className="quiet-button"
-                  type="button"
-                  disabled={pending || !isOnline}
-                  onClick={() =>
-                    void apiRequest(`/bills/${bill.id}`, {
-                      method: "PATCH",
-                      headers: {
-                        "x-csrf-token": csrfToken ?? "",
-                        "idempotency-key": crypto.randomUUID(),
-                      },
-                      body: JSON.stringify({
-                        status: bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
-                      }),
-                    }).then(() => load())
-                  }
-                >
-                  {bill.status === "ACTIVE" ? "Pause" : "Resume"}
-                </button>
+                <div className="bill-row-actions">
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={pending || !isOnline}
+                    onClick={() => editBill(bill)}
+                  >
+                    Edit
+                  </button>
+                  {bill.status === "ARCHIVED" ? (
+                    <button
+                      className="quiet-button"
+                      type="button"
+                      disabled={pending || !isOnline}
+                      onClick={() => void changeBillStatus(bill, "ACTIVE")}
+                    >
+                      Restore
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={pending || !isOnline}
+                        onClick={() =>
+                          void changeBillStatus(
+                            bill,
+                            bill.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
+                          )
+                        }
+                      >
+                        {bill.status === "ACTIVE" ? "Pause" : "Resume"}
+                      </button>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={pending || !isOnline}
+                        onClick={() => void changeBillStatus(bill, "ARCHIVED")}
+                      >
+                        Archive
+                      </button>
+                    </>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -3786,9 +4448,11 @@ function BillsPage() {
                         <select
                           className="reference-select"
                           value={payAccountId}
-                          onChange={(event) =>
-                            setPayAccountId(event.currentTarget.value)
-                          }
+                          onChange={(event) => {
+                            setConfirmPayOccurrenceId(null);
+                            setError("");
+                            setPayAccountId(event.currentTarget.value);
+                          }}
                         >
                           <option value="">Funding account</option>
                           {accounts.map((account) => (
@@ -3803,9 +4467,11 @@ function BillsPage() {
                             type="text"
                             inputMode="decimal"
                             value={payAmount}
-                            onChange={(event) =>
-                              setPayAmount(event.currentTarget.value)
-                            }
+                            onChange={(event) => {
+                              setConfirmPayOccurrenceId(null);
+                              setError("");
+                              setPayAmount(event.currentTarget.value);
+                            }}
                             placeholder="Amount"
                           />
                         ) : null}
@@ -3817,6 +4483,34 @@ function BillsPage() {
                         >
                           Confirm pay
                         </button>
+                        {confirmPayOccurrenceId === occurrence.id ? (
+                          <div className="confirmation-panel" role="alert">
+                            <p>
+                              This bill payment will leave the funding account
+                              with a projected balance of{" "}
+                              {(() => {
+                                try {
+                                  return formatPhp(
+                                    projectedBillFundingBalance(occurrence),
+                                  );
+                                } catch {
+                                  return "the projected balance";
+                                }
+                              })()}
+                              . Confirm to continue.
+                            </p>
+                            <button
+                              className="save-button"
+                              type="button"
+                              disabled={pending || !isOnline}
+                              onClick={() =>
+                                void payOccurrence(occurrence, true)
+                              }
+                            >
+                              Confirm negative balance and pay
+                            </button>
+                          </div>
+                        ) : null}
                         <button
                           className="quiet-button"
                           type="button"

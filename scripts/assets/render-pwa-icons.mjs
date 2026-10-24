@@ -3,7 +3,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
 const publicDirectory = join(repositoryRoot, "apps", "web", "public");
 const sourcePath = join(publicDirectory, "icon.svg");
 

@@ -5,11 +5,11 @@ This checklist is the handoff for the master plan’s human release gates. Autom
 ## Before review
 
 - [ ] Start the isolated review stack with `npm run e2e:stack:up`; it uses tmpfs PostgreSQL and separate loopback ports without stopping the development stack.
-- [ ] Seed only the disposable review users using the commands in `docs/TESTING.md`.
+- [ ] Seed only the disposable review users using the commands in `docs/development/TESTING.md`.
 - [ ] Confirm the reviewer is not entering real financial data into the local database.
-- [ ] Have the current [release review](RELEASE_REVIEW.md), [architecture audit](architecture/ARCHITECTURE_AUDIT.md), and [restore runbook](runbooks/restore.md) open.
+- [ ] Have the current [release review](../qa/2026-10-23/RELEASE_REVIEW.md), [architecture audit](../architecture/ARCHITECTURE_AUDIT.md), and [restore runbook](../runbooks/restore.md) open.
 - [ ] Record the device model, OS version, browser version, viewport/orientation, and review commit.
-- [ ] Review the [mobile/desktop route-flow draft](design/LOW_FIDELITY_FLOWS.md) and the automated [five-width Home and authenticated route screenshot gallery](RELEASE_REVIEW.md#current-owner-review-screenshots), including Account Detail and Card Statements; use it as a visual reference, not as a substitute for actual-device review.
+- [ ] Review the [mobile/desktop route-flow draft](../design/LOW_FIDELITY_FLOWS.md) and the automated [five-width Home and authenticated route screenshot gallery](../qa/2026-10-23/RELEASE_REVIEW.md#current-owner-review-screenshots), including Account Detail and Card Statements; use it as a visual reference, not as a substitute for actual-device review.
 
 ## Phase 1 visual and interaction review
 

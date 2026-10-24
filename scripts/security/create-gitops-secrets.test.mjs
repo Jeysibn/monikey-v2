@@ -14,8 +14,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const generator = join(repositoryRoot, "scripts/create-gitops-secrets.mjs");
+const repositoryRoot = dirname(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+);
+const generator = join(
+  repositoryRoot,
+  "scripts/security/create-gitops-secrets.mjs",
+);
 const publicRecipient = `age1${"a".repeat(32)}`;
 
 async function createSopsStub(root) {

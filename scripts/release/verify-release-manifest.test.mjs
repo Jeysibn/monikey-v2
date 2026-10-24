@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getPrismaSchemaVersion } from "./prisma-schema-version.mjs";
+import { getPrismaSchemaVersion } from "../database/prisma-schema-version.mjs";
 
 import {
   releaseImages,

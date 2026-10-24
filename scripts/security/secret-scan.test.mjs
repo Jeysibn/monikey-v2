@@ -6,8 +6,16 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const scannerPath = join(repositoryRoot, "scripts", "secret-scan.mjs");
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+const scannerPath = join(
+  repositoryRoot,
+  "scripts",
+  "security",
+  "secret-scan.mjs",
+);
 
 function git(directory, ...args) {
   const result = spawnSync("git", args, {

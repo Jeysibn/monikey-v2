@@ -100,9 +100,7 @@ test("accepts the exact merged main commit and paginated successful checks", asy
     1: Array.from({ length: 100 }, (_, index) =>
       check(`unrelated-${index}`, "success", earlier),
     ),
-    2: [
-      check("validate", "success", later),
-    ],
+    2: [check("validate", "success", later)],
   };
   const tempDir = await mkdtemp(join(tmpdir(), "monikey-release-verifier-"));
   const outputFile = join(tempDir, "github-output.txt");

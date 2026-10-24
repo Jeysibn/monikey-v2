@@ -28,8 +28,8 @@ prisma/         Prisma schema and versioned SQL migrations
 e2e/            Browser journeys against the actual API and PostgreSQL
 deploy/         Kubernetes/Kustomize templates and release boundaries
 monitoring/     Prometheus rules and Grafana dashboard source
-scripts/        Local validation, backup, release, and secret-bootstrap tooling
-docs/           Portable architecture, ADRs, runbooks, and QA evidence
+scripts/        Grouped checks, database, release, security, testing, and asset tooling
+docs/           Indexed architecture, development, release, runbooks, and dated QA evidence
 ```
 
 The ledger module will own journal writes. Transactions and bills will orchestrate domain operations through it; routes and frontend code must not write postings or independently calculate balances.
@@ -52,7 +52,9 @@ reuse yesterday's date after midnight; user-selected dates are kept as-is.
 
 The repository now contains the authenticated React/Vite PWA, Fastify API, PostgreSQL schema and migrations, exact-money and API-contract packages, ledger-backed account/transaction/card/bill/report flows, owner-scoped exports and settings, and Docker Compose environments. Local validation covers strict typing/builds, PostgreSQL integration, and desktop/mobile Playwright journeys against the actual API. Phase 6 also has Kubernetes, backup, monitoring, and release templates with local validation.
 
-The roadmap and remaining acceptance gates are tracked in `docs/IMPLEMENTATION_STATUS.md` and `docs/PLAN_COVERAGE_AUDIT.md`. Physical-device and owner acceptance, independent QA, image publication, owner-managed secrets/device trust, live cluster checks, and approved cutover remain open. No V1 code or financial data has been imported.
+The roadmap and remaining acceptance gates are tracked in `docs/development/IMPLEMENTATION_STATUS.md` and `docs/qa/PLAN_COVERAGE_AUDIT.md`. Physical-device and owner acceptance, independent QA, image publication, owner-managed secrets/device trust, live cluster checks, and approved cutover remain open. No V1 code or financial data has been imported.
+
+See [the documentation index](../README.md) and [the script index](../../scripts/README.md) for navigation and placement conventions.
 
 ## Change control
 
